@@ -97,7 +97,7 @@ func TestArchiveProvenancePinsMergedCLIAndRegistryContracts(t *testing.T) {
 	if config.DatapanCLI.Issue != "https://github.com/StatPan/datapan-cli/pull/150" || config.DatapanCLI.Commit != "2fc8343993b7704b50f7d50fcba2642fca439c7f" || config.DatapanCLI.ReceiptSchemaSHA256 != "b755a5af33152bcb36dc7c2382b94857953d0a9359b6b77cd8b2cb093d0a820d" {
 		t.Fatalf("unexpected datapan-cli #150 provenance: %#v", config.DatapanCLI)
 	}
-	if config.DatapanRegistry.Issue != "https://github.com/StatPan/datapan-registry/issues/550" || config.DatapanRegistry.CatalogRevision != "2186f9b447fdd72c2292aaa8b18d64b2eff5eb38" || config.DatapanRegistry.CatalogSHA256 != "b98c26005c61e05a4d2153e57120ac7580d8e976ba45afe1b04772494d4d30dc" {
+	if config.DatapanRegistry.Issue != "https://github.com/StatPan/datapan-registry/issues/550" || config.DatapanRegistry.CatalogRevision != "2186f9b447fdd72c2292aaa8b18d64b2eff5eb38" || config.DatapanRegistry.CatalogSHA256 != "5ca3a6c353c558c5a333fac25238a9db3fe3adadc212c8fa144a2970da43d7e3" {
 		t.Fatalf("unexpected datapan-registry #550 provenance: %#v", config.DatapanRegistry)
 	}
 }
@@ -114,7 +114,7 @@ func TestMonthlyCompactionAndDuckDBQueries(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertZstd(t, monthly)
-	count, healthy, p50, p95, err := DuckDBMetrics(monthly, "public-data_qnet-pass-rate")
+	count, healthy, p50, p95, err := DuckDBMetrics(monthly, "public-data_holiday-emergency-clinics")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func assertDuckDBPushdown(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	rows, err := db.Query("EXPLAIN SELECT service_id, outcome FROM " + readParquet(quoteSQL(path)) + " WHERE service_id = 'public-data_qnet-pass-rate'")
+	rows, err := db.Query("EXPLAIN SELECT service_id, outcome FROM " + readParquet(quoteSQL(path)) + " WHERE service_id = 'public-data_holiday-emergency-clinics'")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-.PHONY: test quality build smoke archive-smoke hf-publish-smoke
+.PHONY: test quality build smoke visual archive-smoke hf-publish-smoke
 
 test:
 	go test ./...
@@ -20,3 +20,7 @@ archive-smoke:
 
 hf-publish-smoke:
 	./scripts/hf-publish-smoke.sh
+
+visual:
+	@test -f docs/evidence/status-desktop.png
+	@test -f docs/evidence/status-mobile.png

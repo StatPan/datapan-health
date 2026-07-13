@@ -2,11 +2,11 @@
 set -eu
 
 cleanup() {
-  docker compose --profile fixtures down --volumes --remove-orphans >/dev/null 2>&1 || true
+  docker compose --profile fixtures --profile scheduler down --volumes --remove-orphans >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-docker compose up --build --detach gatus
+docker compose --profile scheduler up --build --detach gatus scheduler
 docker compose --profile fixtures build runner-healthy runner-unhealthy
 ready=false
 for _ in $(seq 1 30); do
@@ -23,9 +23,12 @@ if [ "$ready" != true ]; then
 fi
 docker compose --profile fixtures run --rm runner-healthy
 docker compose --profile fixtures run --rm runner-unhealthy
+curl --fail --silent http://127.0.0.1:8081/live >/dev/null
+curl --fail --silent http://127.0.0.1:8081/ready >/dev/null
+curl --fail --silent http://127.0.0.1:8081/metrics | grep -q 'datapan_health_scheduler_runs_started_total'
 statuses="$(curl --fail --silent http://127.0.0.1:8080/api/v1/endpoints/statuses)"
-printf '%s' "$statuses" | grep -q 'data-go-kr-holiday-clinics'
-printf '%s' "$statuses" | grep -q 'qnet-pass-rate'
+printf '%s' "$statuses" | grep -q 'holiday-emergency-clinics'
+printf '%s' "$statuses" | grep -q 'qnet-practical-pass-rate'
 printf '%s' "$statuses" | grep -q '"success":true'
 printf '%s' "$statuses" | grep -q '"success":false'
 printf '%s' "$statuses" | grep -q 'timeout'

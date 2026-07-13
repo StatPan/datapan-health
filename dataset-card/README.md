@@ -21,7 +21,7 @@ All Parquet is ZSTD-compressed and UTC-partitioned by `observations/date=YYYY-MM
 
 The dataset never includes dataset IDs, endpoint hosts/paths or URLs, query values, credentials, request parameters, provider codes/messages, reason details, next actions, response bodies/rows, or internal logs. Detailed redacted receipts remain in the archive sink and are not published.
 
-`services/services.parquet` maps public service IDs to Registry-owned stable operation IDs, immutable catalog revision, and schedule tier. `incidents/` contains public non-healthy observation transitions; `daily_rollups/` contains availability and latency aggregates. The archive manifest pins [datapan-cli PR #150](https://github.com/StatPan/datapan-cli/pull/150) receipt schema commit `2fc8343993b7704b50f7d50fcba2642fca439c7f` / SHA-256 `b755a5af33152bcb36dc7c2382b94857953d0a9359b6b77cd8b2cb093d0a820d`, and [datapan-registry #550](https://github.com/StatPan/datapan-registry/issues/550) catalog revision `2186f9b447fdd72c2292aaa8b18d64b2eff5eb38` / SHA-256 `b98c26005c61e05a4d2153e57120ac7580d8e976ba45afe1b04772494d4d30dc`.
+`services/services.parquet` maps public service IDs to Registry-owned stable operation IDs, immutable catalog revision, and schedule tier. `incidents/` contains public non-healthy observation transitions; `daily_rollups/` contains availability and latency aggregates. The archive manifest pins [datapan-cli PR #150](https://github.com/StatPan/datapan-cli/pull/150) receipt schema commit `2fc8343993b7704b50f7d50fcba2642fca439c7f` / SHA-256 `b755a5af33152bcb36dc7c2382b94857953d0a9359b6b77cd8b2cb093d0a820d`, and [datapan-registry #550](https://github.com/StatPan/datapan-registry/issues/550) catalog revision `2186f9b447fdd72c2292aaa8b18d64b2eff5eb38` / pinned catalog SHA-256 `5ca3a6c353c558c5a333fac25238a9db3fe3adadc212c8fa144a2970da43d7e3`.
 
 ## Cadence and limitations
 
@@ -40,7 +40,7 @@ SELECT service_id,
        quantile_cont(latency_ms, 0.50) AS p50_latency_ms,
        quantile_cont(latency_ms, 0.95) AS p95_latency_ms
 FROM read_parquet('archive/observations/date=2026-07-13/*.parquet')
-WHERE service_id = 'public-data_qnet-pass-rate'
+WHERE service_id = 'public-data_holiday-emergency-clinics'
 GROUP BY service_id;
 ```
 
@@ -50,6 +50,6 @@ Resolved Hugging Face Parquet URL after publication:
 INSTALL httpfs; LOAD httpfs;
 SELECT outcome, category, count(*)
 FROM read_parquet('https://huggingface.co/datasets/StatPan/datapan-health-observations/resolve/main/observations/date=2026-07-13/part-00000.parquet')
-WHERE service_id = 'public-data_qnet-pass-rate'
+WHERE service_id = 'public-data_holiday-emergency-clinics'
 GROUP BY outcome, category;
 ```

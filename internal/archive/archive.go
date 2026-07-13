@@ -262,7 +262,7 @@ func incidentsFor(rows []Observation) []Incident {
 func servicesFor(config health.CanaryConfig, archive Config) []Service {
 	result := make([]Service, 0, len(config.Canaries))
 	for _, c := range config.Canaries {
-		result = append(result, Service{c.GatusEndpointKey, c.CatalogOperationID, archive.DatapanRegistry.CatalogRevision, c.Tier, int64(c.IntervalMinutes), int64(c.HeartbeatMinutes), int64(c.ConsecutiveFailuresBeforeIncident)})
+		result = append(result, Service{c.GatusEndpointKey, c.OperationID, archive.DatapanRegistry.CatalogRevision, c.Tier, int64(c.IntervalMinutes), int64(c.HeartbeatMinutes), int64(c.ConsecutiveFailuresBeforeIncident)})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ServiceID < result[j].ServiceID })
 	return result

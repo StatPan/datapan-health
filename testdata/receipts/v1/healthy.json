@@ -3,21 +3,21 @@
   "probe_id": "7b8ce434-e662-4f17-a239-0b8ad0d6a29b",
   "observed_at": "2026-07-13T00:00:00Z",
   "operation": {
-    "operation_key": "1f7d7e7d276754b82b45c58ccb5e2277380ffe6954030cbbe4443e5f511615a9",
-    "dataset_id": "15025329",
-    "operation_name": "qnet-pass-rate",
+    "operation_key": "472283c645233f09e0285a651fecc659dcbc70d09095e7c20fe590389df5af4d",
+    "dataset_id": "15000480",
+    "operation_name": "명절 비상진료기관 FullData 내려받기목록정보 조회",
     "provider": "data.go.kr",
-    "endpoint_host": "openapi.q-net.or.kr",
-    "endpoint_path": "/api/service/rest/InquiryStatSVC/getGradSiPassList",
-    "dependency_class": "external_endpoint"
+    "endpoint_host": "apis.data.go.kr",
+    "endpoint_path": "/B552657/HolidyEmgncClnicInsttInfoInqireService/getHolidyClnicPosblEgytFullDown",
+    "dependency_class": "data_go_kr_gateway"
   },
   "registry": {
-    "dataset_id": "15025329",
+    "dataset_id": "15000480",
     "dataset_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "registry_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
   },
-  "execution": { "cli_version": "0.10.0", "attempted": true, "timeout_ms": 10000, "request_budget": 1, "safe_parameter_names": ["period"] },
+  "execution": { "cli_version": "0.10.0", "attempted": true, "timeout_ms": 10000, "request_budget": 1, "safe_parameter_names": ["numOfRows", "pageNo"] },
   "observation": { "max_level": "L4", "latency_ms": 142, "http_status": 200, "provider_code": "OK", "provider_message_class": "normal", "semantic_status": "verified", "body_shape": "rows:1", "data_presence": "present", "schema_status": "not_observed", "freshness_status": "not_observed" },
   "assessment": { "outcome": "healthy", "category": "healthy", "retryable": false, "reason_code": "verification_succeeded", "next_actions": ["none"] },
   "redaction": { "credentials_removed": true, "query_values_removed": true, "response_rows_removed": true }

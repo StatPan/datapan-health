@@ -1,0 +1,12 @@
+{
+  "schema_version": "datapan.health-probe-catalog.v1",
+  "generated_at": "2026-07-11T10:28:35Z",
+  "authority": "datapan-registry",
+  "receipt_contract": {"schema": "https://schemas.datapan.dev/datapan.health-probe.v1.schema.json", "operation_key_algorithm": "datapan-cli-health-operation-key-v1", "policy_authority": "datapan-registry"},
+  "source_registry": {"path": "data/data-go-kr.registry.json", "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644"},
+  "summary": {"entries": 2, "gateway_canaries": 1, "external_adapter_canaries": 1},
+  "entries": [
+    {"operation_id":"dpr-op-00000001","policy":{"key":"dpr-op-00000001","version":1,"authority":"datapan-registry","max_level":"L4"},"aliases":{"dataset_id":"15000480","operation_name":"명절 비상진료기관 FullData 내려받기목록정보 조회","upstream_operation_seq":"17442","cli_operation_key":"472283c645233f09e0285a651fecc659dcbc70d09095e7c20fe590389df5af4d"},"provider":"data.go.kr","endpoint":{"host":"apis.data.go.kr","path":"/B552657/HolidyEmgncClnicInsttInfoInqireService/getHolidyClnicPosblEgytFullDown","dependency_class":"data_go_kr_gateway"},"eligibility":{"status":"credential_required","reason_code":"data_go_kr_service_key_required"},"credential_requirement":{"required":true,"type":"service_key","scope":"operation"},"execution":{"timeout_ceiling_ms":10000,"request_budget":1,"safe_parameters":[{"name":"pageNo","strategy":"bounded_integer","minimum":1,"maximum":1},{"name":"numOfRows","strategy":"bounded_integer","minimum":1,"maximum":1}]},"response_freshness":{"mode":"not_asserted"},"empty_data_policy":"observation_only"},
+    {"operation_id":"dpr-op-00000002","policy":{"key":"dpr-op-00000002","version":1,"authority":"datapan-registry","max_level":"L4"},"aliases":{"dataset_id":"15025329","operation_name":"연도별 등급별 실기 합격률 조회","upstream_operation_seq":"18467","cli_operation_key":"1f7d7e7d276754b82b45c58ccb5e2277380ffe6954030cbbe4443e5f511615a9"},"provider":"data.go.kr","endpoint":{"host":"openapi.q-net.or.kr","path":"/api/service/rest/InquiryStatSVC/getGradSiPassList","dependency_class":"external_endpoint"},"eligibility":{"status":"credential_required","reason_code":"registered_external_adapter_service_key_required"},"credential_requirement":{"required":true,"type":"service_key","scope":"operation"},"execution":{"timeout_ceiling_ms":10000,"request_budget":1,"safe_parameters":[{"name":"baseYY","strategy":"relative_year","offset_years":-3,"minimum_year":2020,"maximum_year":2100}]},"response_freshness":{"mode":"not_asserted"},"empty_data_policy":"observation_only"}
+  ]
+}

@@ -3,21 +3,21 @@
   "probe_id": "846c04d1-4743-4c18-b935-90c39c17ce7e",
   "observed_at": "2026-07-13T00:01:00Z",
   "operation": {
-    "operation_key": "472283c645233f09e0285a651fecc659dcbc70d09095e7c20fe590389df5af4d",
-    "dataset_id": "15000480",
-    "operation_name": "holiday-clinics",
+    "operation_key": "1f7d7e7d276754b82b45c58ccb5e2277380ffe6954030cbbe4443e5f511615a9",
+    "dataset_id": "15025329",
+    "operation_name": "연도별 등급별 실기 합격률 조회",
     "provider": "data.go.kr",
-    "endpoint_host": "apis.data.go.kr",
-    "endpoint_path": "/B552657/HolidyEmgncClnicInsttInfoInqireService/getHolidyClnicPosblEgytFullDown",
-    "dependency_class": "data_go_kr_gateway"
+    "endpoint_host": "openapi.q-net.or.kr",
+    "endpoint_path": "/api/service/rest/InquiryStatSVC/getGradSiPassList",
+    "dependency_class": "external_endpoint"
   },
   "registry": {
-    "dataset_id": "15000480",
+    "dataset_id": "15025329",
     "dataset_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "registry_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
   },
-  "execution": { "cli_version": "0.10.0", "attempted": true, "timeout_ms": 10000, "request_budget": 1, "safe_parameter_names": ["base_date"] },
+  "execution": { "cli_version": "0.10.0", "attempted": true, "timeout_ms": 10000, "request_budget": 1, "safe_parameter_names": ["baseYY"] },
   "observation": { "max_level": "L0", "latency_ms": 5000, "provider_message_class": "timeout", "data_presence": "not_observed", "schema_status": "not_observed", "freshness_status": "not_observed" },
   "assessment": { "outcome": "unhealthy", "category": "timeout", "retryable": true, "reason_code": "timeout", "next_actions": ["retry"] },
   "redaction": { "credentials_removed": true, "query_values_removed": true, "response_rows_removed": true }

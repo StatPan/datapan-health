@@ -13,6 +13,11 @@ make smoke
 make archive-smoke
 ```
 
+`docker compose --profile scheduler up scheduler` starts the separate
+scheduler health surface on `:8081` (`/live`, `/ready`, `/metrics`). The local
+profile deliberately has no Datapan CLI credential or provider executable, so
+it cannot call a real provider.
+
 `make smoke`는 Gatus, ephemeral PostgreSQL, runner 이미지를 빌드하고 CLI 계약과 같은 형태의 합성 receipt 두 개를 push합니다. Gatus가 PostgreSQL table을 생성하고 healthy/unhealthy 상태를 기록했는지도 확인한 뒤 컨테이너를 정리합니다. 로컬 DB user/password는 개발 전용 비밀값이 아닌 `datapan_health` / `local-dev-only`입니다. 수동으로 화면을 유지하려면 다음을 실행합니다.
 
 ```sh
@@ -62,6 +67,35 @@ Publishing is optional and retried only after a complete local export; it is nev
 
 `config/canaries.json` is a versioned scheduling boundary: Tier A/B/C mean 5/10/15 minute intended schedules. It also requires a heartbeat of exactly two schedule intervals and `2` consecutive failed observations before the configured Gatus incident alert fires. Direct API unhealthy observations still push immediately; Gatus’s alert/incident threshold avoids public alert noise from a single observation. Runner silence is separate: heartbeat fires only after two missed schedules.
 
-The runner is intentionally one-shot, not a scheduler. A follow-up scheduler must honor this config, add bounded concurrency and per-run jitter, and avoid synchronized provider load.
+`health-runner` remains intentionally one-shot. The separately deployed `health-scheduler` consumes this same Registry-pinned cadence boundary with bounded concurrency and jitter; it does not add an archive or Hugging Face dependency to the live delivery path.
+
+## Scheduler
+
+`health-scheduler` is the composition layer for ticket #4. It pins the
+manifest-bound Registry #550 catalog in `config/registry`, selects reviewed
+`operation_id` values from `config/canaries.json`, and invokes only the CLI’s
+documented one-shot surface: `datapan verify --ref … --operation … --health
+--output … --json`. CLI owns Registry trust, safe parameter generation,
+timeouts, request budget, and receipt classification; the scheduler validates
+the returned receipt against the pinned entry and invokes the existing
+`health-runner` adapter exactly once.
+
+Slots are aligned to cadence boundaries and receive deterministic, bounded
+jitter. A state file is fsynced before an invocation claims a slot. Restarting
+therefore skips an in-flight/overdue slot rather than replaying it; there is no
+catch-up burst. Global concurrency is capped at two and a canary cannot overlap
+itself. The catalog’s request budget is one, so provider/CLI retries are
+intentionally forbidden: a timeout or rate-limit receipt is delivered as-is,
+not amplified into more provider traffic. Adapter delivery is also single-shot
+because it is not externally idempotent.
+
+Provider credentials are passed only to the CLI child through the explicit
+comma-separated `CLI_CREDENTIAL_ENV` variable-name allowlist. Its non-secret
+runtime state (for example `DATAPAN_HOME`) is separately allowlisted through
+`CLI_RUNTIME_ENV`. Do not include `GATUS_TOKEN` in either list. The adapter
+child receives only its Gatus/archive settings; the scheduler never logs CLI or
+provider output. A real deployment must mount a pinned `datapan` CLI binary plus
+its immutable Registry installation and state directory; this repository does
+not deploy or alter `statpan-infra`.
 
 Gatus retains at most 2,016 results per endpoint (seven days at the fastest five-minute tier) and 100 state-change events. Observation volume is `288×A + 144×B + 96×C` results/day for A/B/C canaries. With twenty canaries entirely in one tier, that is 5,760 / 2,880 / 1,920 observations/day; seven-day maxima are 40,320 / 20,160 / 13,440 results. Platform backup, restore, and longer retention are infra-owned under `statpan-infra#472`, not a second application persistence path.

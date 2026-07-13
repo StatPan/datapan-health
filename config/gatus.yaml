@@ -43,7 +43,7 @@ endpoints:
       - "[STATUS] == 200"
 
 external-endpoints:
-  - name: data-go-kr-holiday-clinics
+  - name: holiday-emergency-clinics
     group: public-data
     token: "${GATUS_TOKEN}"
     heartbeat:
@@ -54,7 +54,7 @@ external-endpoints:
         failure-threshold: 2
         success-threshold: 2
         send-on-resolved: true
-  - name: qnet-pass-rate
+  - name: qnet-practical-pass-rate
     group: public-data
     token: "${GATUS_TOKEN}"
     heartbeat:

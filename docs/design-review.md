@@ -11,7 +11,7 @@ Evidence:
 - [Desktop, 1440×1200](evidence/status-desktop.png)
 - [Mobile, 390×844](evidence/status-mobile.png)
 - Both viewports show the same vertical order, healthy and unhealthy badges, visible focus styling, and no text/image overlap.
-- Evidence was recaptured after ticket #3 from the ephemeral PostgreSQL-backed Compose stack after healthy and unhealthy CLI-style receipts were persisted for `data-go-kr-holiday-clinics` and `qnet-pass-rate`.
+- Evidence was recaptured after ticket #3 from the ephemeral PostgreSQL-backed Compose stack after healthy and unhealthy CLI-style receipts were persisted for `holiday-emergency-clinics` and `qnet-practical-pass-rate`.
 - Gatus provides endpoint link accessibility names; icon controls retain upstream titles/labels.
 
 Open design risk: none. The remaining English filter labels are upstream Gatus controls and do not prevent the Korean Datapan status context; translating them would require a frontend fork, which is explicitly out of scope.
