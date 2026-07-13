@@ -10,6 +10,7 @@ Go 1.26.4와 Docker Compose v2가 필요합니다.
 make test
 make quality
 make smoke
+make archive-smoke
 ```
 
 `docker compose --profile scheduler up scheduler` starts the separate
@@ -49,11 +50,24 @@ Gatus live state와 UI history는 PostgreSQL에만 둡니다. Production은 `sta
 
 Hugging Face Dataset은 선택적 장기 archive만 담당합니다. 향후 별도 batch worker가 로컬 redacted receipt를 시간/일 단위로 모아 commit할 수 있지만, 요청 경로에서 commit하지 않고 heartbeat나 live 상태 판단에 사용하지 않습니다. HF 장애가 Gatus push를 막아서는 안 되며 transactional database로 취급하지 않습니다.
 
+## Long-term Parquet archive
+
+`health-archive` is a separate batch command, not part of `health-runner` or the Compose live-status path. It accepts local, redacted receipt JSONL and writes deterministic UTC partitions for ZSTD-compressed `observations`, `incidents`, `daily_rollups`, and `services`. A checkpoint makes re-runs and interrupted local batches idempotent; monthly compaction is verified with DuckDB before it replaces a completed monthly file.
+
+```sh
+go run ./cmd/health-archive -input RECEIPTS.jsonl -output archive
+go run ./cmd/health-archive -input RECEIPTS.jsonl -output archive -publish
+```
+
+The public observation schema is [datapan.health-archive.v1](schemas/datapan.health-archive.v1.schema.json). It is a strict projection: public service identity, UTC time, registry revision, enum outcome/category, latency, data/schema/freshness state, and schedule tier. It excludes all dataset IDs, endpoint URLs/paths, provider details, query data, credentials, response rows, reason code, and next actions. The [dataset card](dataset-card/README.md) provides the public schema, privacy rules, cadence, provenance, and DuckDB examples.
+
+Publishing is optional and retried only after a complete local export; it is never called by the live runner. The publisher stages only Parquet plus the safe manifest and dataset card, excluding checkpoints. `make hf-publish-smoke` performs an authenticated CLI availability check without printing credentials and records a skipped result if the environment has no usable Hugging Face CLI/session.
+
 ## Cadence, incidents, and retention
 
 `config/canaries.json` is a versioned scheduling boundary: Tier A/B/C mean 5/10/15 minute intended schedules. It also requires a heartbeat of exactly two schedule intervals and `2` consecutive failed observations before the configured Gatus incident alert fires. Direct API unhealthy observations still push immediately; Gatus’s alert/incident threshold avoids public alert noise from a single observation. Runner silence is separate: heartbeat fires only after two missed schedules.
 
-The runner is intentionally one-shot, not a scheduler. A follow-up scheduler must honor this config, add bounded concurrency and per-run jitter, and avoid synchronized provider load.
+`health-runner` remains intentionally one-shot. The separately deployed `health-scheduler` consumes this same Registry-pinned cadence boundary with bounded concurrency and jitter; it does not add an archive or Hugging Face dependency to the live delivery path.
 
 ## Scheduler
 

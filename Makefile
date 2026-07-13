@@ -1,4 +1,4 @@
-.PHONY: test quality build smoke visual
+.PHONY: test quality build smoke visual archive-smoke hf-publish-smoke
 
 test:
 	go test ./...
@@ -14,6 +14,12 @@ build:
 
 smoke:
 	./scripts/smoke.sh
+
+archive-smoke:
+	go test ./internal/archive -count=1
+
+hf-publish-smoke:
+	./scripts/hf-publish-smoke.sh
 
 visual:
 	@test -f docs/evidence/status-desktop.png

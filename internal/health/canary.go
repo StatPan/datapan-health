@@ -57,7 +57,7 @@ func LoadCanaryConfig(path string) (CanaryConfig, error) {
 	}
 	seen := map[string]bool{}
 	for _, canary := range config.Canaries {
-		if !gatusKeyPattern.MatchString(canary.GatusEndpointKey) || !validCadence(canary) || seen[canary.OperationID] || config.JitterSeconds >= canary.IntervalMinutes*60 {
+		if !catalogOperationIDPattern.MatchString(canary.OperationID) || !gatusKeyPattern.MatchString(canary.GatusEndpointKey) || !validCadence(canary) || seen[canary.OperationID] || config.JitterSeconds >= canary.IntervalMinutes*60 {
 			return CanaryConfig{}, errors.New("invalid canary configuration")
 		}
 		entry, ok := catalog.ByID(canary.OperationID)
@@ -90,13 +90,21 @@ func validCadence(canary Canary) bool {
 }
 
 func (c CanaryConfig) Resolve(receipt Receipt) (string, error) {
+	canary, err := c.CanaryFor(receipt)
+	if err != nil {
+		return "", err
+	}
+	return canary.GatusEndpointKey, nil
+}
+
+func (c CanaryConfig) CanaryFor(receipt Receipt) (Canary, error) {
 	for _, canary := range c.Canaries {
 		entry, ok := c.catalog.ByID(canary.OperationID)
 		if ok && entry.Aliases.CLIOperationKey == receipt.Operation.OperationKey {
-			return canary.GatusEndpointKey, nil
+			return canary, nil
 		}
 	}
-	return "", errors.New("receipt operation is not a configured public canary")
+	return Canary{}, errors.New("receipt operation is not a configured public canary")
 }
 
 func (c CanaryConfig) Entry(canary Canary) (CatalogEntry, bool) {

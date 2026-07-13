@@ -13,36 +13,57 @@ import (
 //go:embed datapan.health-probe.v1.schema.json
 var healthProbeSchema []byte
 
+//go:embed datapan.health-archive.v1.schema.json
+var healthArchiveSchema []byte
+
 var (
-	healthProbeOnce sync.Once
-	healthProbe     *jsonschema.Schema
-	healthProbeErr  error
+	healthProbeOnce   sync.Once
+	healthProbe       *jsonschema.Schema
+	healthProbeErr    error
+	healthArchiveOnce sync.Once
+	healthArchive     *jsonschema.Schema
+	healthArchiveErr  error
 )
 
 func ValidateHealthProbeV1(data []byte) error {
 	healthProbeOnce.Do(func() {
-		var document any
-		if err := json.Unmarshal(healthProbeSchema, &document); err != nil {
-			healthProbeErr = err
-			return
-		}
-		compiler := jsonschema.NewCompiler()
-		compiler.AssertFormat()
-		if err := compiler.AddResource("https://schemas.datapan.dev/datapan.health-probe.v1.schema.json", document); err != nil {
-			healthProbeErr = err
-			return
-		}
-		healthProbe, healthProbeErr = compiler.Compile("https://schemas.datapan.dev/datapan.health-probe.v1.schema.json")
+		healthProbe, healthProbeErr = compile(healthProbeSchema, "https://schemas.datapan.dev/datapan.health-probe.v1.schema.json")
 	})
-	if healthProbeErr != nil {
-		return healthProbeErr
+	return validate(data, healthProbe, healthProbeErr, "receipt")
+}
+
+// ValidateHealthArchiveV1 only accepts the intentionally minimized public
+// observation projection. Detailed receipts never cross this boundary.
+func ValidateHealthArchiveV1(data []byte) error {
+	healthArchiveOnce.Do(func() {
+		healthArchive, healthArchiveErr = compile(healthArchiveSchema, "https://schemas.datapan.dev/datapan.health-archive.v1.schema.json")
+	})
+	return validate(data, healthArchive, healthArchiveErr, "archive observation")
+}
+
+func compile(source []byte, uri string) (*jsonschema.Schema, error) {
+	var document any
+	if err := json.Unmarshal(source, &document); err != nil {
+		return nil, err
+	}
+	compiler := jsonschema.NewCompiler()
+	compiler.AssertFormat()
+	if err := compiler.AddResource(uri, document); err != nil {
+		return nil, err
+	}
+	return compiler.Compile(uri)
+}
+
+func validate(data []byte, schema *jsonschema.Schema, schemaErr error, kind string) error {
+	if schemaErr != nil {
+		return schemaErr
 	}
 	var instance any
 	if err := json.Unmarshal(data, &instance); err != nil {
-		return errors.New("receipt is not valid JSON")
+		return errors.New(kind + " is not valid JSON")
 	}
-	if err := healthProbe.Validate(instance); err != nil {
-		return errors.New("receipt does not match datapan.health-probe.v1")
+	if err := schema.Validate(instance); err != nil {
+		return errors.New(kind + " does not match its pinned schema")
 	}
 	return nil
 }
