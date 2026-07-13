@@ -4,8 +4,10 @@ COPY go.mod go.sum ./
 COPY cmd ./cmd
 COPY internal ./internal
 COPY schemas ./schemas
-RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /health-runner ./cmd/health-runner
+RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /health-runner ./cmd/health-runner \
+ && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /health-scheduler ./cmd/health-scheduler
 
 FROM scratch
 COPY --from=build /health-runner /health-runner
+COPY --from=build /health-scheduler /health-scheduler
 ENTRYPOINT ["/health-runner"]

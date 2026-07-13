@@ -1,8 +1,12 @@
 {
+  "catalog_path": "registry/health-probe-catalog.json",
+  "catalog_sha256": "5ca3a6c353c558c5a333fac25238a9db3fe3adadc212c8fa144a2970da43d7e3",
+  "global_concurrency": 2,
+  "jitter_seconds": 30,
   "canaries": [
     {
-      "operation_key": "1111111111111111111111111111111111111111111111111111111111111111",
-      "gatus_endpoint_key": "public-data_kosis-population",
+      "operation_id": "dpr-op-00000001",
+      "gatus_endpoint_key": "public-data_holiday-emergency-clinics",
       "tier": "A",
       "interval_minutes": 5,
       "heartbeat_minutes": 10,
@@ -10,20 +14,11 @@
       "missed_schedules_before_heartbeat": 2
     },
     {
-      "operation_key": "2222222222222222222222222222222222222222222222222222222222222222",
-      "gatus_endpoint_key": "public-data_data-go-kr-weather",
+      "operation_id": "dpr-op-00000002",
+      "gatus_endpoint_key": "public-data_qnet-practical-pass-rate",
       "tier": "B",
       "interval_minutes": 10,
       "heartbeat_minutes": 20,
-      "consecutive_failures_before_incident": 2,
-      "missed_schedules_before_heartbeat": 2
-    },
-    {
-      "operation_key": "3333333333333333333333333333333333333333333333333333333333333333",
-      "gatus_endpoint_key": "public-data_ecos-key-statistics",
-      "tier": "C",
-      "interval_minutes": 15,
-      "heartbeat_minutes": 30,
       "consecutive_failures_before_incident": 2,
       "missed_schedules_before_heartbeat": 2
     }

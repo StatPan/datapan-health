@@ -61,8 +61,8 @@ func TestCLIStyleReceiptMapsThroughConfiguredCanaryAndPushes(t *testing.T) {
 		success                    bool
 		duration                   time.Duration
 	}{
-		{"healthy.json", "public-data_kosis-population", "healthy:healthy", true, 142 * time.Millisecond},
-		{"unhealthy.json", "public-data_data-go-kr-weather", "unhealthy:timeout", false, 5 * time.Second},
+		{"healthy.json", "public-data_holiday-emergency-clinics", "healthy:healthy", true, 142 * time.Millisecond},
+		{"unhealthy.json", "public-data_qnet-practical-pass-rate", "unhealthy:timeout", false, 5 * time.Second},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			receipt, err := DecodeReceipt(strings.NewReader(string(mustRead(t, "../../testdata/receipts/v1/"+fixture.name))))
@@ -142,7 +142,7 @@ func TestRejectsUnredactedOrUnknownSensitiveFields(t *testing.T) {
 	raw := string(mustRead(t, "../../testdata/receipts/v1/unhealthy.json"))
 	for _, mutation := range []string{
 		strings.Replace(raw, `"credentials_removed": true`, `"credentials_removed": false`, 1),
-		strings.Replace(raw, `"endpoint_path": "/weather/forecast"`, `"endpoint_path": "/weather/forecast", "query_url": "https://secret.example/?key=secret"`, 1),
+		strings.Replace(raw, `"endpoint_path": "/api/service/rest/InquiryStatSVC/getGradSiPassList"`, `"endpoint_path": "/api/service/rest/InquiryStatSVC/getGradSiPassList", "query_url": "https://secret.example/?key=secret"`, 1),
 		strings.Replace(raw, `"provider_message_class": "timeout"`, `"provider_message_class": "timeout", "response_rows": ["secret"]`, 1),
 	} {
 		if _, err := DecodeReceipt(strings.NewReader(mutation)); err == nil {
@@ -169,7 +169,7 @@ func TestLocalSinkPreservesOnlyDetailedRedactedReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	stored := string(mustRead(t, path))
-	if !strings.Contains(stored, `"dataset_id":"1360000"`) || !strings.Contains(stored, `"endpoint_path":"/weather/forecast"`) {
+	if !strings.Contains(stored, `"dataset_id":"15025329"`) || !strings.Contains(stored, `"endpoint_path":"/api/service/rest/InquiryStatSVC/getGradSiPassList"`) {
 		t.Fatal("sink did not preserve the redacted detail")
 	}
 }

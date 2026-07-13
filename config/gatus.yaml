@@ -43,7 +43,7 @@ endpoints:
       - "[STATUS] == 200"
 
 external-endpoints:
-  - name: kosis-population
+  - name: holiday-emergency-clinics
     group: public-data
     token: "${GATUS_TOKEN}"
     heartbeat:
@@ -54,22 +54,11 @@ external-endpoints:
         failure-threshold: 2
         success-threshold: 2
         send-on-resolved: true
-  - name: data-go-kr-weather
+  - name: qnet-practical-pass-rate
     group: public-data
     token: "${GATUS_TOKEN}"
     heartbeat:
       interval: 20m
-    alerts:
-      - type: custom
-        description: public API canary incident
-        failure-threshold: 2
-        success-threshold: 2
-        send-on-resolved: true
-  - name: ecos-key-statistics
-    group: public-data
-    token: "${GATUS_TOKEN}"
-    heartbeat:
-      interval: 30m
     alerts:
       - type: custom
         description: public API canary incident

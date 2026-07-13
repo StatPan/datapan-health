@@ -1,4 +1,4 @@
-.PHONY: test quality build smoke
+.PHONY: test quality build smoke visual
 
 test:
 	go test ./...
@@ -14,3 +14,7 @@ build:
 
 smoke:
 	./scripts/smoke.sh
+
+visual:
+	@test -f docs/evidence/status-desktop.png
+	@test -f docs/evidence/status-mobile.png
