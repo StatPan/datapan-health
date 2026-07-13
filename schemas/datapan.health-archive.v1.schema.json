@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.datapan.dev/datapan.health-archive.v1.schema.json",
+  "title": "Datapan public health archive v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["observation_id", "observed_at", "service_id", "registry_revision", "outcome", "category", "latency_ms", "data_presence", "schema_status", "freshness_status", "schedule_tier"],
+  "properties": {
+    "observation_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "service_id": {"type": "string", "pattern": "^[a-z0-9-]+_[a-z0-9-]+$"},
+    "registry_revision": {"type": "string", "pattern": "^[0-9a-f]{40,64}$"},
+    "outcome": {"enum": ["healthy", "unhealthy", "skipped", "indeterminate"]},
+    "category": {"enum": ["healthy", "transport_failure", "timeout", "rate_limited", "credential_missing", "credential_rejected", "parameter_blocked", "provider_failure", "semantic_failure", "schema_drift", "unsupported", "skipped", "indeterminate"]},
+    "latency_ms": {"type": "integer", "minimum": 0},
+    "data_presence": {"enum": ["not_observed", "empty", "present", "indeterminate"]},
+    "schema_status": {"enum": ["not_observed", "conformant", "drift", "indeterminate"]},
+    "freshness_status": {"enum": ["not_observed", "fresh", "stale", "indeterminate"]},
+    "schedule_tier": {"enum": ["A", "B", "C"]}
+  }
+}

@@ -15,6 +15,7 @@ type CanaryConfig struct {
 type Canary struct {
 	OperationKey                      string `json:"operation_key"`
 	GatusEndpointKey                  string `json:"gatus_endpoint_key"`
+	CatalogOperationID                string `json:"catalog_operation_id"`
 	Tier                              string `json:"tier"`
 	IntervalMinutes                   int    `json:"interval_minutes"`
 	HeartbeatMinutes                  int    `json:"heartbeat_minutes"`
@@ -33,7 +34,7 @@ func LoadCanaryConfig(path string) (CanaryConfig, error) {
 	}
 	seen := map[string]bool{}
 	for _, canary := range config.Canaries {
-		if !sha256Pattern.MatchString(canary.OperationKey) || !gatusKeyPattern.MatchString(canary.GatusEndpointKey) || !validCadence(canary) || seen[canary.OperationKey] {
+		if !sha256Pattern.MatchString(canary.OperationKey) || !gatusKeyPattern.MatchString(canary.GatusEndpointKey) || !catalogOperationIDPattern.MatchString(canary.CatalogOperationID) || !validCadence(canary) || seen[canary.OperationKey] {
 			return CanaryConfig{}, errors.New("invalid canary configuration")
 		}
 		seen[canary.OperationKey] = true
@@ -58,10 +59,18 @@ func validCadence(canary Canary) bool {
 }
 
 func (c CanaryConfig) Resolve(receipt Receipt) (string, error) {
+	canary, err := c.CanaryFor(receipt)
+	if err != nil {
+		return "", err
+	}
+	return canary.GatusEndpointKey, nil
+}
+
+func (c CanaryConfig) CanaryFor(receipt Receipt) (Canary, error) {
 	for _, canary := range c.Canaries {
 		if canary.OperationKey == receipt.Operation.OperationKey {
-			return canary.GatusEndpointKey, nil
+			return canary, nil
 		}
 	}
-	return "", errors.New("receipt operation is not a configured public canary")
+	return Canary{}, errors.New("receipt operation is not a configured public canary")
 }

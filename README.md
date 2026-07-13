@@ -10,6 +10,7 @@ Go 1.26.4와 Docker Compose v2가 필요합니다.
 make test
 make quality
 make smoke
+make archive-smoke
 ```
 
 `make smoke`는 Gatus, ephemeral PostgreSQL, runner 이미지를 빌드하고 CLI 계약과 같은 형태의 합성 receipt 두 개를 push합니다. Gatus가 PostgreSQL table을 생성하고 healthy/unhealthy 상태를 기록했는지도 확인한 뒤 컨테이너를 정리합니다. 로컬 DB user/password는 개발 전용 비밀값이 아닌 `datapan_health` / `local-dev-only`입니다. 수동으로 화면을 유지하려면 다음을 실행합니다.
@@ -43,6 +44,19 @@ Gatus live state와 UI history는 PostgreSQL에만 둡니다. Production은 `sta
 `ReceiptSink`는 detailed but redacted receipt 보존을 교체 가능한 경계로 만들며, MVP 구현은 권한 `0600`의 로컬 JSONL append sink입니다. 이 sink만 receipt의 dataset/provenance/operation metadata를 보존합니다.
 
 Hugging Face Dataset은 선택적 장기 archive만 담당합니다. 향후 별도 batch worker가 로컬 redacted receipt를 시간/일 단위로 모아 commit할 수 있지만, 요청 경로에서 commit하지 않고 heartbeat나 live 상태 판단에 사용하지 않습니다. HF 장애가 Gatus push를 막아서는 안 되며 transactional database로 취급하지 않습니다.
+
+## Long-term Parquet archive
+
+`health-archive` is a separate batch command, not part of `health-runner` or the Compose live-status path. It accepts local, redacted receipt JSONL and writes deterministic UTC partitions for ZSTD-compressed `observations`, `incidents`, `daily_rollups`, and `services`. A checkpoint makes re-runs and interrupted local batches idempotent; monthly compaction is verified with DuckDB before it replaces a completed monthly file.
+
+```sh
+go run ./cmd/health-archive -input RECEIPTS.jsonl -output archive
+go run ./cmd/health-archive -input RECEIPTS.jsonl -output archive -publish
+```
+
+The public observation schema is [datapan.health-archive.v1](schemas/datapan.health-archive.v1.schema.json). It is a strict projection: public service identity, UTC time, registry revision, enum outcome/category, latency, data/schema/freshness state, and schedule tier. It excludes all dataset IDs, endpoint URLs/paths, provider details, query data, credentials, response rows, reason code, and next actions. The [dataset card](dataset-card/README.md) provides the public schema, privacy rules, cadence, provenance, and DuckDB examples.
+
+Publishing is optional and retried only after a complete local export; it is never called by the live runner. The publisher stages only Parquet plus the safe manifest and dataset card, excluding checkpoints. `make hf-publish-smoke` performs an authenticated CLI availability check without printing credentials and records a skipped result if the environment has no usable Hugging Face CLI/session.
 
 ## Cadence, incidents, and retention
 

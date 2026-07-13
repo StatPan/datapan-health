@@ -1,0 +1,14 @@
+{
+  "schema_version": "datapan.health-archive.v1",
+  "dataset_repo": "StatPan/datapan-health-observations",
+  "datapan_cli": {
+    "issue": "https://github.com/StatPan/datapan-cli/pull/150",
+    "commit": "2fc8343993b7704b50f7d50fcba2642fca439c7f",
+    "receipt_schema_sha256": "b755a5af33152bcb36dc7c2382b94857953d0a9359b6b77cd8b2cb093d0a820d"
+  },
+  "datapan_registry": {
+    "issue": "https://github.com/StatPan/datapan-registry/issues/550",
+    "catalog_revision": "2186f9b447fdd72c2292aaa8b18d64b2eff5eb38",
+    "catalog_sha256": "b98c26005c61e05a4d2153e57120ac7580d8e976ba45afe1b04772494d4d30dc"
+  }
+}

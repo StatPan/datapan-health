@@ -3,16 +3,16 @@
   "probe_id": "7b8ce434-e662-4f17-a239-0b8ad0d6a29b",
   "observed_at": "2026-07-13T00:00:00Z",
   "operation": {
-    "operation_key": "1111111111111111111111111111111111111111111111111111111111111111",
-    "dataset_id": "15102102",
-    "operation_name": "population",
-    "provider": "kosis",
-    "endpoint_host": "kosis.kr",
-    "endpoint_path": "/openapi/population",
-    "dependency_class": "public_api"
+    "operation_key": "1f7d7e7d276754b82b45c58ccb5e2277380ffe6954030cbbe4443e5f511615a9",
+    "dataset_id": "15025329",
+    "operation_name": "qnet-pass-rate",
+    "provider": "data.go.kr",
+    "endpoint_host": "openapi.q-net.or.kr",
+    "endpoint_path": "/api/service/rest/InquiryStatSVC/getGradSiPassList",
+    "dependency_class": "external_endpoint"
   },
   "registry": {
-    "dataset_id": "15102102",
+    "dataset_id": "15025329",
     "dataset_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "registry_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"

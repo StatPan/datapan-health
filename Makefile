@@ -1,4 +1,4 @@
-.PHONY: test quality build smoke
+.PHONY: test quality build smoke archive-smoke hf-publish-smoke
 
 test:
 	go test ./...
@@ -14,3 +14,9 @@ build:
 
 smoke:
 	./scripts/smoke.sh
+
+archive-smoke:
+	go test ./internal/archive -count=1
+
+hf-publish-smoke:
+	./scripts/hf-publish-smoke.sh

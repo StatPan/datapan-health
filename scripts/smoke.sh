@@ -24,8 +24,8 @@ fi
 docker compose --profile fixtures run --rm runner-healthy
 docker compose --profile fixtures run --rm runner-unhealthy
 statuses="$(curl --fail --silent http://127.0.0.1:8080/api/v1/endpoints/statuses)"
-printf '%s' "$statuses" | grep -q 'kosis-population'
-printf '%s' "$statuses" | grep -q 'data-go-kr-weather'
+printf '%s' "$statuses" | grep -q 'data-go-kr-holiday-clinics'
+printf '%s' "$statuses" | grep -q 'qnet-pass-rate'
 printf '%s' "$statuses" | grep -q '"success":true'
 printf '%s' "$statuses" | grep -q '"success":false'
 printf '%s' "$statuses" | grep -q 'timeout'
