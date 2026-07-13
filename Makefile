@@ -1,4 +1,7 @@
-.PHONY: test quality build smoke visual archive-smoke hf-publish-smoke
+RUNTIME_IMAGE ?= datapan-health-runtime:test
+ARCHIVE_IMAGE ?= datapan-health-archive:test
+
+.PHONY: test quality build images image-smoke release-oci smoke visual archive-smoke hf-publish-smoke
 
 test:
 	go test ./...
@@ -10,7 +13,17 @@ quality:
 	docker compose config --quiet
 
 build:
-	docker build --tag datapan-health-runner:test .
+	docker build --target runtime --tag $(RUNTIME_IMAGE) .
+
+images:
+	docker build --target runtime --tag $(RUNTIME_IMAGE) .
+	docker build --target archive --tag $(ARCHIVE_IMAGE) .
+
+image-smoke: images
+	RUNTIME_IMAGE=$(RUNTIME_IMAGE) ARCHIVE_IMAGE=$(ARCHIVE_IMAGE) ./scripts/image-smoke.sh
+
+release-oci:
+	./scripts/build-release-oci.sh
 
 smoke:
 	./scripts/smoke.sh

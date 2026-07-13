@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+if [ "${HF_TOKEN:-}" != "hf-smoke-not-a-secret-7" ]; then
+  echo "synthetic token was not supplied at runtime" >&2
+  exit 1
+fi
+if [ "${1:-}" != "upload" ]; then
+  echo "expected hf upload" >&2
+  exit 1
+fi
+for argument in "$@"; do
+  case "$argument" in
+    *hf-smoke-not-a-secret-7*|*HF_TOKEN*)
+      echo "token-like argument is forbidden" >&2
+      exit 1
+      ;;
+  esac
+done
+printf '%s\n' "$@" > "${HF_SMOKE_OUTPUT:?HF_SMOKE_OUTPUT is required}"
