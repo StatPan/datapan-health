@@ -12,4 +12,11 @@ CLI `probe_id` is a UUID for one execution and is never used as a public identit
 
 Hugging Face is an optional publisher of those completed Parquet artifacts, not a sink for live execution. The publisher retries only its own asynchronous upload and stages only Parquet, `manifest.json`, and the dataset card; checkpoints are excluded. Missing credentials, an unavailable CLI, or a remote outage can never delay or alter a runner-to-Gatus result. `config/archive.json` pins the datapan-cli #150 receipt-schema commit/digest and datapan-registry #550 catalog revision/digest in every manifest. The public dataset card contains the same provenance and querying guidance.
 
+Release images preserve this boundary: the scratch `runtime` target contains
+only runner and scheduler, while the separate `archive` target contains
+`health-archive` and the pinned `hf` CLI. `HF_TOKEN` is never an image build
+argument, environment variable, label, file, or log field; infra #475 injects
+it only into the isolated archive Compose role. See
+[release-images.md](release-images.md) for reproducible digest handoff.
+
 No deployment resources or `statpan-infra` changes belong to this issue.

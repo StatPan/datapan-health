@@ -26,6 +26,16 @@ docker compose --profile fixtures run --rm runner-healthy
 docker compose --profile fixtures run --rm runner-unhealthy
 ```
 
+## Runtime images
+
+`runtime` is the minimal runner/scheduler image. `archive` is a separate
+batch-only image containing `/health-archive` and the pinned `hf` CLI; it is
+the only image that may receive `HF_TOKEN` at runtime. Neither image contains
+a credential. `make image-smoke` builds both images and performs an offline
+synthetic publish check with a fake `hf` command. Release, digest promotion,
+and rollback inputs for `statpan-infra#475` are in
+[docs/release-images.md](docs/release-images.md).
+
 로컬 기본 토큰은 합성 테스트 전용입니다. 실제 환경에서는 `GATUS_TOKEN`을 secret으로 주입해야 하며 Git, receipt, URL 또는 로그에 넣지 않습니다. 이 저장소는 배포하지 않으며 `statpan-infra`를 수정하지 않습니다.
 
 ## Receipt 계약
