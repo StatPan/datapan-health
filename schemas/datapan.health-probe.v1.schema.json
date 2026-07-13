@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.datapan.dev/datapan.health-probe.v1.schema.json",
+  "title": "Datapan Health Probe Receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "probe_id", "observed_at", "operation", "registry", "execution", "observation", "assessment", "redaction"],
+  "properties": {
+    "schema_version": { "const": "datapan.health-probe.v1" },
+    "probe_id": { "type": "string", "format": "uuid" },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "operation": { "$ref": "#/$defs/operation" },
+    "registry": { "$ref": "#/$defs/registry" },
+    "policy": { "$ref": "#/$defs/policy" },
+    "execution": { "$ref": "#/$defs/execution" },
+    "observation": { "$ref": "#/$defs/observation" },
+    "assessment": { "$ref": "#/$defs/assessment" },
+    "redaction": { "$ref": "#/$defs/redaction" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "level": { "enum": ["L0", "L1", "L2", "L3", "L4", "L5", "L6", "L7"] },
+    "operation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["operation_key", "dataset_id", "operation_name", "provider", "dependency_class"],
+      "properties": {
+        "operation_key": { "$ref": "#/$defs/sha256" }, "dataset_id": { "type": "string", "minLength": 1 },
+        "operation_name": { "type": "string", "minLength": 1 }, "provider": { "type": "string", "minLength": 1 },
+        "endpoint_host": { "type": "string" }, "endpoint_path": { "type": "string" }, "dependency_class": { "type": "string", "minLength": 1 }
+      }
+    },
+    "registry": {
+      "type": "object", "additionalProperties": false,
+      "required": ["dataset_id", "dataset_revision", "registry_sha256"],
+      "properties": {
+        "dataset_id": { "type": "string", "minLength": 1 }, "dataset_revision": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+        "registry_sha256": { "$ref": "#/$defs/sha256" }, "manifest_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "policy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["key", "version", "authority", "max_level"],
+      "properties": { "key": { "type": "string", "minLength": 1 }, "version": { "type": "integer", "minimum": 1 }, "authority": { "type": "string", "minLength": 1 }, "max_level": { "$ref": "#/$defs/level" } }
+    },
+    "execution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["cli_version", "attempted", "timeout_ms", "request_budget"],
+      "properties": {
+        "cli_version": { "type": "string", "minLength": 1 }, "attempted": { "type": "boolean" }, "timeout_ms": { "type": "integer", "minimum": 1 }, "request_budget": { "type": "integer", "minimum": 0 },
+        "safe_parameter_names": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
+      }
+    },
+    "observation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["max_level", "data_presence", "schema_status", "freshness_status"],
+      "properties": {
+        "max_level": { "$ref": "#/$defs/level" }, "latency_ms": { "type": "integer", "minimum": 0 }, "http_status": { "type": "integer", "minimum": 100, "maximum": 599 },
+        "provider_code": { "type": "string" }, "provider_message_class": { "type": "string" }, "semantic_status": { "type": "string" }, "body_shape": { "type": "string" },
+        "data_presence": { "enum": ["not_observed", "empty", "present", "indeterminate"] }, "schema_status": { "enum": ["not_observed", "conformant", "drift", "indeterminate"] }, "freshness_status": { "enum": ["not_observed", "fresh", "stale", "indeterminate"] }
+      }
+    },
+    "assessment": {
+      "type": "object", "additionalProperties": false,
+      "required": ["outcome", "category", "retryable", "reason_code"],
+      "properties": {
+        "outcome": { "enum": ["healthy", "unhealthy", "skipped", "indeterminate"] },
+        "category": { "enum": ["healthy", "transport_failure", "timeout", "rate_limited", "credential_missing", "credential_rejected", "parameter_blocked", "provider_failure", "semantic_failure", "schema_drift", "unsupported", "skipped", "indeterminate"] },
+        "retryable": { "type": "boolean" }, "reason_code": { "type": "string", "minLength": 1 }, "next_actions": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "redaction": {
+      "type": "object", "additionalProperties": false,
+      "required": ["credentials_removed", "query_values_removed", "response_rows_removed"],
+      "properties": { "credentials_removed": { "const": true }, "query_values_removed": { "const": true }, "response_rows_removed": { "const": true } }
+    }
+  }
+}
