@@ -1,0 +1,15 @@
+repo: StatPan/datapan-health
+profiles:
+  default:
+    labels:
+      - type:task
+      - status:ready
+      - status:in-progress
+      - status:in-review
+      - status:done
+    milestones:
+      - MVP
+    issue_templates: []
+    review_policy:
+      required_approvals: 0
+      require_code_owners: false
