@@ -1,0 +1,7 @@
+{
+  "schema_version": "datapan.health-probe.v1",
+  "probe_id": "kosis-population",
+  "observed_at": "2026-07-13T00:00:00Z",
+  "status": "healthy",
+  "duration_ms": 142
+}

@@ -1,0 +1,46 @@
+services:
+  gatus:
+    image: ghcr.io/twin/gatus:v5.36.0@sha256:c5f210d095fa78e6efaa20ffeb14803f2ba4f10615e16a6d12087697149617f0
+    ports:
+      - "8080:8080"
+    environment:
+      GATUS_TOKEN: ${GATUS_TOKEN:-local-synthetic-token}
+    volumes:
+      - ./config/gatus.yaml:/config/config.yaml:ro
+      - gatus-data:/data
+
+  runner-healthy:
+    profiles: ["fixtures"]
+    build:
+      context: .
+    environment:
+      GATUS_URL: http://gatus:8080
+      GATUS_TOKEN: ${GATUS_TOKEN:-local-synthetic-token}
+      RECEIPT_ARCHIVE: /data/receipts.jsonl
+    volumes:
+      - ./testdata:/fixtures:ro
+      - receipt-data:/data
+    command: ["-receipt", "/fixtures/receipts/v1/healthy.json"]
+    depends_on:
+      gatus:
+        condition: service_started
+
+  runner-unhealthy:
+    profiles: ["fixtures"]
+    build:
+      context: .
+    environment:
+      GATUS_URL: http://gatus:8080
+      GATUS_TOKEN: ${GATUS_TOKEN:-local-synthetic-token}
+      RECEIPT_ARCHIVE: /data/receipts.jsonl
+    volumes:
+      - ./testdata:/fixtures:ro
+      - receipt-data:/data
+    command: ["-receipt", "/fixtures/receipts/v1/unhealthy.json"]
+    depends_on:
+      gatus:
+        condition: service_started
+
+volumes:
+  gatus-data:
+  receipt-data:

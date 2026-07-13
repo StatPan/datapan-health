@@ -1,0 +1,8 @@
+{
+  "schema_version": "datapan.health-probe.v1",
+  "probe_id": "data-go-kr-weather",
+  "observed_at": "2026-07-13T00:01:00Z",
+  "status": "unhealthy",
+  "duration_ms": 5000,
+  "error_class": "timeout"
+}
