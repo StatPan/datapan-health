@@ -38,7 +38,7 @@ services:
       CANARY_CONFIG: /config/canaries.json
     volumes:
       - ./testdata:/fixtures:ro
-      - ./config/canaries.json:/config/canaries.json:ro
+      - ./config:/config:ro
       - receipt-data:/data
     command: ["-receipt", "/fixtures/receipts/v1/healthy.json"]
     depends_on:
@@ -56,12 +56,31 @@ services:
       CANARY_CONFIG: /config/canaries.json
     volumes:
       - ./testdata:/fixtures:ro
-      - ./config/canaries.json:/config/canaries.json:ro
+      - ./config:/config:ro
       - receipt-data:/data
     command: ["-receipt", "/fixtures/receipts/v1/unhealthy.json"]
     depends_on:
       gatus:
         condition: service_started
 
+  scheduler:
+    profiles: ["scheduler"]
+    build:
+      context: .
+    entrypoint: ["/health-scheduler"]
+    environment:
+      CANARY_CONFIG: /config/canaries.json
+      SCHEDULER_STATE: /data/scheduler-state.json
+      # Local smoke deliberately has no CLI credentials or executable. It only
+      # checks startup/readiness; it can never call a real provider.
+      DATAPAN_BIN: /not-a-cli
+      HEALTH_RUNNER_BIN: /health-runner
+    volumes:
+      - ./config:/config:ro
+      - scheduler-data:/data
+    ports:
+      - "8081:8081"
+
 volumes:
   receipt-data:
+  scheduler-data:
