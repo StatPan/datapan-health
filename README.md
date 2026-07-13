@@ -35,7 +35,7 @@ Gatus에는 `assessment.outcome`, `assessment.category`, `observation.latency_ms
 ```text
 CLI-style redacted receipt -> strict Go adapter -> Gatus external endpoint -> public vertical UI
                                   |                         |
-                         local ReceiptSink         SQLite live state
+                         local ReceiptSink       PostgreSQL live state
 ```
 
 Gatus live state와 UI history는 PostgreSQL에만 둡니다. Production은 `statpan-infra#472`의 platform PostgreSQL에서 dedicated `datapan_health` database와 least-privilege `datapan_health` role을 만들고, runtime secret/render boundary가 `GATUS_DATABASE_URL`을 주입합니다. runner는 PostgreSQL에 연결하지 않습니다. Local Compose/CI smoke만 ephemeral PostgreSQL container를 사용합니다.
