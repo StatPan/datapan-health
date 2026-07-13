@@ -11,11 +11,12 @@ import (
 )
 
 func main() {
-	var receiptPath, gatusURL, token, archivePath string
+	var receiptPath, gatusURL, token, archivePath, canaryPath string
 	flag.StringVar(&receiptPath, "receipt", "", "path to a datapan.health-probe.v1 receipt")
 	flag.StringVar(&gatusURL, "gatus-url", env("GATUS_URL", "http://gatus:8080"), "Gatus base URL")
 	flag.StringVar(&token, "token", os.Getenv("GATUS_TOKEN"), "Gatus external-endpoint token")
 	flag.StringVar(&archivePath, "archive", env("RECEIPT_ARCHIVE", "data/receipts.jsonl"), "local redacted receipt archive")
+	flag.StringVar(&canaryPath, "canaries", env("CANARY_CONFIG", "config/canaries.json"), "public canary identity mapping")
 	flag.Parse()
 
 	if receiptPath == "" || token == "" {
@@ -26,12 +27,20 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
+	canaries, err := health.LoadCanaryConfig(canaryPath)
+	if err != nil {
+		fail(fmt.Errorf("load canaries: %w", err))
+	}
+	endpointKey, err := canaries.Resolve(receipt)
+	if err != nil {
+		fail(err)
+	}
 	sink := health.NewLocalSink(archivePath)
 	if err := sink.Store(context.Background(), receipt); err != nil {
 		fail(fmt.Errorf("archive receipt: %w", err))
 	}
 	pusher := health.NewGatusPusher(gatusURL, token, 10*time.Second)
-	if err := pusher.Push(context.Background(), health.Summarize(receipt)); err != nil {
+	if err := pusher.Push(context.Background(), health.Summarize(receipt, endpointKey)); err != nil {
 		fail(fmt.Errorf("push summary: %w", err))
 	}
 }

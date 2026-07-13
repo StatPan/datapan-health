@@ -1,0 +1,12 @@
+{
+  "canaries": [
+    {
+      "operation_key": "1111111111111111111111111111111111111111111111111111111111111111",
+      "gatus_endpoint_key": "public-data_kosis-population"
+    },
+    {
+      "operation_key": "2222222222222222222222222222222222222222222222222222222222222222",
+      "gatus_endpoint_key": "public-data_data-go-kr-weather"
+    }
+  ]
+}

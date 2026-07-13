@@ -7,6 +7,7 @@ cleanup() {
 trap cleanup EXIT
 
 docker compose up --build --detach gatus
+docker compose --profile fixtures build runner-healthy runner-unhealthy
 ready=false
 for _ in $(seq 1 30); do
   if curl --fail --silent http://127.0.0.1:8080/health >/dev/null; then
@@ -28,7 +29,7 @@ printf '%s' "$statuses" | grep -q 'data-go-kr-weather'
 printf '%s' "$statuses" | grep -q '"success":true'
 printf '%s' "$statuses" | grep -q '"success":false'
 printf '%s' "$statuses" | grep -q 'timeout'
-if printf '%s' "$statuses" | grep -Eiq 'local-synthetic-token|serviceKey|query_url|response_body|rows'; then
+if printf '%s' "$statuses" | grep -Eiq 'local-synthetic-token|dataset_id|endpoint_path|provider_message|next_actions|query_url|response_body|rows'; then
   echo "sensitive data found in public Gatus payload" >&2
   exit 1
 fi

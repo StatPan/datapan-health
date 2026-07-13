@@ -9,6 +9,7 @@ import (
 	"time"
 )
 
+// Summary is the sole public projection of a receipt.
 type Summary struct {
 	EndpointKey string
 	Success     bool
@@ -16,12 +17,12 @@ type Summary struct {
 	ErrorClass  string
 }
 
-func Summarize(receipt Receipt) Summary {
+func Summarize(receipt Receipt, endpointKey string) Summary {
 	return Summary{
-		EndpointKey: "public-data_" + receipt.ProbeID,
-		Success:     receipt.Status == "healthy",
-		Duration:    time.Duration(receipt.DurationMS) * time.Millisecond,
-		ErrorClass:  receipt.ErrorClass,
+		EndpointKey: endpointKey,
+		Success:     receipt.Assessment.Outcome == "healthy",
+		Duration:    time.Duration(receipt.Observation.LatencyMS) * time.Millisecond,
+		ErrorClass:  receipt.Assessment.Outcome + ":" + receipt.Assessment.Category,
 	}
 }
 

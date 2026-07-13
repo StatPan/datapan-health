@@ -17,8 +17,10 @@ services:
       GATUS_URL: http://gatus:8080
       GATUS_TOKEN: ${GATUS_TOKEN:-local-synthetic-token}
       RECEIPT_ARCHIVE: /data/receipts.jsonl
+      CANARY_CONFIG: /config/canaries.json
     volumes:
       - ./testdata:/fixtures:ro
+      - ./config/canaries.json:/config/canaries.json:ro
       - receipt-data:/data
     command: ["-receipt", "/fixtures/receipts/v1/healthy.json"]
     depends_on:
@@ -33,8 +35,10 @@ services:
       GATUS_URL: http://gatus:8080
       GATUS_TOKEN: ${GATUS_TOKEN:-local-synthetic-token}
       RECEIPT_ARCHIVE: /data/receipts.jsonl
+      CANARY_CONFIG: /config/canaries.json
     volumes:
       - ./testdata:/fixtures:ro
+      - ./config/canaries.json:/config/canaries.json:ro
       - receipt-data:/data
     command: ["-receipt", "/fixtures/receipts/v1/unhealthy.json"]
     depends_on:
