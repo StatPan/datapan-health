@@ -33,4 +33,6 @@ if printf '%s' "$statuses" | grep -Eiq 'local-synthetic-token|dataset_id|endpoin
   echo "sensitive data found in public Gatus payload" >&2
   exit 1
 fi
+table_count="$(docker compose exec -T postgres psql -U datapan_health -d datapan_health -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'")"
+[ "$table_count" -gt 0 ]
 curl --fail --silent http://127.0.0.1:8080/ | grep -q '공공데이터 API 상태'

@@ -2,8 +2,18 @@ web:
   port: 8080
 
 storage:
-  type: sqlite
-  path: /data/gatus.db
+  type: postgres
+  path: "${GATUS_DATABASE_URL}"
+  # Seven days at the fastest supported cadence (5 minutes): 12 * 24 * 7.
+  maximum-number-of-results: 2016
+  # Events are state transitions, not raw observations; retain a bounded window.
+  maximum-number-of-events: 100
+
+alerting:
+  custom:
+    # Production injects the platform incident receiver; local Compose uses a non-secret sink.
+    url: "${GATUS_INCIDENT_WEBHOOK_URL}"
+    method: POST
 
 ui:
   title: Datapan 상태
@@ -37,14 +47,32 @@ external-endpoints:
     group: public-data
     token: "${GATUS_TOKEN}"
     heartbeat:
-      interval: 2m
+      interval: 10m
+    alerts:
+      - type: custom
+        description: public API canary incident
+        failure-threshold: 2
+        success-threshold: 2
+        send-on-resolved: true
   - name: data-go-kr-weather
     group: public-data
     token: "${GATUS_TOKEN}"
     heartbeat:
-      interval: 2m
+      interval: 20m
+    alerts:
+      - type: custom
+        description: public API canary incident
+        failure-threshold: 2
+        success-threshold: 2
+        send-on-resolved: true
   - name: ecos-key-statistics
     group: public-data
     token: "${GATUS_TOKEN}"
     heartbeat:
-      interval: 2m
+      interval: 30m
+    alerts:
+      - type: custom
+        description: public API canary incident
+        failure-threshold: 2
+        success-threshold: 2
+        send-on-resolved: true

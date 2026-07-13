@@ -2,11 +2,30 @@
   "canaries": [
     {
       "operation_key": "1111111111111111111111111111111111111111111111111111111111111111",
-      "gatus_endpoint_key": "public-data_kosis-population"
+      "gatus_endpoint_key": "public-data_kosis-population",
+      "tier": "A",
+      "interval_minutes": 5,
+      "heartbeat_minutes": 10,
+      "consecutive_failures_before_incident": 2,
+      "missed_schedules_before_heartbeat": 2
     },
     {
       "operation_key": "2222222222222222222222222222222222222222222222222222222222222222",
-      "gatus_endpoint_key": "public-data_data-go-kr-weather"
+      "gatus_endpoint_key": "public-data_data-go-kr-weather",
+      "tier": "B",
+      "interval_minutes": 10,
+      "heartbeat_minutes": 20,
+      "consecutive_failures_before_incident": 2,
+      "missed_schedules_before_heartbeat": 2
+    },
+    {
+      "operation_key": "3333333333333333333333333333333333333333333333333333333333333333",
+      "gatus_endpoint_key": "public-data_ecos-key-statistics",
+      "tier": "C",
+      "interval_minutes": 15,
+      "heartbeat_minutes": 30,
+      "consecutive_failures_before_incident": 2,
+      "missed_schedules_before_heartbeat": 2
     }
   ]
 }

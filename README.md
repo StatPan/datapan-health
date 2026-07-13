@@ -12,7 +12,7 @@ make quality
 make smoke
 ```
 
-`make smoke`는 Gatus와 runner 이미지를 빌드하고, CLI 계약과 같은 형태의 합성 receipt 두 개를 push합니다. `http://localhost:8080`에서 건강/장애 상태를 확인한 뒤 컨테이너과 볼륨을 정리합니다. 수동으로 화면을 유지하려면 다음을 실행합니다.
+`make smoke`는 Gatus, ephemeral PostgreSQL, runner 이미지를 빌드하고 CLI 계약과 같은 형태의 합성 receipt 두 개를 push합니다. Gatus가 PostgreSQL table을 생성하고 healthy/unhealthy 상태를 기록했는지도 확인한 뒤 컨테이너를 정리합니다. 로컬 DB user/password는 개발 전용 비밀값이 아닌 `datapan_health` / `local-dev-only`입니다. 수동으로 화면을 유지하려면 다음을 실행합니다.
 
 ```sh
 docker compose up -d gatus
@@ -38,8 +38,16 @@ CLI-style redacted receipt -> strict Go adapter -> Gatus external endpoint -> pu
                          local ReceiptSink         SQLite live state
 ```
 
-Gatus SQLite는 현재 상태와 UI history의 유일한 live database입니다. `ReceiptSink`는 detailed but redacted receipt 보존을 교체 가능한 경계로 만들며, MVP 구현은 권한 `0600`의 로컬 JSONL append sink입니다. 이 sink만 receipt의 dataset/provenance/operation metadata를 보존합니다.
+Gatus live state와 UI history는 PostgreSQL에만 둡니다. Production은 `statpan-infra#472`의 platform PostgreSQL에서 dedicated `datapan_health` database와 least-privilege `datapan_health` role을 만들고, runtime secret/render boundary가 `GATUS_DATABASE_URL`을 주입합니다. runner는 PostgreSQL에 연결하지 않습니다. Local Compose/CI smoke만 ephemeral PostgreSQL container를 사용합니다.
+
+`ReceiptSink`는 detailed but redacted receipt 보존을 교체 가능한 경계로 만들며, MVP 구현은 권한 `0600`의 로컬 JSONL append sink입니다. 이 sink만 receipt의 dataset/provenance/operation metadata를 보존합니다.
 
 Hugging Face Dataset은 선택적 장기 archive만 담당합니다. 향후 별도 batch worker가 로컬 redacted receipt를 시간/일 단위로 모아 commit할 수 있지만, 요청 경로에서 commit하지 않고 heartbeat나 live 상태 판단에 사용하지 않습니다. HF 장애가 Gatus push를 막아서는 안 되며 transactional database로 취급하지 않습니다.
 
-Heartbeat는 각 외부 endpoint에 2분으로 설정되어 runner가 receipt 전송을 중단하면 Gatus 자체 실패 결과로 공개됩니다. 공개 endpoint 목록은 `config/gatus.yaml`, operation-to-public-key identity mapping은 `config/canaries.json`이 소유합니다.
+## Cadence, incidents, and retention
+
+`config/canaries.json` is a versioned scheduling boundary: Tier A/B/C mean 5/10/15 minute intended schedules. It also requires a heartbeat of exactly two schedule intervals and `2` consecutive failed observations before the configured Gatus incident alert fires. Direct API unhealthy observations still push immediately; Gatus’s alert/incident threshold avoids public alert noise from a single observation. Runner silence is separate: heartbeat fires only after two missed schedules.
+
+The runner is intentionally one-shot, not a scheduler. A follow-up scheduler must honor this config, add bounded concurrency and per-run jitter, and avoid synchronized provider load.
+
+Gatus retains at most 2,016 results per endpoint (seven days at the fastest five-minute tier) and 100 state-change events. Observation volume is `288×A + 144×B + 96×C` results/day for A/B/C canaries. With twenty canaries entirely in one tier, that is 5,760 / 2,880 / 1,920 observations/day; seven-day maxima are 40,320 / 20,160 / 13,440 results. Platform backup, restore, and longer retention are infra-owned under `statpan-infra#472`, not a second application persistence path.

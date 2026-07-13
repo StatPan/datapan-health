@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -108,6 +109,32 @@ func TestCanaryMappingsMatchConfiguredGatusExternalEndpoints(t *testing.T) {
 		if len(parts) != 2 || !strings.Contains(gatus, "group: "+parts[0]) || !strings.Contains(gatus, "name: "+parts[1]) {
 			t.Fatalf("canary does not resolve to a configured Gatus endpoint: %q", canary.GatusEndpointKey)
 		}
+		if !strings.Contains(gatus, "interval: "+strconv.Itoa(canary.HeartbeatMinutes)+"m") || !strings.Contains(gatus, "failure-threshold: "+strconv.Itoa(canary.ConsecutiveFailuresBeforeIncident)) {
+			t.Fatalf("Gatus cadence or incident threshold is missing for %q", canary.GatusEndpointKey)
+		}
+	}
+}
+
+func TestCanaryConfigRejectsUnboundedOrUnsynchronizedCadence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "canaries.json")
+	invalid := `{"canaries":[{"operation_key":"1111111111111111111111111111111111111111111111111111111111111111","gatus_endpoint_key":"public-data_example","tier":"A","interval_minutes":5,"heartbeat_minutes":5,"consecutive_failures_before_incident":1,"missed_schedules_before_heartbeat":1}]}`
+	if err := os.WriteFile(path, []byte(invalid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadCanaryConfig(path); err == nil {
+		t.Fatal("unsafe cadence was accepted")
+	}
+}
+
+func TestGatusUsesInjectedPostgresWithBoundedRetention(t *testing.T) {
+	gatus := string(mustRead(t, "../../config/gatus.yaml"))
+	for _, required := range []string{"type: postgres", "path: \"${GATUS_DATABASE_URL}\"", "maximum-number-of-results: 2016", "maximum-number-of-events: 100"} {
+		if !strings.Contains(gatus, required) {
+			t.Fatalf("missing Gatus storage contract: %s", required)
+		}
+	}
+	if strings.Contains(gatus, "sqlite") {
+		t.Fatal("SQLite remains in Gatus configuration")
 	}
 }
 

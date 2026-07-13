@@ -13,8 +13,13 @@ type CanaryConfig struct {
 	Canaries []Canary `json:"canaries"`
 }
 type Canary struct {
-	OperationKey     string `json:"operation_key"`
-	GatusEndpointKey string `json:"gatus_endpoint_key"`
+	OperationKey                      string `json:"operation_key"`
+	GatusEndpointKey                  string `json:"gatus_endpoint_key"`
+	Tier                              string `json:"tier"`
+	IntervalMinutes                   int    `json:"interval_minutes"`
+	HeartbeatMinutes                  int    `json:"heartbeat_minutes"`
+	ConsecutiveFailuresBeforeIncident int    `json:"consecutive_failures_before_incident"`
+	MissedSchedulesBeforeHeartbeat    int    `json:"missed_schedules_before_heartbeat"`
 }
 
 func LoadCanaryConfig(path string) (CanaryConfig, error) {
@@ -28,12 +33,28 @@ func LoadCanaryConfig(path string) (CanaryConfig, error) {
 	}
 	seen := map[string]bool{}
 	for _, canary := range config.Canaries {
-		if !sha256Pattern.MatchString(canary.OperationKey) || !gatusKeyPattern.MatchString(canary.GatusEndpointKey) || seen[canary.OperationKey] {
+		if !sha256Pattern.MatchString(canary.OperationKey) || !gatusKeyPattern.MatchString(canary.GatusEndpointKey) || !validCadence(canary) || seen[canary.OperationKey] {
 			return CanaryConfig{}, errors.New("invalid canary configuration")
 		}
 		seen[canary.OperationKey] = true
 	}
 	return config, nil
+}
+
+func validCadence(canary Canary) bool {
+	if canary.ConsecutiveFailuresBeforeIncident != 2 || canary.MissedSchedulesBeforeHeartbeat != 2 || canary.HeartbeatMinutes != canary.IntervalMinutes*canary.MissedSchedulesBeforeHeartbeat {
+		return false
+	}
+	switch canary.Tier {
+	case "A":
+		return canary.IntervalMinutes == 5
+	case "B":
+		return canary.IntervalMinutes == 10
+	case "C":
+		return canary.IntervalMinutes == 15
+	default:
+		return false
+	}
 }
 
 func (c CanaryConfig) Resolve(receipt Receipt) (string, error) {
