@@ -114,6 +114,14 @@ the scheduler writes a redacted `indeterminate/timeout` (or
 as a failed external status. It never reads or logs child output, so a missing
 receipt cannot expose request data or leave a stale successful public status.
 
+Each probe stages its receipt in a unique, mode-0700 directory below the
+configured scheduler state path (the mounted receipt volume in production),
+then removes that directory after delivery or failure. The scheduler never
+uses the container root `TMPDIR` for receipts. If that mounted boundary is not
+writable, it records a bounded redacted scheduler failure without starting the
+CLI; it does not weaken the read-only root filesystem or expose filesystem
+diagnostics.
+
 Provider credentials are passed only to the CLI child through the explicit
 comma-separated `CLI_CREDENTIAL_ENV` variable-name allowlist. Its non-secret
 runtime state (for example `DATAPAN_HOME`) is separately allowlisted through

@@ -186,8 +186,11 @@ func (s *Scheduler) claimAndStart(ctx context.Context, now time.Time, canary Can
 }
 
 func (s *Scheduler) run(parent context.Context, canary Canary, entry CatalogEntry) {
-	dir, err := os.MkdirTemp("", "datapan-health-receipt-")
+	dir, err := s.receiptStagingDir()
 	if err != nil {
+		// The scheduler must not fall back to a writable container root or emit
+		// a raw filesystem error. A failed metric is a bounded, redacted outcome
+		// and prevents an unavailable write boundary from causing provider work.
 		s.metrics.incFailed()
 		return
 	}
@@ -224,6 +227,18 @@ func (s *Scheduler) run(parent context.Context, canary Canary, entry CatalogEntr
 		return
 	}
 	s.metrics.incCompleted()
+}
+
+func (s *Scheduler) receiptStagingDir() (string, error) {
+	// statePath is required at construction and lives on the dedicated mounted
+	// receipt volume in production. Keeping temporary receipts below the same
+	// boundary preserves the read-only container root and makes cleanup local to
+	// the probe lifecycle rather than to a process-global TMPDIR.
+	root := filepath.Join(filepath.Dir(s.statePath), "receipt-staging")
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		return "", err
+	}
+	return os.MkdirTemp(root, "probe-")
 }
 
 func probeDeadline(entry CatalogEntry) time.Duration {
