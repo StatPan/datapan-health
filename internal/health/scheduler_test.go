@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sync"
@@ -18,6 +19,7 @@ type fakeProbeRunner struct {
 	err                 error
 	deadlineRemaining   time.Duration
 	waitForCancellation bool
+	unhealthySecond     bool
 }
 
 func (r *fakeProbeRunner) Run(ctx context.Context, _ Canary, entry CatalogEntry, output string) error {
@@ -43,16 +45,41 @@ func (r *fakeProbeRunner) Run(ctx context.Context, _ Canary, entry CatalogEntry,
 	}
 	// Fixtures use the two reviewed Registry canaries; the runner itself does
 	// not manufacture a receipt or exercise a provider.
-	if entry.OperationID == "dpr-op-00000002" {
+	if r.unhealthySecond && entry.OperationID == "dpr-op-00000002" {
 		raw, err = os.ReadFile("../../testdata/receipts/v1/unhealthy.json")
 	}
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(output, raw, 0o600); err != nil {
+	if err := os.WriteFile(output, fixtureForEntry(raw, entry), 0o600); err != nil {
 		return err
 	}
 	return r.err
+}
+
+func fixtureForEntry(raw []byte, entry CatalogEntry) []byte {
+	var receipt Receipt
+	if err := json.Unmarshal(raw, &receipt); err != nil {
+		panic(err)
+	}
+	receipt.Operation.OperationKey = entry.Aliases.CLIOperationKey
+	receipt.Operation.DatasetID = entry.Aliases.DatasetID
+	receipt.Operation.OperationName = entry.Aliases.OperationName
+	receipt.Operation.Provider = entry.Provider
+	receipt.Operation.EndpointHost = entry.Endpoint.Host
+	receipt.Operation.EndpointPath = entry.Endpoint.Path
+	receipt.Operation.DependencyClass = entry.Endpoint.DependencyClass
+	receipt.Execution.TimeoutMS = int64(entry.Execution.TimeoutCeilingMS)
+	receipt.Execution.RequestBudget = entry.Execution.RequestBudget
+	receipt.Execution.SafeParameterNames = receipt.Execution.SafeParameterNames[:0]
+	for _, parameter := range entry.Execution.SafeParameters {
+		receipt.Execution.SafeParameterNames = append(receipt.Execution.SafeParameterNames, parameter.Name)
+	}
+	result, err := json.Marshal(receipt)
+	if err != nil {
+		panic(err)
+	}
+	return result
 }
 func (r *fakeProbeRunner) count() int { r.mu.Lock(); defer r.mu.Unlock(); return r.runs }
 func (r *fakeProbeRunner) deadline() time.Duration {
@@ -332,6 +359,77 @@ func TestSchedulerPreservesCLIReceiptWhenExitIsNonzero(t *testing.T) {
 	s.Wait()
 	if delivery.count() != 1 || delivery.lastReceipt(t).Assessment.Outcome != "healthy" {
 		t.Fatal("a valid CLI receipt was discarded because of a nonzero exit")
+	}
+}
+
+func TestSchedulerStagesTenCanaryReceiptsOutsideReadOnlyTMPDIRAndCleansUp(t *testing.T) {
+	config := schedulerConfig(t, 10)
+	// A file as TMPDIR makes the default os.MkdirTemp("", ...) path fail. The
+	// scheduler must instead use its explicit state-volume staging boundary.
+	tmpFile := filepath.Join(t.TempDir(), "read-only-tmp")
+	if err := os.WriteFile(tmpFile, []byte("not a directory"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", tmpFile)
+	state := filepath.Join(t.TempDir(), "mounted-receipts", "scheduler-state.json")
+	runner := &fakeProbeRunner{file: "../../testdata/receipts/v1/healthy.json", started: make(chan struct{}, len(config.Canaries))}
+	delivery := &fakeDeliverer{}
+	s, err := NewScheduler(config, state, runner, delivery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(5_000_000, 0).UTC()
+	for _, canary := range config.Canaries {
+		s.mu.Lock()
+		s.state.Slots[canary.OperationID] = slotRecord{NextDue: now}
+		if err := s.saveLocked(); err != nil {
+			s.mu.Unlock()
+			t.Fatal(err)
+		}
+		s.mu.Unlock()
+	}
+	if err := s.ProcessDue(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	for range config.Canaries {
+		<-runner.started
+	}
+	s.Wait()
+	if runner.count() != 10 || delivery.count() != 10 {
+		t.Fatalf("mounted staging did not deliver all receipts: runs=%d deliveries=%d", runner.count(), delivery.count())
+	}
+	staging := filepath.Join(filepath.Dir(state), "receipt-staging")
+	entries, err := os.ReadDir(staging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("temporary receipt directories survived cleanup: %d", len(entries))
+	}
+}
+
+func TestSchedulerFailsWithoutProviderWorkWhenReceiptBoundaryIsUnavailable(t *testing.T) {
+	config := schedulerConfig(t, 1)
+	config.Canaries = config.Canaries[:1]
+	runner := &fakeProbeRunner{file: "../../testdata/receipts/v1/healthy.json"}
+	delivery := &fakeDeliverer{}
+	state := filepath.Join(t.TempDir(), "state.json")
+	s, err := NewScheduler(config, state, runner, delivery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocker := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocker, []byte("blocked"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// This simulates a missing/broken mounted volume after scheduler startup.
+	// It must fail without invoking the CLI or sending unredacted diagnostics.
+	s.statePath = filepath.Join(blocker, "scheduler-state.json")
+	entry, _ := config.Entry(config.Canaries[0])
+	s.run(context.Background(), config.Canaries[0], entry)
+	metrics := s.Metrics()
+	if runner.count() != 0 || delivery.count() != 0 || metrics.RunsFailed != 1 || metrics.RunsCompleted != 0 {
+		t.Fatalf("unavailable receipt boundary was not bounded: runs=%d deliveries=%d metrics=%#v", runner.count(), delivery.count(), metrics)
 	}
 }
 
