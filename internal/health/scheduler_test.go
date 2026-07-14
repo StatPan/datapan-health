@@ -10,22 +10,32 @@ import (
 )
 
 type fakeProbeRunner struct {
-	mu      sync.Mutex
-	runs    int
-	started chan struct{}
-	release chan struct{}
-	file    string
+	mu                  sync.Mutex
+	runs                int
+	started             chan struct{}
+	release             chan struct{}
+	file                string
+	err                 error
+	deadlineRemaining   time.Duration
+	waitForCancellation bool
 }
 
-func (r *fakeProbeRunner) Run(_ context.Context, _ Canary, entry CatalogEntry, output string) error {
+func (r *fakeProbeRunner) Run(ctx context.Context, _ Canary, entry CatalogEntry, output string) error {
 	r.mu.Lock()
 	r.runs++
+	if deadline, ok := ctx.Deadline(); ok {
+		r.deadlineRemaining = time.Until(deadline)
+	}
 	r.mu.Unlock()
 	if r.started != nil {
 		r.started <- struct{}{}
 	}
 	if r.release != nil {
 		<-r.release
+	}
+	if r.waitForCancellation {
+		<-ctx.Done()
+		return ctx.Err()
 	}
 	raw, err := os.ReadFile(r.file)
 	if err != nil {
@@ -39,23 +49,46 @@ func (r *fakeProbeRunner) Run(_ context.Context, _ Canary, entry CatalogEntry, o
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(output, raw, 0o600)
+	if err := os.WriteFile(output, raw, 0o600); err != nil {
+		return err
+	}
+	return r.err
 }
 func (r *fakeProbeRunner) count() int { r.mu.Lock(); defer r.mu.Unlock(); return r.runs }
+func (r *fakeProbeRunner) deadline() time.Duration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.deadlineRemaining
+}
 
 type fakeDeliverer struct {
-	mu    sync.Mutex
-	paths []string
-	fail  error
+	mu       sync.Mutex
+	paths    []string
+	receipts []Receipt
+	fail     error
 }
 
 func (d *fakeDeliverer) Deliver(_ context.Context, path string) error {
+	receipt, err := ReadReceipt(path)
+	if err != nil {
+		return err
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.paths = append(d.paths, path)
+	d.receipts = append(d.receipts, receipt)
 	return d.fail
 }
 func (d *fakeDeliverer) count() int { d.mu.Lock(); defer d.mu.Unlock(); return len(d.paths) }
+func (d *fakeDeliverer) lastReceipt(t *testing.T) Receipt {
+	t.Helper()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.receipts) == 0 {
+		t.Fatal("no delivered receipt")
+	}
+	return d.receipts[len(d.receipts)-1]
+}
 
 func schedulerConfig(t *testing.T, concurrency int) CanaryConfig {
 	t.Helper()
@@ -209,5 +242,110 @@ func TestCatalogReceiptValidationRejectsSemanticDrift(t *testing.T) {
 	receipt.Execution.RequestBudget = 2
 	if err := validateCatalogReceipt(receipt, entry); err == nil {
 		t.Fatal("catalog request budget drift was accepted")
+	}
+}
+
+func TestCLIHealthArgsUseReviewedCatalogTimeout(t *testing.T) {
+	config := schedulerConfig(t, 1)
+	entry, _ := config.Entry(config.Canaries[0])
+	entry.Execution.TimeoutCeilingMS = 15000
+	got := cliHealthArgs(entry, "/tmp/receipt.json")
+	want := []string{"verify", "--ref", entry.Aliases.DatasetID, "--operation", entry.Aliases.OperationName, "--health", "--timeout", "15s", "--output", "/tmp/receipt.json", "--json"}
+	if len(got) != len(want) {
+		t.Fatalf("args length=%d want=%d: %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("arg[%d]=%q want=%q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestSchedulerTimeoutProducesRedactedFallbackAndReplacesStaleSuccess(t *testing.T) {
+	config := schedulerConfig(t, 1)
+	config.Canaries = config.Canaries[:1]
+	canary := config.Canaries[0]
+	entry, _ := config.Entry(canary)
+	// The catalog loader validates production ceilings. A shorter in-memory
+	// value keeps this cancellation test fast while exercising the same path.
+	entry.Execution.TimeoutCeilingMS = 1
+	config.catalog.byID[canary.OperationID] = entry
+	runner := &fakeProbeRunner{started: make(chan struct{}, 1), waitForCancellation: true}
+	delivery := &fakeDeliverer{}
+	s, err := NewScheduler(config, filepath.Join(t.TempDir(), "state.json"), runner, delivery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	due := dueForSlot(canary, 3000, config.JitterSeconds, canary.OperationID)
+	s.mu.Lock()
+	s.state.Slots[canary.OperationID] = slotRecord{NextDue: due}
+	if err := s.saveLocked(); err != nil {
+		s.mu.Unlock()
+		t.Fatal(err)
+	}
+	s.mu.Unlock()
+	if err := s.ProcessDue(context.Background(), due); err != nil {
+		t.Fatal(err)
+	}
+	<-runner.started
+	s.Wait()
+	if got := runner.deadline(); got < 900*time.Millisecond || got > 1100*time.Millisecond {
+		t.Fatalf("scheduler deadline=%s, want catalog ceiling plus bounded receipt grace", got)
+	}
+	if delivery.count() != 1 {
+		t.Fatalf("receipt-less timeout was not delivered: deliveries=%d", delivery.count())
+	}
+	receipt := delivery.lastReceipt(t)
+	if receipt.Assessment.Outcome != "indeterminate" || receipt.Assessment.Category != "timeout" || receipt.Assessment.ReasonCode != "scheduler_timeout_without_cli_receipt" {
+		t.Fatalf("unexpected fallback assessment: %#v", receipt.Assessment)
+	}
+	if !receipt.Redaction.CredentialsRemoved || !receipt.Redaction.QueryValuesRemoved || !receipt.Redaction.ResponseRowsRemoved || Summarize(receipt, canary.GatusEndpointKey).Success {
+		t.Fatal("receipt-less timeout could leak data or preserve a stale healthy status")
+	}
+}
+
+func TestSchedulerPreservesCLIReceiptWhenExitIsNonzero(t *testing.T) {
+	config := schedulerConfig(t, 1)
+	config.Canaries = config.Canaries[:1]
+	runner := &fakeProbeRunner{file: "../../testdata/receipts/v1/healthy.json", started: make(chan struct{}, 1), err: context.DeadlineExceeded}
+	delivery := &fakeDeliverer{}
+	s, err := NewScheduler(config, filepath.Join(t.TempDir(), "state.json"), runner, delivery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canary := config.Canaries[0]
+	due := dueForSlot(canary, 4000, config.JitterSeconds, canary.OperationID)
+	s.mu.Lock()
+	s.state.Slots[canary.OperationID] = slotRecord{NextDue: due}
+	if err := s.saveLocked(); err != nil {
+		s.mu.Unlock()
+		t.Fatal(err)
+	}
+	s.mu.Unlock()
+	if err := s.ProcessDue(context.Background(), due); err != nil {
+		t.Fatal(err)
+	}
+	<-runner.started
+	s.Wait()
+	if delivery.count() != 1 || delivery.lastReceipt(t).Assessment.Outcome != "healthy" {
+		t.Fatal("a valid CLI receipt was discarded because of a nonzero exit")
+	}
+}
+
+func TestReviewedCatalogContainsTenBoundedCanaries(t *testing.T) {
+	config := schedulerConfig(t, 2)
+	if len(config.Canaries) != 10 || len(config.catalog.Entries) != 10 {
+		t.Fatalf("canary/catalog boundary changed: canaries=%d entries=%d", len(config.Canaries), len(config.catalog.Entries))
+	}
+	classes := map[string]int{}
+	for _, canary := range config.Canaries {
+		entry, ok := config.Entry(canary)
+		if !ok || entry.Execution.TimeoutCeilingMS < 1000 || entry.Execution.TimeoutCeilingMS > 30000 || entry.Execution.RequestBudget != 1 {
+			t.Fatalf("invalid reviewed execution boundary for %s", canary.OperationID)
+		}
+		classes[entry.Endpoint.DependencyClass]++
+	}
+	if classes["data_go_kr_gateway"] != 5 || classes["external_endpoint"] != 5 {
+		t.Fatalf("routing coverage changed: %#v", classes)
 	}
 }

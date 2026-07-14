@@ -99,6 +99,15 @@ intentionally forbidden: a timeout or rate-limit receipt is delivered as-is,
 not amplified into more provider traffic. Adapter delivery is also single-shot
 because it is not externally idempotent.
 
+For every invocation, the CLI receives `--timeout` exactly equal to the pinned
+catalog entry’s `execution.timeout_ceiling_ms`. The scheduler also applies a
+deadline of that ceiling plus one second solely to allow the CLI to atomically
+write its redacted timeout receipt. If the child still leaves no valid receipt,
+the scheduler writes a redacted `indeterminate/timeout` (or
+`indeterminate/indeterminate`) receipt from the pinned catalog and pushes it
+as a failed external status. It never reads or logs child output, so a missing
+receipt cannot expose request data or leave a stale successful public status.
+
 Provider credentials are passed only to the CLI child through the explicit
 comma-separated `CLI_CREDENTIAL_ENV` variable-name allowlist. Its non-secret
 runtime state (for example `DATAPAN_HOME`) is separately allowlisted through

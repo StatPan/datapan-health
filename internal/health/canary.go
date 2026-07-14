@@ -116,9 +116,14 @@ func (c CanaryConfig) Entry(canary Canary) (CatalogEntry, bool) {
 type Catalog struct {
 	SchemaVersion   string          `json:"schema_version"`
 	Authority       string          `json:"authority"`
+	SourceRegistry  SourceRegistry  `json:"source_registry"`
 	ReceiptContract ReceiptContract `json:"receipt_contract"`
 	Entries         []CatalogEntry  `json:"entries"`
 	byID            map[string]CatalogEntry
+}
+
+type SourceRegistry struct {
+	SHA256 string `json:"sha256"`
 }
 
 type ReceiptContract struct {
@@ -133,13 +138,17 @@ type CatalogEntry struct {
 		Key       string `json:"key"`
 		Version   int    `json:"version"`
 		Authority string `json:"authority"`
+		MaxLevel  string `json:"max_level"`
 	} `json:"policy"`
 	Aliases struct {
 		DatasetID       string `json:"dataset_id"`
 		OperationName   string `json:"operation_name"`
 		CLIOperationKey string `json:"cli_operation_key"`
 	} `json:"aliases"`
+	Provider string `json:"provider"`
 	Endpoint struct {
+		Host            string `json:"host"`
+		Path            string `json:"path"`
 		DependencyClass string `json:"dependency_class"`
 	} `json:"endpoint"`
 	Eligibility struct {
@@ -168,12 +177,12 @@ func LoadCatalog(path, wantSHA256 string) (Catalog, error) {
 	if err := decoder.Decode(&catalog); err != nil {
 		return Catalog{}, err
 	}
-	if catalog.SchemaVersion != "datapan.health-probe-catalog.v1" || catalog.Authority != "datapan-registry" || catalog.ReceiptContract.Schema != "https://schemas.datapan.dev/datapan.health-probe.v1.schema.json" || catalog.ReceiptContract.OperationKeyAlgorithm != "datapan-cli-health-operation-key-v1" || catalog.ReceiptContract.PolicyAuthority != "datapan-registry" {
+	if catalog.SchemaVersion != "datapan.health-probe-catalog.v1" || catalog.Authority != "datapan-registry" || !sha256Pattern.MatchString(catalog.SourceRegistry.SHA256) || catalog.ReceiptContract.Schema != "https://schemas.datapan.dev/datapan.health-probe.v1.schema.json" || catalog.ReceiptContract.OperationKeyAlgorithm != "datapan-cli-health-operation-key-v1" || catalog.ReceiptContract.PolicyAuthority != "datapan-registry" {
 		return Catalog{}, errors.New("unsupported catalog contract")
 	}
 	catalog.byID = make(map[string]CatalogEntry, len(catalog.Entries))
 	for _, entry := range catalog.Entries {
-		if entry.OperationID == "" || entry.Policy.Key != entry.OperationID || entry.Policy.Version < 1 || entry.Policy.Authority != "datapan-registry" || !sha256Pattern.MatchString(entry.Aliases.CLIOperationKey) || entry.Aliases.DatasetID == "" || entry.Aliases.OperationName == "" || entry.Endpoint.DependencyClass == "" || !entry.Probeable() || entry.Execution.TimeoutCeilingMS < 1000 || entry.Execution.TimeoutCeilingMS > 30000 || entry.Execution.RequestBudget != 1 || len(entry.Execution.SafeParameters) == 0 {
+		if entry.OperationID == "" || entry.Policy.Key != entry.OperationID || entry.Policy.Version < 1 || entry.Policy.Authority != "datapan-registry" || entry.Policy.MaxLevel == "" || !sha256Pattern.MatchString(entry.Aliases.CLIOperationKey) || entry.Aliases.DatasetID == "" || entry.Aliases.OperationName == "" || entry.Provider == "" || entry.Endpoint.Host == "" || entry.Endpoint.Path == "" || entry.Endpoint.DependencyClass == "" || !entry.Probeable() || entry.Execution.TimeoutCeilingMS < 1000 || entry.Execution.TimeoutCeilingMS > 30000 || entry.Execution.RequestBudget != 1 || len(entry.Execution.SafeParameters) == 0 {
 			return Catalog{}, errors.New("invalid catalog entry")
 		}
 		if _, duplicate := catalog.byID[entry.OperationID]; duplicate {
