@@ -1,12 +1,546 @@
 {
   "schema_version": "datapan.health-probe-catalog.v1",
-  "generated_at": "2026-07-11T10:28:35Z",
+  "generated_at": "2026-07-14T10:05:00Z",
   "authority": "datapan-registry",
-  "receipt_contract": {"schema": "https://schemas.datapan.dev/datapan.health-probe.v1.schema.json", "operation_key_algorithm": "datapan-cli-health-operation-key-v1", "policy_authority": "datapan-registry"},
-  "source_registry": {"path": "data/data-go-kr.registry.json", "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644"},
-  "summary": {"entries": 2, "gateway_canaries": 1, "external_adapter_canaries": 1},
+  "receipt_contract": {
+    "schema": "https://schemas.datapan.dev/datapan.health-probe.v1.schema.json",
+    "operation_key_algorithm": "datapan-cli-health-operation-key-v1",
+    "policy_authority": "datapan-registry"
+  },
+  "source_registry": {
+    "path": "data/data-go-kr.registry.json",
+    "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644"
+  },
+  "summary": {
+    "entries": 10,
+    "gateway_canaries": 5,
+    "external_adapter_canaries": 5
+  },
   "entries": [
-    {"operation_id":"dpr-op-00000001","policy":{"key":"dpr-op-00000001","version":1,"authority":"datapan-registry","max_level":"L4"},"aliases":{"dataset_id":"15000480","operation_name":"명절 비상진료기관 FullData 내려받기목록정보 조회","upstream_operation_seq":"17442","cli_operation_key":"472283c645233f09e0285a651fecc659dcbc70d09095e7c20fe590389df5af4d"},"provider":"data.go.kr","endpoint":{"host":"apis.data.go.kr","path":"/B552657/HolidyEmgncClnicInsttInfoInqireService/getHolidyClnicPosblEgytFullDown","dependency_class":"data_go_kr_gateway"},"eligibility":{"status":"credential_required","reason_code":"data_go_kr_service_key_required"},"credential_requirement":{"required":true,"type":"service_key","scope":"operation"},"execution":{"timeout_ceiling_ms":10000,"request_budget":1,"safe_parameters":[{"name":"pageNo","strategy":"bounded_integer","minimum":1,"maximum":1},{"name":"numOfRows","strategy":"bounded_integer","minimum":1,"maximum":1}]},"response_freshness":{"mode":"not_asserted"},"empty_data_policy":"observation_only"},
-    {"operation_id":"dpr-op-00000002","policy":{"key":"dpr-op-00000002","version":1,"authority":"datapan-registry","max_level":"L4"},"aliases":{"dataset_id":"15025329","operation_name":"연도별 등급별 실기 합격률 조회","upstream_operation_seq":"18467","cli_operation_key":"1f7d7e7d276754b82b45c58ccb5e2277380ffe6954030cbbe4443e5f511615a9"},"provider":"data.go.kr","endpoint":{"host":"openapi.q-net.or.kr","path":"/api/service/rest/InquiryStatSVC/getGradSiPassList","dependency_class":"external_endpoint"},"eligibility":{"status":"credential_required","reason_code":"registered_external_adapter_service_key_required"},"credential_requirement":{"required":true,"type":"service_key","scope":"operation"},"execution":{"timeout_ceiling_ms":10000,"request_budget":1,"safe_parameters":[{"name":"baseYY","strategy":"relative_year","offset_years":-3,"minimum_year":2020,"maximum_year":2100}]},"response_freshness":{"mode":"not_asserted"},"empty_data_policy":"observation_only"}
+    {
+      "operation_id": "dpr-op-00000001",
+      "policy": {
+        "key": "dpr-op-00000001",
+        "version": 1,
+        "authority": "datapan-registry",
+        "max_level": "L4"
+      },
+      "aliases": {
+        "dataset_id": "15000480",
+        "operation_name": "명절 비상진료기관 FullData 내려받기목록정보 조회",
+        "upstream_operation_seq": "17442",
+        "cli_operation_key": "472283c645233f09e0285a651fecc659dcbc70d09095e7c20fe590389df5af4d"
+      },
+      "provider": "data.go.kr",
+      "endpoint": {
+        "host": "apis.data.go.kr",
+        "path": "/B552657/HolidyEmgncClnicInsttInfoInqireService/getHolidyClnicPosblEgytFullDown",
+        "dependency_class": "data_go_kr_gateway"
+      },
+      "eligibility": {
+        "status": "credential_required",
+        "reason_code": "data_go_kr_service_key_required"
+      },
+      "credential_requirement": {
+        "required": true,
+        "type": "service_key",
+        "scope": "operation"
+      },
+      "execution": {
+        "timeout_ceiling_ms": 10000,
+        "request_budget": 1,
+        "safe_parameters": [
+          {
+            "name": "pageNo",
+            "strategy": "bounded_integer",
+            "minimum": 1,
+            "maximum": 1
+          },
+          {
+            "name": "numOfRows",
+            "strategy": "bounded_integer",
+            "minimum": 1,
+            "maximum": 1
+          }
+        ]
+      },
+      "response_freshness": {
+        "mode": "not_asserted",
+        "not_asserted_reason": "upstream_timestamp_contract_not_reviewed"
+      },
+      "empty_data_policy": "observation_only"
+    },
+    {
+      "operation_id": "dpr-op-00000002",
+      "policy": {
+        "key": "dpr-op-00000002",
+        "version": 1,
+        "authority": "datapan-registry",
+        "max_level": "L4"
+      },
+      "aliases": {
+        "dataset_id": "15000897",
+        "operation_name": "선거코드",
+        "upstream_operation_seq": "20139",
+        "cli_operation_key": "2be6b4603c85e8717ae6ece5a27520cec75ca8ff6ea955df3d2f339011746ffd"
+      },
+      "provider": "data.go.kr",
+      "endpoint": {
+        "host": "apis.data.go.kr",
+        "path": "/9760000/CommonCodeService/getCommonSgCodeList",
+        "dependency_class": "data_go_kr_gateway"
+      },
+      "eligibility": {
+        "status": "credential_required",
+        "reason_code": "data_go_kr_service_key_required"
+      },
+      "credential_requirement": {
+        "required": true,
+        "type": "service_key",
+        "scope": "operation"
+      },
+      "execution": {
+        "timeout_ceiling_ms": 10000,
+        "request_budget": 1,
+        "safe_parameters": [
+          {
+            "name": "pageNo",
+            "strategy": "bounded_integer",
+            "minimum": 1,
+            "maximum": 1
+          },
+          {
+            "name": "numOfRows",
+            "strategy": "bounded_integer",
+            "minimum": 1,
+            "maximum": 1
+          }
+        ]
+      },
+      "response_freshness": {
+        "mode": "not_asserted",
+        "not_asserted_reason": "upstream_timestamp_contract_not_reviewed"
+      },
+      "empty_data_policy": "observation_only"
+    },
+    {
+      "operation_id": "dpr-op-00000003",
+      "policy": {
+        "key": "dpr-op-00000003",
+        "version": 1,
+        "authority": "datapan-registry",
+        "max_level": "L4"
+      },
+      "aliases": {
+        "dataset_id": "15001697",
+        "operation_name": "의료기관종별코드조회",
+        "upstream_operation_seq": "24807",
+        "cli_operation_key": "1a48855aef8468b90bb04c5f1acdd247c8b13f64e6e7a4a72c1e4f818d0acc8b"
+      },
+      "provider": "data.go.kr",
+      "endpoint": {
+        "host": "apis.data.go.kr",
+        "path": "/B551182/codeInfoService/getMedicInsttClassesCodeList",
+        "dependency_class": "data_go_kr_gateway"
+      },
+      "eligibility": {
+        "status": "credential_required",
+        "reason_code": "data_go_kr_service_key_required"
+      },
+      "credential_requirement": {
+        "required": true,
+        "type": "service_key",
+        "scope": "operation"
+      },
+      "execution": {
+        "timeout_ceiling_ms": 10000,
+        "request_budget": 1,
+        "safe_parameters": [
+          {
+            "name": "pageNo",
+            "strategy": "bounded_integer",
+            "minimum": 1,
+            "maximum": 1
+          },
+          {
+            "name": "numOfRows",
+            "strategy": "bounded_integer",
+            "minimum": 1,
+            "maximum": 1
+          }
+        ]
+      },
+      "response_freshness": {
+        "mode": "not_asserted",
+        "not_asserted_reason": "upstream_timestamp_contract_not_reviewed"
+      },
+      "empty_data_policy": "observation_only"
+    },
+    {
+      "operation_id": "dpr-op-00000004",
+      "policy": {
+        "key": "dpr-op-00000004",
+        "version": 1,
+        "authority": "datapan-registry",
+        "max_level": "L4"
+      },
+      "aliases": {
+        "dataset_id": "15001839",
+        "operation_name": "민간 자원별 제공서비스 정보 조회",
+        "upstream_operation_seq": "26193",
+        "cli_operation_key": "7bf9c6e3212e1efe3de0d042860ea33c3b756348d93a2f9e632a9c3fd75ad754"
+      },
+      "provider": "data.go.kr",
+      "endpoint": {
+        "host": "apis.data.go.kr",
+        "path": "/B554287/resrceInfoInqireService/getPrvateResrcByProvdServiceInfoInqire",
+        "dependency_class": "data_go_kr_gateway"
+      },
+      "eligibility": {
+        "status": "credential_required",
+        "reason_code": "data_go_kr_service_key_required"
+      },
+      "credential_requirement": {
+        "required": true,
+        "type": "service_key",
+        "scope": "operation"
+      },
+      "execution": {
+        "timeout_ceiling_ms": 10000,
+        "request_budget": 1,
+        "safe_parameters": [
+          {
+            "name": "numOfRows",
+            "strategy": "bounded_integer",
+            "minimum": 1,
+            "maximum": 1
+          },
+          {
+            "name": "pageNo",
+            "strategy": "bounded_integer",
+            "minimum": 1,
+            "maximum": 1
+          }
+        ]
+      },
+      "response_freshness": {
+        "mode": "not_asserted",
+        "not_asserted_reason": "upstream_timestamp_contract_not_reviewed"
+      },
+      "empty_data_policy": "observation_only"
+    },
+    {
+      "operation_id": "dpr-op-00000005",
+      "policy": {
+        "key": "dpr-op-00000005",
+        "version": 1,
+        "authority": "datapan-registry",
+        "max_level": "L4"
+      },
+      "aliases": {
+        "dataset_id": "15000863",
+        "operation_name": "문화시설 식당 상세 정보를 조회",
+        "upstream_operation_seq": "51077",
+        "cli_operation_key": "84f641723b50bc2b1b23a4418e18236d842c7fe604fe998ee072d80e25ab1a99"
+      },
+      "provider": "data.go.kr",
+      "endpoint": {
+        "host": "apis.data.go.kr",
+        "path": "/6300000/openapi2022/restrnt/getrestrnt",
+        "dependency_class": "data_go_kr_gateway"
+      },
+      "eligibility": {
+        "status": "credential_required",
+        "reason_code": "data_go_kr_service_key_required"
+      },
+      "credential_requirement": {
+        "required": true,
+        "type": "service_key",
+        "scope": "operation"
+      },
+      "execution": {
+        "timeout_ceiling_ms": 10000,
+        "request_budget": 1,
+        "safe_parameters": [
+          {
+            "name": "pageNo",
+            "strategy": "bounded_integer",
+            "minimum": 1,
+            "maximum": 1
+          },
+          {
+            "name": "numOfRows",
+            "strategy": "bounded_integer",
+            "minimum": 1,
+            "maximum": 1
+          }
+        ]
+      },
+      "response_freshness": {
+        "mode": "not_asserted",
+        "not_asserted_reason": "upstream_timestamp_contract_not_reviewed"
+      },
+      "empty_data_policy": "observation_only"
+    },
+    {
+      "operation_id": "dpr-op-00000006",
+      "policy": {
+        "key": "dpr-op-00000006",
+        "version": 1,
+        "authority": "datapan-registry",
+        "max_level": "L4"
+      },
+      "aliases": {
+        "dataset_id": "15025329",
+        "operation_name": "연도별 등급별 실기 합격률 조회",
+        "upstream_operation_seq": "18467",
+        "cli_operation_key": "1f7d7e7d276754b82b45c58ccb5e2277380ffe6954030cbbe4443e5f511615a9"
+      },
+      "provider": "data.go.kr",
+      "endpoint": {
+        "host": "openapi.q-net.or.kr",
+        "path": "/api/service/rest/InquiryStatSVC/getGradSiPassList",
+        "dependency_class": "external_endpoint"
+      },
+      "eligibility": {
+        "status": "credential_required",
+        "reason_code": "registered_external_adapter_service_key_required"
+      },
+      "credential_requirement": {
+        "required": true,
+        "type": "service_key",
+        "scope": "operation"
+      },
+      "execution": {
+        "timeout_ceiling_ms": 10000,
+        "request_budget": 1,
+        "safe_parameters": [
+          {
+            "name": "baseYY",
+            "strategy": "relative_year",
+            "offset_years": -3,
+            "minimum_year": 2020,
+            "maximum_year": 2100
+          }
+        ]
+      },
+      "response_freshness": {
+        "mode": "not_asserted",
+        "not_asserted_reason": "upstream_timestamp_contract_not_reviewed"
+      },
+      "empty_data_policy": "observation_only"
+    },
+    {
+      "operation_id": "dpr-op-00000007",
+      "policy": {
+        "key": "dpr-op-00000007",
+        "version": 1,
+        "authority": "datapan-registry",
+        "max_level": "L4"
+      },
+      "aliases": {
+        "dataset_id": "15004206",
+        "operation_name": "주변지역 기상정보 실시간 데이터 조회",
+        "upstream_operation_seq": "6836",
+        "cli_operation_key": "c42a347c1c1970a581081f7969cd7c9afec452b9f68390b945a58acdecf93431"
+      },
+      "provider": "data.go.kr",
+      "endpoint": {
+        "host": "www.korad.or.kr",
+        "path": "/openapi/service/weatherMoniterSvc",
+        "dependency_class": "external_endpoint"
+      },
+      "eligibility": {
+        "status": "credential_required",
+        "reason_code": "registered_external_adapter_service_key_required"
+      },
+      "credential_requirement": {
+        "required": true,
+        "type": "service_key",
+        "scope": "operation"
+      },
+      "execution": {
+        "timeout_ceiling_ms": 10000,
+        "request_budget": 1,
+        "safe_parameters": [
+          {
+            "name": "pageNo",
+            "strategy": "bounded_integer",
+            "minimum": 1,
+            "maximum": 1
+          },
+          {
+            "name": "numOfRows",
+            "strategy": "bounded_integer",
+            "minimum": 1,
+            "maximum": 1
+          }
+        ]
+      },
+      "response_freshness": {
+        "mode": "not_asserted",
+        "not_asserted_reason": "upstream_timestamp_contract_not_reviewed"
+      },
+      "empty_data_policy": "observation_only"
+    },
+    {
+      "operation_id": "dpr-op-00000008",
+      "policy": {
+        "key": "dpr-op-00000008",
+        "version": 1,
+        "authority": "datapan-registry",
+        "max_level": "L4"
+      },
+      "aliases": {
+        "dataset_id": "15052669",
+        "operation_name": "교통카드충전소정보 조회",
+        "upstream_operation_seq": "12894",
+        "cli_operation_key": "624a1ff97bdca905c13d062d684a69e350da7c474d4eb2ffbd013160762527f1"
+      },
+      "provider": "data.go.kr",
+      "endpoint": {
+        "host": "openapi.its.ulsan.kr",
+        "path": "/UlsanAPI/TCardStoreInfo.xo",
+        "dependency_class": "external_endpoint"
+      },
+      "eligibility": {
+        "status": "credential_required",
+        "reason_code": "registered_external_adapter_service_key_required"
+      },
+      "credential_requirement": {
+        "required": true,
+        "type": "service_key",
+        "scope": "operation"
+      },
+      "execution": {
+        "timeout_ceiling_ms": 10000,
+        "request_budget": 1,
+        "safe_parameters": [
+          {
+            "name": "pageNo",
+            "strategy": "bounded_integer",
+            "minimum": 1,
+            "maximum": 1
+          },
+          {
+            "name": "numOfRows",
+            "strategy": "bounded_integer",
+            "minimum": 1,
+            "maximum": 1
+          }
+        ]
+      },
+      "response_freshness": {
+        "mode": "not_asserted",
+        "not_asserted_reason": "upstream_timestamp_contract_not_reviewed"
+      },
+      "empty_data_policy": "observation_only"
+    },
+    {
+      "operation_id": "dpr-op-00000009",
+      "policy": {
+        "key": "dpr-op-00000009",
+        "version": 1,
+        "authority": "datapan-registry",
+        "max_level": "L4"
+      },
+      "aliases": {
+        "dataset_id": "15109030",
+        "operation_name": "버스 차고지 현황 정보",
+        "upstream_operation_seq": "47278",
+        "cli_operation_key": "ea622246361f2f3efb93274772e327c1026ae0dc6c2cda6cd7af4426c771a5d7"
+      },
+      "provider": "data.go.kr",
+      "endpoint": {
+        "host": "data.sisul.or.kr",
+        "path": "/AutoAPI/service/OpenDB/Publicgarage/getPublicgarageQry",
+        "dependency_class": "external_endpoint"
+      },
+      "eligibility": {
+        "status": "credential_required",
+        "reason_code": "registered_external_adapter_service_key_required"
+      },
+      "credential_requirement": {
+        "required": true,
+        "type": "service_key",
+        "scope": "operation"
+      },
+      "execution": {
+        "timeout_ceiling_ms": 10000,
+        "request_budget": 1,
+        "safe_parameters": [
+          {
+            "name": "pageNo",
+            "strategy": "bounded_integer",
+            "minimum": 1,
+            "maximum": 1
+          },
+          {
+            "name": "numOfRows",
+            "strategy": "bounded_integer",
+            "minimum": 1,
+            "maximum": 1
+          }
+        ]
+      },
+      "response_freshness": {
+        "mode": "not_asserted",
+        "not_asserted_reason": "upstream_timestamp_contract_not_reviewed"
+      },
+      "empty_data_policy": "observation_only"
+    },
+    {
+      "operation_id": "dpr-op-00000010",
+      "policy": {
+        "key": "dpr-op-00000010",
+        "version": 1,
+        "authority": "datapan-registry",
+        "max_level": "L4"
+      },
+      "aliases": {
+        "dataset_id": "15029006",
+        "operation_name": "대학별 학과정보 조회",
+        "upstream_operation_seq": "22510",
+        "cli_operation_key": "12fadcfb158d844fa5c0c09bb4384c1b90c2347896175c515548eb06acdcedda"
+      },
+      "provider": "data.go.kr",
+      "endpoint": {
+        "host": "openapi.q-net.or.kr",
+        "path": "/api/service/rest/InquiryUnivUdeptSVC/getList",
+        "dependency_class": "external_endpoint"
+      },
+      "eligibility": {
+        "status": "credential_required",
+        "reason_code": "registered_external_adapter_service_key_required"
+      },
+      "credential_requirement": {
+        "required": true,
+        "type": "service_key",
+        "scope": "operation"
+      },
+      "execution": {
+        "timeout_ceiling_ms": 10000,
+        "request_budget": 1,
+        "safe_parameters": [
+          {
+            "name": "pageNo",
+            "strategy": "bounded_integer",
+            "minimum": 1,
+            "maximum": 1
+          },
+          {
+            "name": "numOfRows",
+            "strategy": "bounded_integer",
+            "minimum": 1,
+            "maximum": 1
+          }
+        ]
+      },
+      "response_freshness": {
+        "mode": "not_asserted",
+        "not_asserted_reason": "upstream_timestamp_contract_not_reviewed"
+      },
+      "empty_data_policy": "observation_only"
+    }
   ]
 }

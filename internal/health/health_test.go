@@ -115,6 +115,47 @@ func TestCanaryMappingsMatchConfiguredGatusExternalEndpoints(t *testing.T) {
 	}
 }
 
+func TestSignedTenCanaryReleaseHasExactPublicMappingAndCadence(t *testing.T) {
+	canaries, err := LoadCanaryConfig("../../config/canaries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := map[string]struct {
+		endpoint string
+		tier     string
+		interval int
+	}{
+		"dpr-op-00000001": {"public-data_holiday-emergency-clinics", "A", 5},
+		"dpr-op-00000002": {"public-data_election-codes", "B", 10},
+		"dpr-op-00000003": {"public-data_medical-institution-codes", "C", 15},
+		"dpr-op-00000004": {"public-data_private-resource-services", "B", 10},
+		"dpr-op-00000005": {"public-data_culture-facility-restaurants", "C", 15},
+		"dpr-op-00000006": {"public-data_qnet-practical-pass-rate", "A", 5},
+		"dpr-op-00000007": {"public-data_weather-nearby-realtime", "B", 10},
+		"dpr-op-00000008": {"public-data_transit-card-chargers", "C", 15},
+		"dpr-op-00000009": {"public-data_bus-depot-status", "B", 10},
+		"dpr-op-00000010": {"public-data_university-majors", "C", 15},
+	}
+	if len(canaries.Canaries) != len(expected) || len(canaries.catalog.Entries) != len(expected) {
+		t.Fatalf("signed release must expose exactly ten canaries: configured=%d catalog=%d", len(canaries.Canaries), len(canaries.catalog.Entries))
+	}
+	classes := map[string]int{}
+	for _, canary := range canaries.Canaries {
+		want, ok := expected[canary.OperationID]
+		if !ok || canary.GatusEndpointKey != want.endpoint || canary.Tier != want.tier || canary.IntervalMinutes != want.interval || canary.HeartbeatMinutes != want.interval*2 {
+			t.Fatalf("unexpected signed canary mapping: %#v", canary)
+		}
+		entry, ok := canaries.Entry(canary)
+		if !ok {
+			t.Fatalf("canary is absent from pinned catalog: %s", canary.OperationID)
+		}
+		classes[entry.Endpoint.DependencyClass]++
+	}
+	if classes["data_go_kr_gateway"] != 5 || classes["external_endpoint"] != 5 {
+		t.Fatalf("expected five gateway and five external adapter canaries: %#v", classes)
+	}
+}
+
 func TestCanaryConfigRejectsUnboundedOrUnsynchronizedCadence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "canaries.json")
 	invalid := `{"canaries":[{"operation_key":"1111111111111111111111111111111111111111111111111111111111111111","gatus_endpoint_key":"public-data_example","tier":"A","interval_minutes":5,"heartbeat_minutes":5,"consecutive_failures_before_incident":1,"missed_schedules_before_heartbeat":1}]}`

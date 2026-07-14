@@ -81,8 +81,8 @@ Publishing is optional and retried only after a complete local export; it is nev
 
 ## Scheduler
 
-`health-scheduler` is the composition layer for ticket #4. It pins the
-manifest-bound Registry #550 catalog in `config/registry`, selects reviewed
+`health-scheduler` is the composition layer for ticket #4. It pins the signed
+Registry `v2026.07.14` ten-canary catalog in `config/registry`, selects reviewed
 `operation_id` values from `config/canaries.json`, and invokes only the CLI’s
 documented one-shot surface: `datapan verify --ref … --operation … --health
 --output … --json`. CLI owns Registry trust, safe parameter generation,

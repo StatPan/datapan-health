@@ -1,6 +1,6 @@
 {
   "catalog_path": "registry/health-probe-catalog.json",
-  "catalog_sha256": "5ca3a6c353c558c5a333fac25238a9db3fe3adadc212c8fa144a2970da43d7e3",
+  "catalog_sha256": "e84f0da2f532a32833def1118a4610bf2322f370783d120b84cf85306d244840",
   "global_concurrency": 2,
   "jitter_seconds": 30,
   "canaries": [
@@ -15,10 +15,82 @@
     },
     {
       "operation_id": "dpr-op-00000002",
-      "gatus_endpoint_key": "public-data_qnet-practical-pass-rate",
+      "gatus_endpoint_key": "public-data_election-codes",
       "tier": "B",
       "interval_minutes": 10,
       "heartbeat_minutes": 20,
+      "consecutive_failures_before_incident": 2,
+      "missed_schedules_before_heartbeat": 2
+    },
+    {
+      "operation_id": "dpr-op-00000003",
+      "gatus_endpoint_key": "public-data_medical-institution-codes",
+      "tier": "C",
+      "interval_minutes": 15,
+      "heartbeat_minutes": 30,
+      "consecutive_failures_before_incident": 2,
+      "missed_schedules_before_heartbeat": 2
+    },
+    {
+      "operation_id": "dpr-op-00000004",
+      "gatus_endpoint_key": "public-data_private-resource-services",
+      "tier": "B",
+      "interval_minutes": 10,
+      "heartbeat_minutes": 20,
+      "consecutive_failures_before_incident": 2,
+      "missed_schedules_before_heartbeat": 2
+    },
+    {
+      "operation_id": "dpr-op-00000005",
+      "gatus_endpoint_key": "public-data_culture-facility-restaurants",
+      "tier": "C",
+      "interval_minutes": 15,
+      "heartbeat_minutes": 30,
+      "consecutive_failures_before_incident": 2,
+      "missed_schedules_before_heartbeat": 2
+    },
+    {
+      "operation_id": "dpr-op-00000006",
+      "gatus_endpoint_key": "public-data_qnet-practical-pass-rate",
+      "tier": "A",
+      "interval_minutes": 5,
+      "heartbeat_minutes": 10,
+      "consecutive_failures_before_incident": 2,
+      "missed_schedules_before_heartbeat": 2
+    },
+    {
+      "operation_id": "dpr-op-00000007",
+      "gatus_endpoint_key": "public-data_weather-nearby-realtime",
+      "tier": "B",
+      "interval_minutes": 10,
+      "heartbeat_minutes": 20,
+      "consecutive_failures_before_incident": 2,
+      "missed_schedules_before_heartbeat": 2
+    },
+    {
+      "operation_id": "dpr-op-00000008",
+      "gatus_endpoint_key": "public-data_transit-card-chargers",
+      "tier": "C",
+      "interval_minutes": 15,
+      "heartbeat_minutes": 30,
+      "consecutive_failures_before_incident": 2,
+      "missed_schedules_before_heartbeat": 2
+    },
+    {
+      "operation_id": "dpr-op-00000009",
+      "gatus_endpoint_key": "public-data_bus-depot-status",
+      "tier": "B",
+      "interval_minutes": 10,
+      "heartbeat_minutes": 20,
+      "consecutive_failures_before_incident": 2,
+      "missed_schedules_before_heartbeat": 2
+    },
+    {
+      "operation_id": "dpr-op-00000010",
+      "gatus_endpoint_key": "public-data_university-majors",
+      "tier": "C",
+      "interval_minutes": 15,
+      "heartbeat_minutes": 30,
       "consecutive_failures_before_incident": 2,
       "missed_schedules_before_heartbeat": 2
     }
