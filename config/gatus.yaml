@@ -54,11 +54,99 @@ external-endpoints:
         failure-threshold: 2
         success-threshold: 2
         send-on-resolved: true
-  - name: qnet-practical-pass-rate
+  - name: election-codes
     group: public-data
     token: "${GATUS_TOKEN}"
     heartbeat:
       interval: 20m
+    alerts:
+      - type: custom
+        description: public API canary incident
+        failure-threshold: 2
+        success-threshold: 2
+        send-on-resolved: true
+  - name: medical-institution-codes
+    group: public-data
+    token: "${GATUS_TOKEN}"
+    heartbeat:
+      interval: 30m
+    alerts:
+      - type: custom
+        description: public API canary incident
+        failure-threshold: 2
+        success-threshold: 2
+        send-on-resolved: true
+  - name: private-resource-services
+    group: public-data
+    token: "${GATUS_TOKEN}"
+    heartbeat:
+      interval: 20m
+    alerts:
+      - type: custom
+        description: public API canary incident
+        failure-threshold: 2
+        success-threshold: 2
+        send-on-resolved: true
+  - name: culture-facility-restaurants
+    group: public-data
+    token: "${GATUS_TOKEN}"
+    heartbeat:
+      interval: 30m
+    alerts:
+      - type: custom
+        description: public API canary incident
+        failure-threshold: 2
+        success-threshold: 2
+        send-on-resolved: true
+  - name: qnet-practical-pass-rate
+    group: public-data
+    token: "${GATUS_TOKEN}"
+    heartbeat:
+      interval: 10m
+    alerts:
+      - type: custom
+        description: public API canary incident
+        failure-threshold: 2
+        success-threshold: 2
+        send-on-resolved: true
+  - name: weather-nearby-realtime
+    group: public-data
+    token: "${GATUS_TOKEN}"
+    heartbeat:
+      interval: 20m
+    alerts:
+      - type: custom
+        description: public API canary incident
+        failure-threshold: 2
+        success-threshold: 2
+        send-on-resolved: true
+  - name: transit-card-chargers
+    group: public-data
+    token: "${GATUS_TOKEN}"
+    heartbeat:
+      interval: 30m
+    alerts:
+      - type: custom
+        description: public API canary incident
+        failure-threshold: 2
+        success-threshold: 2
+        send-on-resolved: true
+  - name: bus-depot-status
+    group: public-data
+    token: "${GATUS_TOKEN}"
+    heartbeat:
+      interval: 20m
+    alerts:
+      - type: custom
+        description: public API canary incident
+        failure-threshold: 2
+        success-threshold: 2
+        send-on-resolved: true
+  - name: university-majors
+    group: public-data
+    token: "${GATUS_TOKEN}"
+    heartbeat:
+      interval: 30m
     alerts:
       - type: custom
         description: public API canary incident

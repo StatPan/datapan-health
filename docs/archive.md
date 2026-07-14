@@ -36,7 +36,7 @@ Monthly observation compaction uses DuckDB and performs a bidirectional
 `EXCEPT ALL` equivalence check before publishing the compacted file.
 
 Each manifest records canonical contract provenance: datapan-cli PR #150's
-receipt-schema commit/digest and datapan-registry #550's catalog
+receipt-schema commit/digest and datapan-registry #557's catalog
 revision/digest. The dataset card is [dataset-card/README.md](../dataset-card/README.md).
 
 ## Publishing
