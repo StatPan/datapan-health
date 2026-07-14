@@ -17,12 +17,24 @@ var gatusKeyPattern = regexp.MustCompile(`^[a-z0-9-]+_[a-z0-9-]+$`)
 // CanaryConfig is deliberately an allowlist of Registry operation IDs, not a
 // second operation catalog. The detailed probe policy remains Registry-owned.
 type CanaryConfig struct {
-	CatalogPath       string   `json:"catalog_path"`
-	CatalogSHA256     string   `json:"catalog_sha256"`
-	GlobalConcurrency int      `json:"global_concurrency"`
-	JitterSeconds     int      `json:"jitter_seconds"`
-	Canaries          []Canary `json:"canaries"`
-	catalog           Catalog
+	CatalogPath           string                `json:"catalog_path"`
+	CatalogSHA256         string                `json:"catalog_sha256"`
+	ConsumptionProvenance ConsumptionProvenance `json:"consumption_provenance"`
+	GlobalConcurrency     int                   `json:"global_concurrency"`
+	JitterSeconds         int                   `json:"jitter_seconds"`
+	Canaries              []Canary              `json:"canaries"`
+	catalog               Catalog
+}
+
+// ConsumptionProvenance binds the deployed Health configuration to the
+// immutable Registry Dataset revision as well as the signed catalog source.
+// They are intentionally distinct: public archive rows expose the Dataset
+// revision, while source_registry_sha256 verifies the catalog's source input.
+type ConsumptionProvenance struct {
+	RegistryDatasetRevision string `json:"registry_dataset_revision"`
+	SourceRegistrySHA256    string `json:"source_registry_sha256"`
+	ReleaseTag              string `json:"release_tag"`
+	ReleaseManifestSHA256   string `json:"release_manifest_sha256"`
 }
 
 type Canary struct {
@@ -44,7 +56,7 @@ func LoadCanaryConfig(path string) (CanaryConfig, error) {
 	if err := json.Unmarshal(data, &config); err != nil {
 		return CanaryConfig{}, errors.New("invalid canary configuration")
 	}
-	if config.GlobalConcurrency < 1 || config.GlobalConcurrency > 32 || config.JitterSeconds < 0 || !sha256Pattern.MatchString(config.CatalogSHA256) || config.CatalogPath == "" {
+	if config.GlobalConcurrency < 1 || config.GlobalConcurrency > 32 || config.JitterSeconds < 0 || !sha256Pattern.MatchString(config.CatalogSHA256) || config.CatalogPath == "" || !validConsumptionProvenance(config.ConsumptionProvenance) {
 		return CanaryConfig{}, errors.New("invalid canary configuration")
 	}
 	catalogPath := config.CatalogPath
@@ -53,6 +65,9 @@ func LoadCanaryConfig(path string) (CanaryConfig, error) {
 	}
 	catalog, err := LoadCatalog(catalogPath, config.CatalogSHA256)
 	if err != nil {
+		return CanaryConfig{}, errors.New("invalid canary configuration")
+	}
+	if config.ConsumptionProvenance.SourceRegistrySHA256 != catalog.SourceRegistry.SHA256 {
 		return CanaryConfig{}, errors.New("invalid canary configuration")
 	}
 	seen := map[string]bool{}
@@ -71,6 +86,10 @@ func LoadCanaryConfig(path string) (CanaryConfig, error) {
 	}
 	config.CatalogPath, config.catalog = catalogPath, catalog
 	return config, nil
+}
+
+func validConsumptionProvenance(provenance ConsumptionProvenance) bool {
+	return commitPattern.MatchString(provenance.RegistryDatasetRevision) && sha256Pattern.MatchString(provenance.SourceRegistrySHA256) && releaseTagPattern.MatchString(provenance.ReleaseTag) && sha256Pattern.MatchString(provenance.ReleaseManifestSHA256)
 }
 
 func validCadence(canary Canary) bool {

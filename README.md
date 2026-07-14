@@ -90,6 +90,12 @@ timeouts, request budget, and receipt classification; the scheduler validates
 the returned receipt against the pinned entry and invokes the existing
 `health-runner` adapter exactly once.
 
+The pinned canary configuration separately records the immutable Registry
+Dataset revision, catalog source SHA-256, release tag and manifest SHA-256.
+They have distinct meanings: public archive rows use the Dataset revision,
+while the source SHA validates the signed catalog input and must never replace
+that revision.
+
 Slots are aligned to cadence boundaries and receive deterministic, bounded
 jitter. A state file is fsynced before an invocation claims a slot. Restarting
 therefore skips an in-flight/overdue slot rather than replaying it; there is no

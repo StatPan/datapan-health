@@ -18,7 +18,9 @@ const SchemaVersion = "datapan.health-probe.v1"
 var (
 	uuidPattern               = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 	sha256Pattern             = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	commitPattern             = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	catalogOperationIDPattern = regexp.MustCompile(`^dpr-op-[0-9]{8}$`)
+	releaseTagPattern         = regexp.MustCompile(`^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}$`)
 )
 
 // Receipt is the canonical datapan.health-probe.v1 contract from datapan-cli.

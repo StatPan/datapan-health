@@ -299,6 +299,9 @@ func TestSchedulerTimeoutProducesRedactedFallbackAndReplacesStaleSuccess(t *test
 	if receipt.Assessment.Outcome != "indeterminate" || receipt.Assessment.Category != "timeout" || receipt.Assessment.ReasonCode != "scheduler_timeout_without_cli_receipt" {
 		t.Fatalf("unexpected fallback assessment: %#v", receipt.Assessment)
 	}
+	if receipt.Registry.DatasetRevision != config.ConsumptionProvenance.RegistryDatasetRevision || receipt.Registry.RegistrySHA256 != config.ConsumptionProvenance.SourceRegistrySHA256 || receipt.Registry.ManifestSHA256 != config.ConsumptionProvenance.ReleaseManifestSHA256 || receipt.Registry.DatasetRevision == receipt.Registry.RegistrySHA256 {
+		t.Fatalf("fallback conflated immutable Dataset and source Registry provenance: %#v", receipt.Registry)
+	}
 	if !receipt.Redaction.CredentialsRemoved || !receipt.Redaction.QueryValuesRemoved || !receipt.Redaction.ResponseRowsRemoved || Summarize(receipt, canary.GatusEndpointKey).Success {
 		t.Fatal("receipt-less timeout could leak data or preserve a stale healthy status")
 	}
@@ -334,6 +337,12 @@ func TestSchedulerPreservesCLIReceiptWhenExitIsNonzero(t *testing.T) {
 
 func TestReviewedCatalogContainsTenBoundedCanaries(t *testing.T) {
 	config := schedulerConfig(t, 2)
+	if config.ConsumptionProvenance.RegistryDatasetRevision != "10f375182f992bc700468dd9d6e2930acd3bf8e8" || config.ConsumptionProvenance.SourceRegistrySHA256 != "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644" || config.ConsumptionProvenance.ReleaseTag != "v2026.07.14" || config.ConsumptionProvenance.ReleaseManifestSHA256 != "0b78c286b8cfa889ddccf51f83a9d8adc4eac8617ea6d9fd2d66d1fcf668281f" {
+		t.Fatalf("immutable Registry consumption provenance changed: %#v", config.ConsumptionProvenance)
+	}
+	if config.ConsumptionProvenance.SourceRegistrySHA256 != config.catalog.SourceRegistry.SHA256 || config.ConsumptionProvenance.RegistryDatasetRevision == config.ConsumptionProvenance.SourceRegistrySHA256 {
+		t.Fatalf("Dataset and source Registry provenance were conflated: %#v", config.ConsumptionProvenance)
+	}
 	if len(config.Canaries) != 10 || len(config.catalog.Entries) != 10 {
 		t.Fatalf("canary/catalog boundary changed: canaries=%d entries=%d", len(config.Canaries), len(config.catalog.Entries))
 	}

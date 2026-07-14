@@ -258,7 +258,7 @@ func (s *Scheduler) receiptlessOutcome(entry CatalogEntry, started, observed tim
 			EndpointHost: entry.Endpoint.Host, EndpointPath: entry.Endpoint.Path,
 			DependencyClass: entry.Endpoint.DependencyClass,
 		},
-		Registry:    Registry{DatasetID: entry.Aliases.DatasetID, DatasetRevision: s.config.catalog.SourceRegistry.SHA256, RegistrySHA256: s.config.catalog.SourceRegistry.SHA256},
+		Registry:    Registry{DatasetID: entry.Aliases.DatasetID, DatasetRevision: s.config.ConsumptionProvenance.RegistryDatasetRevision, RegistrySHA256: s.config.ConsumptionProvenance.SourceRegistrySHA256, ManifestSHA256: s.config.ConsumptionProvenance.ReleaseManifestSHA256},
 		Policy:      &Policy{Key: entry.Policy.Key, Version: entry.Policy.Version, Authority: entry.Policy.Authority, MaxLevel: entry.Policy.MaxLevel},
 		Execution:   Execution{CLIVersion: "scheduler-receiptless-fallback", Attempted: true, TimeoutMS: int64(entry.Execution.TimeoutCeilingMS), RequestBudget: entry.Execution.RequestBudget, SafeParameterNames: parameterNames},
 		Observation: Observation{MaxLevel: entry.Policy.MaxLevel, LatencyMS: latency, ProviderMessageClass: "not_observed", DataPresence: "not_observed", SchemaStatus: "not_observed", FreshnessStatus: "not_observed"},
