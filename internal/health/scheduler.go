@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
@@ -13,6 +14,8 @@ import (
 	"sync"
 	"time"
 )
+
+const receiptWriteGrace = time.Second
 
 // ProbeRunner is intentionally a process boundary: datapan-cli owns probing,
 // trust, parameter planning, and receipt semantics.
@@ -190,20 +193,96 @@ func (s *Scheduler) run(parent context.Context, canary Canary, entry CatalogEntr
 	}
 	defer os.RemoveAll(dir)
 	receiptPath := filepath.Join(dir, "receipt.json")
+	started := time.Now().UTC()
+	probeCtx, cancelProbe := context.WithTimeout(parent, probeDeadline(entry))
+	defer cancelProbe()
 	// A non-zero CLI exit is expected for unhealthy/skipped outcomes. A receipt
 	// still must exist and is the sole authority for the public projection.
-	cliErr := s.runner.Run(parent, canary, entry, receiptPath)
+	cliErr := s.runner.Run(probeCtx, canary, entry, receiptPath)
 	receipt, receiptErr := ReadReceipt(receiptPath)
-	if receiptErr != nil || validateCatalogReceipt(receipt, entry) != nil {
+	if receiptErr != nil {
+		// A receipt-less bounded child must replace, not leave behind, an older
+		// healthy status. This fallback never reads child output or request data.
+		fallback, err := s.receiptlessOutcome(entry, started, time.Now().UTC(), cliErr, probeCtx.Err())
+		if err != nil || writeReceipt(receiptPath, fallback) != nil {
+			s.metrics.incFailed()
+			return
+		}
+		receipt = fallback
+	}
+	if validateCatalogReceipt(receipt, entry) != nil {
 		s.metrics.incFailed()
 		_ = cliErr // errors may contain provider details and are deliberately not logged.
 		return
 	}
-	if err := s.deliverer.Deliver(parent, receiptPath); err != nil {
+	// The CLI owns the execution ceiling. Delivery gets an independent short
+	// window so a timeout receipt can be projected after the probe deadline.
+	deliveryCtx, cancelDelivery := context.WithTimeout(parent, 10*time.Second)
+	defer cancelDelivery()
+	if err := s.deliverer.Deliver(deliveryCtx, receiptPath); err != nil {
 		s.metrics.incDeliveryFailed()
 		return
 	}
 	s.metrics.incCompleted()
+}
+
+func probeDeadline(entry CatalogEntry) time.Duration {
+	return time.Duration(entry.Execution.TimeoutCeilingMS)*time.Millisecond + receiptWriteGrace
+}
+
+func (s *Scheduler) receiptlessOutcome(entry CatalogEntry, started, observed time.Time, cliErr, contextErr error) (Receipt, error) {
+	probeID, err := schedulerProbeID()
+	if err != nil {
+		return Receipt{}, err
+	}
+	category, reason := "indeterminate", "cli_receipt_missing"
+	if errors.Is(cliErr, context.DeadlineExceeded) || errors.Is(contextErr, context.DeadlineExceeded) {
+		category, reason = "timeout", "scheduler_timeout_without_cli_receipt"
+	}
+	parameterNames := make([]string, 0, len(entry.Execution.SafeParameters))
+	for _, parameter := range entry.Execution.SafeParameters {
+		parameterNames = append(parameterNames, parameter.Name)
+	}
+	sort.Strings(parameterNames)
+	latency := observed.Sub(started).Milliseconds()
+	if latency < 0 {
+		latency = 0
+	}
+	return Receipt{
+		SchemaVersion: SchemaVersion,
+		ProbeID:       probeID,
+		ObservedAt:    observed.UTC(),
+		Operation: Operation{
+			OperationKey: entry.Aliases.CLIOperationKey, DatasetID: entry.Aliases.DatasetID,
+			OperationName: entry.Aliases.OperationName, Provider: entry.Provider,
+			EndpointHost: entry.Endpoint.Host, EndpointPath: entry.Endpoint.Path,
+			DependencyClass: entry.Endpoint.DependencyClass,
+		},
+		Registry:    Registry{DatasetID: entry.Aliases.DatasetID, DatasetRevision: s.config.ConsumptionProvenance.RegistryDatasetRevision, RegistrySHA256: s.config.ConsumptionProvenance.SourceRegistrySHA256, ManifestSHA256: s.config.ConsumptionProvenance.ReleaseManifestSHA256},
+		Policy:      &Policy{Key: entry.Policy.Key, Version: entry.Policy.Version, Authority: entry.Policy.Authority, MaxLevel: entry.Policy.MaxLevel},
+		Execution:   Execution{CLIVersion: "scheduler-receiptless-fallback", Attempted: true, TimeoutMS: int64(entry.Execution.TimeoutCeilingMS), RequestBudget: entry.Execution.RequestBudget, SafeParameterNames: parameterNames},
+		Observation: Observation{MaxLevel: entry.Policy.MaxLevel, LatencyMS: latency, ProviderMessageClass: "not_observed", DataPresence: "not_observed", SchemaStatus: "not_observed", FreshnessStatus: "not_observed"},
+		Assessment:  Assessment{Outcome: "indeterminate", Category: category, Retryable: category == "timeout", ReasonCode: reason, NextActions: []string{"review scheduler and provider evidence"}},
+		Redaction:   Redaction{CredentialsRemoved: true, QueryValuesRemoved: true, ResponseRowsRemoved: true},
+	}, nil
+}
+
+func schedulerProbeID() (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	raw[6] = raw[6]&0x0f | 0x40
+	raw[8] = raw[8]&0x3f | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", raw[:4], raw[4:6], raw[6:8], raw[8:10], raw[10:]), nil
+}
+
+func writeReceipt(path string, receipt Receipt) error {
+	raw, err := json.Marshal(receipt)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, raw, 0o600)
 }
 
 func validateCatalogReceipt(receipt Receipt, entry CatalogEntry) error {

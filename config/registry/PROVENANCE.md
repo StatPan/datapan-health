@@ -11,5 +11,9 @@ The scheduler verifies the vendored artifact SHA-256 from `config/canaries.json`
 before it starts. The local artifact SHA-256 is
 `e84f0da2f532a32833def1118a4610bf2322f370783d120b84cf85306d244840`; this
 pin deliberately covers the exact reviewed projection.
+`config/canaries.json` separately pins the immutable Dataset revision, source
+Registry SHA-256, release tag and release-manifest SHA-256. These identifiers
+must not be collapsed: public archive `registry_revision` is the Dataset
+revision, while the source SHA is only the signed catalog-input identity.
 It only uses operation identity and policy metadata from this artifact; no
 credential value, query value, response row, or mutable receipt is vendored.

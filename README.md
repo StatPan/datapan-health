@@ -90,6 +90,12 @@ timeouts, request budget, and receipt classification; the scheduler validates
 the returned receipt against the pinned entry and invokes the existing
 `health-runner` adapter exactly once.
 
+The pinned canary configuration separately records the immutable Registry
+Dataset revision, catalog source SHA-256, release tag and manifest SHA-256.
+They have distinct meanings: public archive rows use the Dataset revision,
+while the source SHA validates the signed catalog input and must never replace
+that revision.
+
 Slots are aligned to cadence boundaries and receive deterministic, bounded
 jitter. A state file is fsynced before an invocation claims a slot. Restarting
 therefore skips an in-flight/overdue slot rather than replaying it; there is no
@@ -98,6 +104,15 @@ itself. The catalog’s request budget is one, so provider/CLI retries are
 intentionally forbidden: a timeout or rate-limit receipt is delivered as-is,
 not amplified into more provider traffic. Adapter delivery is also single-shot
 because it is not externally idempotent.
+
+For every invocation, the CLI receives `--timeout` exactly equal to the pinned
+catalog entry’s `execution.timeout_ceiling_ms`. The scheduler also applies a
+deadline of that ceiling plus one second solely to allow the CLI to atomically
+write its redacted timeout receipt. If the child still leaves no valid receipt,
+the scheduler writes a redacted `indeterminate/timeout` (or
+`indeterminate/indeterminate`) receipt from the pinned catalog and pushes it
+as a failed external status. It never reads or logs child output, so a missing
+receipt cannot expose request data or leave a stale successful public status.
 
 Provider credentials are passed only to the CLI child through the explicit
 comma-separated `CLI_CREDENTIAL_ENV` variable-name allowlist. Its non-secret

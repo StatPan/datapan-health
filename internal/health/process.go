@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // CLIProcess invokes the documented one-shot CLI surface. Only explicitly
@@ -17,13 +18,21 @@ type CLIProcess struct {
 }
 
 func (p CLIProcess) Run(ctx context.Context, _ Canary, entry CatalogEntry, output string) error {
-	args := []string{"verify", "--ref", entry.Aliases.DatasetID, "--operation", entry.Aliases.OperationName, "--health", "--output", output, "--json"}
+	args := cliHealthArgs(entry, output)
 	cmd := exec.CommandContext(ctx, p.Path, args...)
 	cmd.Env = selectEnvironment(p.Environment)
 	// CLI output may include provider diagnostics. Never stream it to scheduler
 	// logs; the schema-validated receipt is the only accepted result.
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	return cmd.Run()
+}
+
+// cliHealthArgs keeps the process boundary aligned with the reviewed Registry
+// execution policy. The CLI enforces this timeout while creating its redacted
+// receipt; the scheduler supplies the enclosing process deadline.
+func cliHealthArgs(entry CatalogEntry, output string) []string {
+	timeout := time.Duration(entry.Execution.TimeoutCeilingMS) * time.Millisecond
+	return []string{"verify", "--ref", entry.Aliases.DatasetID, "--operation", entry.Aliases.OperationName, "--health", "--timeout", timeout.String(), "--output", output, "--json"}
 }
 
 // AdapterProcess is the existing health-runner receipt adapter. The scheduler

@@ -1,6 +1,12 @@
 {
   "catalog_path": "registry/health-probe-catalog.json",
   "catalog_sha256": "e84f0da2f532a32833def1118a4610bf2322f370783d120b84cf85306d244840",
+  "consumption_provenance": {
+    "registry_dataset_revision": "10f375182f992bc700468dd9d6e2930acd3bf8e8",
+    "source_registry_sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+    "release_tag": "v2026.07.14",
+    "release_manifest_sha256": "0b78c286b8cfa889ddccf51f83a9d8adc4eac8617ea6d9fd2d66d1fcf668281f"
+  },
   "global_concurrency": 2,
   "jitter_seconds": 30,
   "canaries": [
