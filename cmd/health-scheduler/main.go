@@ -20,7 +20,12 @@ func main() {
 	if err != nil {
 		log.Fatal("scheduler configuration is not ready")
 	}
-	runner := health.CLIProcess{Path: env("DATAPAN_BIN", "datapan"), Environment: append(envList("CLI_RUNTIME_ENV"), envList("CLI_CREDENTIAL_ENV")...)}
+	runner := health.CLIProcess{
+		Path:              env("DATAPAN_BIN", "datapan"),
+		Environment:       append(envList("CLI_RUNTIME_ENV"), envList("CLI_CREDENTIAL_ENV")...),
+		HealthCatalogPath: env("HEALTH_PROBE_CATALOG", "/config/registry/health-probe-catalog.json"),
+		RegistryRevision:  config.ConsumptionProvenance.RegistryDatasetRevision,
+	}
 	adapter := health.AdapterProcess{Path: env("HEALTH_RUNNER_BIN", "health-runner"), Env: []string{"GATUS_URL", "GATUS_TOKEN", "RECEIPT_ARCHIVE", "CANARY_CONFIG"}}
 	scheduler, err := health.NewScheduler(config, env("SCHEDULER_STATE", "data/scheduler-state.json"), runner, adapter)
 	if err != nil {

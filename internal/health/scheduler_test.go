@@ -276,8 +276,8 @@ func TestCLIHealthArgsUseReviewedCatalogTimeout(t *testing.T) {
 	config := schedulerConfig(t, 1)
 	entry, _ := config.Entry(config.Canaries[0])
 	entry.Execution.TimeoutCeilingMS = 15000
-	got := cliHealthArgs(entry, "/tmp/receipt.json")
-	want := []string{"verify", "--ref", entry.Aliases.DatasetID, "--operation", entry.Aliases.OperationName, "--health", "--timeout", "15s", "--output", "/tmp/receipt.json", "--json"}
+	got := cliHealthArgs(entry, "/tmp/receipt.json", "/config/registry/health-probe-catalog.json", config.ConsumptionProvenance.RegistryDatasetRevision)
+	want := []string{"verify", "--ref", entry.Aliases.DatasetID, "--operation", entry.Aliases.OperationName, "--health", "--timeout", "15s", "--output", "/tmp/receipt.json", "--json", "--health-catalog", "/config/registry/health-probe-catalog.json", "--health-registry-revision", config.ConsumptionProvenance.RegistryDatasetRevision}
 	if len(got) != len(want) {
 		t.Fatalf("args length=%d want=%d: %#v", len(got), len(want), got)
 	}
@@ -316,8 +316,8 @@ func TestSchedulerTimeoutProducesRedactedFallbackAndReplacesStaleSuccess(t *test
 	}
 	<-runner.started
 	s.Wait()
-	if got := runner.deadline(); got < 900*time.Millisecond || got > 1100*time.Millisecond {
-		t.Fatalf("scheduler deadline=%s, want catalog ceiling plus bounded receipt grace", got)
+	if got := runner.deadline(); got < 2900*time.Millisecond || got > 3100*time.Millisecond {
+		t.Fatalf("scheduler deadline=%s, want bounded startup plus catalog request ceiling plus receipt grace", got)
 	}
 	if delivery.count() != 1 {
 		t.Fatalf("receipt-less timeout was not delivered: deliveries=%d", delivery.count())
