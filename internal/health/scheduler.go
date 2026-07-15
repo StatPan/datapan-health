@@ -15,7 +15,10 @@ import (
 	"time"
 )
 
-const receiptWriteGrace = time.Second
+const (
+	cliStartupGrace   = 2 * time.Second
+	receiptWriteGrace = time.Second
+)
 
 // ProbeRunner is intentionally a process boundary: datapan-cli owns probing,
 // trust, parameter planning, and receipt semantics.
@@ -242,7 +245,10 @@ func (s *Scheduler) receiptStagingDir() (string, error) {
 }
 
 func probeDeadline(entry CatalogEntry) time.Duration {
-	return time.Duration(entry.Execution.TimeoutCeilingMS)*time.Millisecond + receiptWriteGrace
+	// The Registry ceiling remains the immutable provider request budget. CLI
+	// startup/catalog verification and atomic receipt persistence are separate,
+	// bounded lifecycle phases and must not consume that request budget.
+	return cliStartupGrace + time.Duration(entry.Execution.TimeoutCeilingMS)*time.Millisecond + receiptWriteGrace
 }
 
 func (s *Scheduler) receiptlessOutcome(entry CatalogEntry, started, observed time.Time, cliErr, contextErr error) (Receipt, error) {

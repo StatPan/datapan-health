@@ -37,6 +37,9 @@ LABEL org.opencontainers.image.title="Datapan Health runtime" \
       org.opencontainers.image.created="${CREATED}"
 COPY --from=live-build /health-runner /health-runner
 COPY --from=live-build /health-scheduler /health-scheduler
+# The mounted static datapan CLI performs HTTPS provider probes. A scratch
+# runtime has no trust store unless it is copied explicitly.
+COPY --from=live-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 ENTRYPOINT ["/health-runner"]
 
 FROM ${HF_IMAGE} AS archive

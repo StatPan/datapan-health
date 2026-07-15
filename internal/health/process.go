@@ -13,12 +13,14 @@ import (
 // named provider credential variables cross into this process; Gatus/archive
 // settings are intentionally absent from its environment.
 type CLIProcess struct {
-	Path        string
-	Environment []string
+	Path              string
+	Environment       []string
+	HealthCatalogPath string
+	RegistryRevision  string
 }
 
 func (p CLIProcess) Run(ctx context.Context, _ Canary, entry CatalogEntry, output string) error {
-	args := cliHealthArgs(entry, output)
+	args := cliHealthArgs(entry, output, p.HealthCatalogPath, p.RegistryRevision)
 	cmd := exec.CommandContext(ctx, p.Path, args...)
 	cmd.Env = selectEnvironment(p.Environment)
 	// CLI output may include provider diagnostics. Never stream it to scheduler
@@ -30,9 +32,13 @@ func (p CLIProcess) Run(ctx context.Context, _ Canary, entry CatalogEntry, outpu
 // cliHealthArgs keeps the process boundary aligned with the reviewed Registry
 // execution policy. The CLI enforces this timeout while creating its redacted
 // receipt; the scheduler supplies the enclosing process deadline.
-func cliHealthArgs(entry CatalogEntry, output string) []string {
+func cliHealthArgs(entry CatalogEntry, output, healthCatalogPath, registryRevision string) []string {
 	timeout := time.Duration(entry.Execution.TimeoutCeilingMS) * time.Millisecond
-	return []string{"verify", "--ref", entry.Aliases.DatasetID, "--operation", entry.Aliases.OperationName, "--health", "--timeout", timeout.String(), "--output", output, "--json"}
+	args := []string{"verify", "--ref", entry.Aliases.DatasetID, "--operation", entry.Aliases.OperationName, "--health", "--timeout", timeout.String(), "--output", output, "--json"}
+	if strings.TrimSpace(healthCatalogPath) != "" {
+		args = append(args, "--health-catalog", healthCatalogPath, "--health-registry-revision", registryRevision)
+	}
+	return args
 }
 
 // AdapterProcess is the existing health-runner receipt adapter. The scheduler
