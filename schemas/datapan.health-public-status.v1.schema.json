@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.datapan.dev/datapan.health-public-status.v1.schema.json",
+  "title": "Datapan Health public status",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "diagnostic_registry_revision", "observation_catalog_revision", "operations"],
+  "properties": {
+    "schema_version": {"const": "datapan.health-public-status.v1"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "diagnostic_registry_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "observation_catalog_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "operations": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 10,
+      "items": {"$ref": "#/$defs/operation"},
+      "allOf": [
+        {"contains": {"properties": {"operation_id": {"const": "dpr-op-00000001"}}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"operation_id": {"const": "dpr-op-00000002"}}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"operation_id": {"const": "dpr-op-00000003"}}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"operation_id": {"const": "dpr-op-00000004"}}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"operation_id": {"const": "dpr-op-00000005"}}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"operation_id": {"const": "dpr-op-00000006"}}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"operation_id": {"const": "dpr-op-00000007"}}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"operation_id": {"const": "dpr-op-00000008"}}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"operation_id": {"const": "dpr-op-00000009"}}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"operation_id": {"const": "dpr-op-00000010"}}}, "minContains": 1, "maxContains": 1}
+      ]
+    }
+  },
+  "$defs": {
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation_id", "observation_state", "availability", "diagnosis"],
+      "properties": {
+        "operation_id": {"type": "string", "pattern": "^dpr-op-[0-9]{8}$"},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "observation_state": {"enum": ["current", "stale", "not_observed"]},
+        "availability": {"enum": ["operational", "degraded", "unknown"]},
+        "diagnosis": {"$ref": "#/$defs/diagnosis"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"observation_state": {"enum": ["stale", "not_observed"]}}},
+          "then": {"properties": {"availability": {"const": "unknown"}}}
+        }
+      ]
+    },
+    "diagnosis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "determination", "accountable_party", "recommended_action_ids", "avoid_action_ids"],
+      "properties": {
+        "code": {"enum": ["ready", "approval_required", "approval_propagating", "credential_invalid", "invalid_input", "rate_limited", "provider_outage", "contract_drift", "semantic_quality", "stale_data", "unknown"]},
+        "determination": {"enum": ["observed", "inferred", "unknown"]},
+        "accountable_party": {"enum": ["user", "datapan", "data_go_kr", "provider", "shared", "unknown"]},
+        "recommended_action_ids": {"$ref": "#/$defs/action_ids"},
+        "avoid_action_ids": {"$ref": "#/$defs/action_ids"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"code": {"const": "unknown"}}},
+          "then": {
+            "properties": {
+              "determination": {"const": "unknown"},
+              "accountable_party": {"const": "unknown"},
+              "recommended_action_ids": {"maxItems": 0},
+              "avoid_action_ids": {"maxItems": 0}
+            }
+          }
+        }
+      ]
+    },
+    "action_ids": {
+      "type": "array",
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,95}$"}
+    }
+  }
+}

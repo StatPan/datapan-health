@@ -13,10 +13,21 @@ CLI `probe_id` is a UUID for one execution and is never used as a public identit
 Hugging Face is an optional publisher of those completed Parquet artifacts, not a sink for live execution. The publisher retries only its own asynchronous upload and stages only Parquet, `manifest.json`, and the dataset card; checkpoints are excluded. Missing credentials, an unavailable CLI, or a remote outage can never delay or alter a runner-to-Gatus result. `config/archive.json` pins the datapan-cli #150 receipt-schema commit/digest and datapan-registry #557 catalog revision/digest in every manifest. The public dataset card contains the same provenance and querying guidance.
 
 Release images preserve this boundary: the scratch `runtime` target contains
-only runner and scheduler, while the separate `archive` target contains
+runner, scheduler, and the read-only public-status adapter, while the separate `archive` target contains
 `health-archive` and the pinned `hf` CLI. `HF_TOKEN` is never an image build
 argument, environment variable, label, file, or log field; infra #475 injects
 it only into the isolated archive Compose role. See
 [release-images.md](release-images.md) for reproducible digest handoff.
 
 No deployment resources or `statpan-infra` changes belong to this issue.
+
+The browser adapter is an additional default-deny projection rather than a
+proxy for full Gatus or private diagnostic data. It fetches only the private
+bounded Gatus status summary, resolves configured endpoint keys internally,
+and emits Registry operation IDs plus coarse availability. Internal endpoint
+keys, names, dataset IDs and failure strings do not cross the response schema.
+Cause, ownership and action IDs remain `unknown`/empty until a reviewed current
+diagnosis exists; #21 and #22 own producing stronger evidence. The adapter's
+exact-origin CORS and cache contract is documented in
+[public-status-api.md](public-status-api.md). Public routing remains
+infra-owned and approval-gated.

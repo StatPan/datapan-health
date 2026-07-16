@@ -16,13 +16,19 @@ var healthProbeSchema []byte
 //go:embed datapan.health-archive.v1.schema.json
 var healthArchiveSchema []byte
 
+//go:embed datapan.health-public-status.v1.schema.json
+var healthPublicStatusSchema []byte
+
 var (
-	healthProbeOnce   sync.Once
-	healthProbe       *jsonschema.Schema
-	healthProbeErr    error
-	healthArchiveOnce sync.Once
-	healthArchive     *jsonschema.Schema
-	healthArchiveErr  error
+	healthProbeOnce        sync.Once
+	healthProbe            *jsonschema.Schema
+	healthProbeErr         error
+	healthArchiveOnce      sync.Once
+	healthArchive          *jsonschema.Schema
+	healthArchiveErr       error
+	healthPublicStatusOnce sync.Once
+	healthPublicStatus     *jsonschema.Schema
+	healthPublicStatusErr  error
 )
 
 func ValidateHealthProbeV1(data []byte) error {
@@ -39,6 +45,13 @@ func ValidateHealthArchiveV1(data []byte) error {
 		healthArchive, healthArchiveErr = compile(healthArchiveSchema, "https://schemas.datapan.dev/datapan.health-archive.v1.schema.json")
 	})
 	return validate(data, healthArchive, healthArchiveErr, "archive observation")
+}
+
+func ValidateHealthPublicStatusV1(data []byte) error {
+	healthPublicStatusOnce.Do(func() {
+		healthPublicStatus, healthPublicStatusErr = compile(healthPublicStatusSchema, "https://schemas.datapan.dev/datapan.health-public-status.v1.schema.json")
+	})
+	return validate(data, healthPublicStatus, healthPublicStatusErr, "public status")
 }
 
 func compile(source []byte, uri string) (*jsonschema.Schema, error) {

@@ -8,7 +8,7 @@ secret, deploy a Compose project, or enable ingress.
 
 | Infra input | Docker target | Contents | Must not contain |
 | --- | --- | --- | --- |
-| `DATAPAN_HEALTH_IMAGE` | `runtime` | `/health-runner`, `/health-scheduler` | `/health-archive`, `hf`, Python, Hugging Face dependencies |
+| `DATAPAN_HEALTH_IMAGE` | `runtime` | `/health-runner`, `/health-scheduler`, `/health-public` | `/health-archive`, `hf`, Python, Hugging Face dependencies |
 | `DATAPAN_HEALTH_ARCHIVE_IMAGE` | `archive` | `/health-archive`, pinned `hf` CLI | Gatus runtime settings or an `HF_TOKEN` value |
 
 `runtime` is a scratch image. `archive` is intentionally separate because

@@ -16,7 +16,8 @@ COPY schemas ./schemas
 # The live processes must not pull archive's CGO/DuckDB or Python dependency
 # graph into their final image.
 RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-runner ./cmd/health-runner \
- && CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-scheduler ./cmd/health-scheduler
+ && CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-scheduler ./cmd/health-scheduler \
+ && CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-public ./cmd/health-public
 
 FROM ${ARCHIVE_GO_IMAGE} AS archive-build
 WORKDIR /src
@@ -31,12 +32,13 @@ FROM scratch AS runtime
 ARG VCS_REF=unknown
 ARG CREATED=1970-01-01T00:00:00Z
 LABEL org.opencontainers.image.title="Datapan Health runtime" \
-      org.opencontainers.image.description="Runner and scheduler only; no archive or Hugging Face tooling" \
+      org.opencontainers.image.description="Runner, scheduler and public status adapter; no archive or Hugging Face tooling" \
       org.opencontainers.image.source="https://github.com/StatPan/datapan-health" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${CREATED}"
 COPY --from=live-build /health-runner /health-runner
 COPY --from=live-build /health-scheduler /health-scheduler
+COPY --from=live-build /health-public /health-public
 # The mounted static datapan CLI performs HTTPS provider probes. A scratch
 # runtime has no trust store unless it is copied explicitly.
 COPY --from=live-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
