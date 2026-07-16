@@ -1,0 +1,20 @@
+{
+  "schema_version": "datapan.health-assertion-policy-contract-pin.v1",
+  "registry_revision": "f90d2d62258e50d562ff08b993c75bc0a4dad6fa",
+  "schema_contract": {
+    "path": "assertions/datapan.operation-assertion-policies.v1.schema.json",
+    "sha256": "a934fe244eeedbed23914ba1230d612b68656f9dc97803c747cf9f29c46c0446"
+  },
+  "policy_contract": {
+    "path": "assertions/operation-assertion-policies.v1.json",
+    "sha256": "62d54df23a55dc529b60947c944bebef82f6697f44472ae0f20c2a06781704e6"
+  },
+  "reference_proof": {
+    "path": "assertions/datapan-health-consumer-proof.v1.json",
+    "sha256": "edd7ab5c63c39c30801bd145e5dfc521f9910542da2f3b766ef2928e1a5841d2"
+  },
+  "release_candidate": {
+    "path": "assertions/release-candidate.v1.json",
+    "sha256": "82bc523016abfa356f931e5786af9714ca544d83a26a515830471f242705a466"
+  }
+}

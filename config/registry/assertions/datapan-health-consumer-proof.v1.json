@@ -1,0 +1,140 @@
+{
+  "schema_version": "datapan.operation-assertion-policy-reference-model.v1",
+  "proof_kind": "reference_model_only",
+  "producer": "datapan-registry",
+  "consumer_status": "not_executed_by_datapan_health",
+  "policy_binding": {
+    "path": "drafts/operation-assertion-policies/operation-assertion-policies.v1.json",
+    "policy_set_id": "datapan-health-canary-assertions",
+    "artifact_sha256": "d9b39f40e2068180cf46ebf8eca2037aeff19523b76f648bb06666758ed8c1d3",
+    "policy_set_version": 1,
+    "diagnostic_vocabulary_sha256": "aa03c42960a59725b829b934ad07548dacb8f149c7a920a35a9e32c0459b49fc"
+  },
+  "supersession_transition_model": {
+    "from": {
+      "path": "drafts/operation-assertion-policies/operation-assertion-policies.v1.json",
+      "policy_set_id": "datapan-health-canary-assertions",
+      "artifact_sha256": "d9b39f40e2068180cf46ebf8eca2037aeff19523b76f648bb06666758ed8c1d3",
+      "policy_set_version": 1,
+      "diagnostic_vocabulary_sha256": "aa03c42960a59725b829b934ad07548dacb8f149c7a920a35a9e32c0459b49fc"
+    },
+    "to": {
+      "path": "drafts/operation-assertion-policies/operation-assertion-policies.v2.json",
+      "policy_set_id": "datapan-health-canary-assertions",
+      "artifact_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "policy_set_version": 2,
+      "diagnostic_vocabulary_sha256": "aa03c42960a59725b829b934ad07548dacb8f149c7a920a35a9e32c0459b49fc"
+    },
+    "to_policy_set": {
+      "version": 2,
+      "supersedes": {
+        "policy_set_version": 1,
+        "artifact_sha256": "d9b39f40e2068180cf46ebf8eca2037aeff19523b76f648bb06666758ed8c1d3"
+      }
+    }
+  },
+  "projection_contract": {
+    "asserted_match": "pass",
+    "asserted_mismatch": "fail",
+    "not_asserted": "not_observed",
+    "invalid_or_stale_binding": "unknown"
+  },
+  "cases": [
+    {
+      "name": "evidence_backed_contract_match",
+      "operation_id": "dpr-op-00000001",
+      "dimension": "contract",
+      "observation": {
+        "response_fields": [
+          "dutyAddr"
+        ]
+      },
+      "expected": "pass"
+    },
+    {
+      "name": "evidence_backed_contract_mismatch",
+      "operation_id": "dpr-op-00000001",
+      "dimension": "contract",
+      "observation": {
+        "response_fields": [
+          "__undeclared_field__"
+        ]
+      },
+      "expected": "fail"
+    },
+    {
+      "name": "semantic_has_no_registry_expectation",
+      "operation_id": "dpr-op-00000001",
+      "dimension": "semantic",
+      "observation": {},
+      "expected": "not_observed"
+    },
+    {
+      "name": "stale_policy_binding_is_not_a_health_failure",
+      "operation_id": "dpr-op-00000001",
+      "dimension": "contract",
+      "policy_binding_override": {
+        "artifact_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "observation": {
+        "response_fields": [
+          "dutyAddr"
+        ]
+      },
+      "expected": "unknown"
+    },
+    {
+      "name": "unsupported_policy_version_is_not_a_health_failure",
+      "operation_id": "dpr-op-00000001",
+      "dimension": "contract",
+      "policy_binding_override": {
+        "policy_set_version": 2
+      },
+      "observation": {
+        "response_fields": [
+          "dutyAddr"
+        ]
+      },
+      "expected": "unknown"
+    },
+    {
+      "name": "superseded_old_policy_pin_is_unknown",
+      "operation_id": "dpr-op-00000001",
+      "dimension": "contract",
+      "policy_binding": {
+        "path": "drafts/operation-assertion-policies/operation-assertion-policies.v1.json",
+        "policy_set_id": "datapan-health-canary-assertions",
+        "artifact_sha256": "d9b39f40e2068180cf46ebf8eca2037aeff19523b76f648bb06666758ed8c1d3",
+        "policy_set_version": 1,
+        "diagnostic_vocabulary_sha256": "aa03c42960a59725b829b934ad07548dacb8f149c7a920a35a9e32c0459b49fc"
+      },
+      "active_policy_binding": {
+        "path": "drafts/operation-assertion-policies/operation-assertion-policies.v2.json",
+        "policy_set_id": "datapan-health-canary-assertions",
+        "artifact_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "policy_set_version": 2,
+        "diagnostic_vocabulary_sha256": "aa03c42960a59725b829b934ad07548dacb8f149c7a920a35a9e32c0459b49fc"
+      },
+      "observation": {
+        "response_fields": [
+          "dutyAddr"
+        ]
+      },
+      "expected": "unknown"
+    },
+    {
+      "name": "diagnostic_vocabulary_mismatch_is_not_a_health_failure",
+      "operation_id": "dpr-op-00000001",
+      "dimension": "contract",
+      "policy_binding_override": {
+        "diagnostic_vocabulary_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      "observation": {
+        "response_fields": [
+          "dutyAddr"
+        ]
+      },
+      "expected": "unknown"
+    }
+  ]
+}

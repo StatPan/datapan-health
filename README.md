@@ -146,6 +146,12 @@ writable, it records a bounded redacted scheduler failure without starting the
 CLI; it does not weaken the read-only root filesystem or expose filesystem
 diagnostics.
 
+Registry가 승인한 operation assertion policy의 정확한 revision 아래에서만 contract,
+presence, semantic, freshness를 판정한다. 현재 v1은 contract field vocabulary만
+asserted이며, 나머지 차원과 빈 관찰은 실패나 stale로 추론하지 않는다. 고정된 계약,
+판정 결과, 안전한 evidence 경계는
+[assertion policy compatibility](docs/assertion-policy-compatibility.md)에 설명한다.
+
 Provider credentials are passed only to the CLI child through the explicit
 comma-separated `CLI_CREDENTIAL_ENV` variable-name allowlist. Its non-secret
 runtime state (for example `DATAPAN_HOME`) is separately allowlisted through

@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.datapan.dev/datapan.operation-assertion-policies.v1.schema.json",
+  "title": "Datapan Operation Assertion Policies v1",
+  "description": "Immutable, Registry-bound per-operation assertions proposed for Datapan Health. An absent expectation is represented as not_asserted, never inferred from a live observation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "policy_set", "generated_at", "authority", "diagnostic_vocabulary", "bindings", "artifact_sha256", "operations"],
+  "properties": {
+    "schema_version": {"const": "datapan.operation-assertion-policies.v1"},
+    "policy_set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "supersedes"],
+      "properties": {
+        "id": {"const": "datapan-health-canary-assertions"},
+        "version": {"type": "integer", "minimum": 1},
+        "supersedes": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["policy_set_version", "artifact_sha256"],
+              "properties": {
+                "policy_set_version": {"type": "integer", "minimum": 1},
+                "artifact_sha256": {"$ref": "#/$defs/sha256"}
+              }
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"version": {"const": 1}}},
+          "then": {"properties": {"supersedes": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"version": {"minimum": 2}}},
+          "then": {"properties": {"supersedes": {"type": "object"}}}
+        }
+      ]
+    },
+    "generated_at": {"type": "string", "format": "date-time"},
+    "authority": {"const": "datapan-registry"},
+    "diagnostic_vocabulary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "path", "sha256"],
+      "properties": {
+        "schema_version": {"const": "datapan.diagnostic-cause-action-vocabulary.v1"},
+        "path": {"const": "policy/diagnostic-cause-action-vocabulary.v1.json"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["registry", "health_probe_catalog"],
+      "properties": {
+        "registry": {"$ref": "#/$defs/binding"},
+        "health_probe_catalog": {"$ref": "#/$defs/binding"}
+      }
+    },
+    "artifact_sha256": {"$ref": "#/$defs/sha256"},
+    "operations": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 10,
+      "items": {"$ref": "#/$defs/operation"}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "rationale_code", "path", "sha256", "selector"],
+      "properties": {
+        "kind": {"const": "registry_operation_contract"},
+        "rationale_code": {"const": "registry_declares_normalized_response_field_vocabulary"},
+        "path": {"const": "data/data-go-kr.registry.json"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "selector": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dataset_id", "operation_name", "upstream_operation_seq"],
+          "properties": {
+            "dataset_id": {"type": "string", "minLength": 1},
+            "operation_name": {"type": "string", "minLength": 1},
+            "upstream_operation_seq": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "not_asserted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "reason_code", "evidence"],
+      "properties": {
+        "state": {"const": "not_asserted"},
+        "reason_code": {
+          "enum": [
+            "provider_transport_expectation_not_reviewed",
+            "record_presence_expectation_not_reviewed",
+            "domain_semantics_not_reviewed",
+            "upstream_timestamp_contract_not_reviewed"
+          ]
+        },
+        "evidence": {"type": "null"}
+      }
+    },
+    "transport_assertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "assertion_type", "accepted_http_statuses", "timeout_ceiling_ms", "evidence"],
+      "properties": {
+        "state": {"const": "asserted"},
+        "assertion_type": {"const": "http_response"},
+        "accepted_http_statuses": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "integer", "minimum": 100, "maximum": 599}},
+        "timeout_ceiling_ms": {"type": "integer", "minimum": 1000, "maximum": 30000},
+        "evidence": {"$ref": "#/$defs/evidence"}
+      }
+    },
+    "contract_assertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "assertion_type", "projection_input", "declared_response_fields", "unknown_field_policy", "empty_payload_policy", "evidence"],
+      "properties": {
+        "state": {"const": "asserted"},
+        "assertion_type": {"const": "declared_response_field_vocabulary"},
+        "projection_input": {"const": "normalized_leaf_field_names"},
+        "declared_response_fields": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "unknown_field_policy": {"const": "fail"},
+        "empty_payload_policy": {"const": "not_observed"},
+        "evidence": {"$ref": "#/$defs/evidence"}
+      }
+    },
+    "presence_assertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "assertion_type", "minimum_records", "empty_result_policy", "evidence"],
+      "properties": {
+        "state": {"const": "asserted"},
+        "assertion_type": {"const": "minimum_record_count"},
+        "minimum_records": {"type": "integer", "minimum": 0},
+        "empty_result_policy": {"enum": ["pass", "fail", "not_observed"]},
+        "evidence": {"$ref": "#/$defs/evidence"}
+      }
+    },
+    "semantic_assertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "assertion_type", "rules", "evidence"],
+      "properties": {
+        "state": {"const": "asserted"},
+        "assertion_type": {"const": "allowlisted_rules"},
+        "rules": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["field", "operator", "value"],
+            "properties": {
+              "field": {"type": "string", "minLength": 1},
+              "operator": {"enum": ["equals", "one_of", "matches", "minimum", "maximum"]},
+              "value": {"oneOf": [{"type": "string"}, {"type": "number"}, {"type": "array", "minItems": 1, "items": {"type": ["string", "number"]}}]}
+            }
+          }
+        },
+        "evidence": {"$ref": "#/$defs/evidence"}
+      }
+    },
+    "freshness_assertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "assertion_type", "actual_time_source", "reference_time_source", "reference_time_field", "timestamp_format", "timezone", "calendar", "maximum_age_seconds", "maximum_age_boundary", "future_tolerance_seconds", "empty_result_policy", "evaluated_states", "evidence"],
+      "properties": {
+        "state": {"const": "asserted"},
+        "assertion_type": {"const": "maximum_age"},
+        "actual_time_source": {"const": "health_observed_at"},
+        "reference_time_source": {"const": "response_field"},
+        "reference_time_field": {"type": "string", "minLength": 1},
+        "timestamp_format": {"type": "string", "minLength": 1},
+        "timezone": {"type": "string", "minLength": 1},
+        "calendar": {"enum": ["gregorian", "business_day"]},
+        "maximum_age_seconds": {"type": "integer", "minimum": 1},
+        "maximum_age_boundary": {"const": "inclusive"},
+        "future_tolerance_seconds": {"type": "integer", "minimum": 0},
+        "empty_result_policy": {"enum": ["pass", "fail", "not_observed"]},
+        "evaluated_states": {"const": ["fresh", "stale", "future_invalid", "invalid_timestamp", "not_observed", "unknown"]},
+        "evidence": {"$ref": "#/$defs/evidence"}
+      }
+    },
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation_id", "operation_revision_sha256", "dimensions"],
+      "properties": {
+        "operation_id": {"type": "string", "pattern": "^dpr-op-[0-9]{8}$"},
+        "operation_revision_sha256": {"$ref": "#/$defs/sha256"},
+        "dimensions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["transport", "contract", "presence", "semantic", "freshness"],
+          "properties": {
+            "transport": {"oneOf": [{"$ref": "#/$defs/not_asserted"}, {"$ref": "#/$defs/transport_assertion"}]},
+            "contract": {"oneOf": [{"$ref": "#/$defs/not_asserted"}, {"$ref": "#/$defs/contract_assertion"}]},
+            "presence": {"oneOf": [{"$ref": "#/$defs/not_asserted"}, {"$ref": "#/$defs/presence_assertion"}]},
+            "semantic": {"oneOf": [{"$ref": "#/$defs/not_asserted"}, {"$ref": "#/$defs/semantic_assertion"}]},
+            "freshness": {"oneOf": [{"$ref": "#/$defs/not_asserted"}, {"$ref": "#/$defs/freshness_assertion"}]}
+          }
+        }
+      }
+    }
+  }
+}

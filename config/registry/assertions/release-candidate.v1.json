@@ -1,0 +1,40 @@
+{
+  "schema_version": "datapan.operation-assertion-policy-release-candidate.v1",
+  "status": "ready_for_health_implementation_review",
+  "authority": {
+    "release": false,
+    "runtime": false,
+    "publishing": false
+  },
+  "policy_set": {
+    "id": "datapan-health-canary-assertions",
+    "version": 1,
+    "supersedes": null
+  },
+  "artifact_sha256": "d9b39f40e2068180cf46ebf8eca2037aeff19523b76f648bb06666758ed8c1d3",
+  "bindings": [
+    {
+      "path": "drafts/operation-assertion-policies/datapan.operation-assertion-policies.v1.schema.json",
+      "sha256": "a934fe244eeedbed23914ba1230d612b68656f9dc97803c747cf9f29c46c0446"
+    },
+    {
+      "path": "drafts/operation-assertion-policies/operation-assertion-policies.v1.json",
+      "sha256": "62d54df23a55dc529b60947c944bebef82f6697f44472ae0f20c2a06781704e6"
+    },
+    {
+      "path": "fixtures/operation-assertion-policies/datapan-health-consumer-proof.v1.json",
+      "sha256": "edd7ab5c63c39c30801bd145e5dfc521f9910542da2f3b766ef2928e1a5841d2"
+    },
+    {
+      "path": "drafts/operation-assertion-policies/release-manifest.v1.json",
+      "sha256": "282b17459c91c9c3a921eaed3eebf85c59bfca02057e44f36269ba3c59545338"
+    }
+  ],
+  "reference_model": {
+    "kind": "reference_model_only",
+    "producer": "datapan-registry",
+    "schema_version": "datapan.operation-assertion-policy-reference-model.v1",
+    "cases": 7
+  },
+  "next_gate": "datapan_health_exact_revision_compatibility_proof"
+}
