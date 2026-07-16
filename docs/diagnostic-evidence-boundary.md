@@ -108,6 +108,23 @@ consumer is updated.
 | Validation | Operation-scoped `validation_result` with required/achieved L1-L4, policy version, and result | A `ready` cause requires passed validation at or above the required level. Health cannot equate transport success with reusable data. |
 | Redaction | Eight required false assertions for secret values/hashes, authorization headers, credential-bearing URLs, raw provider text/URLs, response bodies, and user identity | Assertions are necessary but not sufficient: every producer boundary also needs negative leak fixtures before Health accepts the envelope. |
 
+### Public and private exposure
+
+- The complete diagnostic envelope and current `datapan.health-probe.v1`
+  receipt are private Health inputs. Passing the schema redaction assertions
+  does not authorize publication.
+- Existing Gatus output remains limited to the enum-only availability error and
+  latency projection described above.
+- Health #20 must define a default-deny public allowlist. Candidate public
+  fields are an approved service/operation alias, assessment time, availability,
+  and reviewed cause/determination/action IDs. Detailed subject identity,
+  evidence references and payloads, support references, ownership evidence,
+  correlation cohorts, and policy internals remain private unless separately
+  justified and reviewed.
+- Secret values or hashes, authorization headers, credential-bearing URLs, raw
+  provider text or URLs, response bodies or rows, query values, and user or
+  credential identity are never public.
+
 Two absences are deliberate:
 
 - There is no credential fingerprint or pseudonymous user identifier. Even a
@@ -157,7 +174,7 @@ name all evidence it used. The first safe rule set should obey these limits:
   category into an existing v1 category.
 - Store original redacted bytes or a canonical digest beside normalized fields
   so a later rule can be audited without rewriting evidence.
-- A producer upgrade must ship fixtures for every new diagnosis family and an
+- A producer upgrade must ship fixtures for every new cause family and an
   explicit downgrade/public-projection decision before Health updates its pin.
 
 ### Live status
