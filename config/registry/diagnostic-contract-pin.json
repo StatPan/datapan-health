@@ -17,5 +17,9 @@
     "path": "diagnostic/datapan-health.v1.json",
     "sha256": "e831df46e50107c116132f423525af5b1ea8c9743c014956a2fc3732077db70c"
   },
+  "test_manifest": {
+    "path": "diagnostic-test-manifest.json",
+    "sha256": "015a3160727a7bfdaa4cddc552c4dc377063e07e542fca15f47cb4acaee90dfa"
+  },
   "fixture_directory": "diagnostic/fixtures"
 }

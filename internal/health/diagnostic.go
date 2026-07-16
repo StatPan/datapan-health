@@ -18,16 +18,17 @@ import (
 )
 
 const (
-	DiagnosticSchemaVersion            = "datapan.diagnostic-envelope.v1"
-	DiagnosticPinVersion               = "datapan.health-diagnostic-contract-pin.v1"
-	AcceptedDiagnosticRegistryRevision = "8c5d397f13929ec2b85e63e4ca600887f37929b8"
-	AcceptedDiagnosticSchemaSHA256     = "da254b40947462347fcda90fdd7686b6632c76943b438f2046a28f079f33e403"
-	AcceptedDiagnosticMappingSHA256    = "da55d52d2ee1f197969ac63a1d5ab5b98e3b88fd65f90d6a48800d2e3c522d33"
-	AcceptedDiagnosticConsumerSHA256   = "e831df46e50107c116132f423525af5b1ea8c9743c014956a2fc3732077db70c"
-	AcceptedHealthProbeCatalogSHA256   = "e84f0da2f532a32833def1118a4610bf2322f370783d120b84cf85306d244840"
-	maxDiagnosticEnvelopeBytes         = 256 * 1024
-	mappingSchemaVersion               = "datapan.data-go-kr-diagnostic-evidence-mapping.v1"
-	consumerCompatibilitySchemaVersion = "datapan.diagnostic-consumer-compatibility.v1"
+	DiagnosticSchemaVersion              = "datapan.diagnostic-envelope.v1"
+	DiagnosticPinVersion                 = "datapan.health-diagnostic-contract-pin.v1"
+	AcceptedDiagnosticRegistryRevision   = "8c5d397f13929ec2b85e63e4ca600887f37929b8"
+	AcceptedDiagnosticSchemaSHA256       = "da254b40947462347fcda90fdd7686b6632c76943b438f2046a28f079f33e403"
+	AcceptedDiagnosticMappingSHA256      = "da55d52d2ee1f197969ac63a1d5ab5b98e3b88fd65f90d6a48800d2e3c522d33"
+	AcceptedDiagnosticConsumerSHA256     = "e831df46e50107c116132f423525af5b1ea8c9743c014956a2fc3732077db70c"
+	AcceptedDiagnosticTestManifestSHA256 = "015a3160727a7bfdaa4cddc552c4dc377063e07e542fca15f47cb4acaee90dfa"
+	AcceptedHealthProbeCatalogSHA256     = "e84f0da2f532a32833def1118a4610bf2322f370783d120b84cf85306d244840"
+	maxDiagnosticEnvelopeBytes           = 256 * 1024
+	mappingSchemaVersion                 = "datapan.data-go-kr-diagnostic-evidence-mapping.v1"
+	consumerCompatibilitySchemaVersion   = "datapan.diagnostic-consumer-compatibility.v1"
 )
 
 var secretHashPattern = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
@@ -42,9 +43,11 @@ type DiagnosticContract struct {
 	Schema           ArtifactPin
 	Mapping          ArtifactPin
 	Consumer         ArtifactPin
+	TestManifest     ArtifactPin
 	FixtureDirectory string
 	schema           *jsonschema.Schema
 	fixtureNames     []string
+	testManifest     DiagnosticTestManifest
 }
 
 type diagnosticContractPin struct {
@@ -57,6 +60,7 @@ type diagnosticContractPin struct {
 	SchemaContract   ArtifactPin `json:"schema_contract"`
 	MappingContract  ArtifactPin `json:"mapping_contract"`
 	ConsumerContract ArtifactPin `json:"consumer_contract"`
+	TestManifest     ArtifactPin `json:"test_manifest"`
 	FixtureDirectory string      `json:"fixture_directory"`
 }
 
@@ -150,6 +154,7 @@ func LoadDiagnosticContract(path string) (DiagnosticContract, error) {
 		{pin.SchemaContract, AcceptedDiagnosticSchemaSHA256},
 		{pin.MappingContract, AcceptedDiagnosticMappingSHA256},
 		{pin.ConsumerContract, AcceptedDiagnosticConsumerSHA256},
+		{pin.TestManifest, AcceptedDiagnosticTestManifestSHA256},
 	}
 	base := filepath.Dir(path)
 	artifacts := make([][]byte, 0, len(wants))
@@ -174,6 +179,10 @@ func LoadDiagnosticContract(path string) (DiagnosticContract, error) {
 	var consumer diagnosticConsumerContract
 	if err := json.Unmarshal(artifacts[2], &consumer); err != nil || consumer.SchemaVersion != consumerCompatibilitySchemaVersion || consumer.Status != "draft" || consumer.Consumer != "datapan-health" || consumer.SchemaContract.SHA256 != AcceptedDiagnosticSchemaSHA256 || consumer.MappingContract.SHA256 != AcceptedDiagnosticMappingSHA256 || len(consumer.FixtureContracts) != 11 {
 		return DiagnosticContract{}, errors.New("unsupported diagnostic consumer contract")
+	}
+	testManifest, err := decodeDiagnosticTestManifest(artifacts[3])
+	if err != nil {
+		return DiagnosticContract{}, err
 	}
 	fixtureNames := append([]string(nil), consumer.FixtureContracts...)
 	sort.Strings(fixtureNames)
@@ -204,9 +213,11 @@ func LoadDiagnosticContract(path string) (DiagnosticContract, error) {
 		Schema:           pin.SchemaContract,
 		Mapping:          pin.MappingContract,
 		Consumer:         pin.ConsumerContract,
+		TestManifest:     pin.TestManifest,
 		FixtureDirectory: filepath.Join(base, pin.FixtureDirectory),
 		schema:           compiled,
 		fixtureNames:     fixtureNames,
+		testManifest:     testManifest,
 	}, nil
 }
 

@@ -30,6 +30,14 @@ schema, mapping, and consumer-packet SHA-256 values are respectively:
 - `da55d52d2ee1f197969ac63a1d5ab5b98e3b88fd65f90d6a48800d2e3c522d33`
 - `e831df46e50107c116132f423525af5b1ea8c9743c014956a2fc3732077db70c`
 
+`diagnostic-test-manifest.json` is a Health-owned, non-self-referential proof
+input with SHA-256
+`015a3160727a7bfdaa4cddc552c4dc377063e07e542fca15f47cb4acaee90dfa`.
+It pins the exact compatibility test names and the source digests for
+`internal/health/diagnostic_test.go` and the preserved v1 compatibility test in
+`internal/health/health_test.go`. The receipt generator validates those bytes
+and Go test declarations before reporting compatibility.
+
 These files remain offline compatibility inputs while Registry #568 is
 pending. They are not a public release, a runtime diagnosis authority, or a
 deployment instruction. The compatibility loader rejects any other Registry

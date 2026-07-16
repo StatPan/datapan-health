@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -197,7 +199,7 @@ func TestDiagnosticCompatibilityReceiptBindsHeadContractsFixturesAndServices(t *
 	}
 	head := strings.Repeat("a", 40)
 	testedRevision := strings.Repeat("b", 40)
-	receipt, err := BuildDiagnosticCompatibilityReceipt(head, testedRevision, contract, canaries)
+	receipt, err := BuildDiagnosticCompatibilityReceipt(head, testedRevision, "../..", contract, canaries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,17 +209,158 @@ func TestDiagnosticCompatibilityReceiptBindsHeadContractsFixturesAndServices(t *
 	if receipt.Contracts.Schema.SHA256 != AcceptedDiagnosticSchemaSHA256 || receipt.Contracts.Mapping.SHA256 != AcceptedDiagnosticMappingSHA256 || receipt.Contracts.Consumer.SHA256 != AcceptedDiagnosticConsumerSHA256 {
 		t.Fatalf("receipt contract pins drifted: %#v", receipt.Contracts)
 	}
-	if len(receipt.Fixtures) != 11 || len(receipt.Bindings) != len(canaries.Canaries) || len(receipt.RequiredTests) < 8 {
-		t.Fatalf("receipt proof coverage is incomplete: fixtures=%d bindings=%d tests=%d", len(receipt.Fixtures), len(receipt.Bindings), len(receipt.RequiredTests))
+	if len(receipt.Fixtures) != 11 || len(receipt.Bindings) != len(canaries.Canaries) || receipt.TestProof.Count != len(receipt.TestProof.Tests) || receipt.TestProof.Count < 10 || len(receipt.TestProof.Sources) != 2 || receipt.TestProof.Manifest.SHA256 != AcceptedDiagnosticTestManifestSHA256 {
+		t.Fatalf("receipt proof coverage is incomplete: fixtures=%d bindings=%d tests=%d sources=%d", len(receipt.Fixtures), len(receipt.Bindings), receipt.TestProof.Count, len(receipt.TestProof.Sources))
 	}
 	if receipt.Boundaries.ExistingHealthProbeV1 != "preserved" || receipt.Boundaries.GatusProjection != "unchanged_enum_only" || receipt.Boundaries.PublicAPI != "not_implemented" || receipt.Boundaries.Deployment != "not_performed" {
 		t.Fatalf("receipt crossed issue #19 boundaries: %#v", receipt.Boundaries)
 	}
-	if _, err := BuildDiagnosticCompatibilityReceipt("main", testedRevision, contract, canaries); err == nil {
+	if _, err := BuildDiagnosticCompatibilityReceipt("main", testedRevision, "../..", contract, canaries); err == nil {
 		t.Fatal("non-commit Health head was accepted")
 	}
-	if _, err := BuildDiagnosticCompatibilityReceipt(head, "merge", contract, canaries); err == nil {
+	if _, err := BuildDiagnosticCompatibilityReceipt(head, "merge", "../..", contract, canaries); err == nil {
 		t.Fatal("non-commit tested revision was accepted")
+	}
+}
+
+func TestDiagnosticCompatibilityRejectsNonBijectiveOrIncompleteServiceMap(t *testing.T) {
+	contract := mustLoadDiagnosticContract(t)
+	canaries, err := LoadCanaryConfig("../../config/canaries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := strings.Repeat("a", 40)
+	tested := strings.Repeat("b", 40)
+	tests := map[string]func(CanaryConfig, DiagnosticContract) (CanaryConfig, DiagnosticContract){
+		"duplicate service": func(config CanaryConfig, contract DiagnosticContract) (CanaryConfig, DiagnosticContract) {
+			config.Canaries[1].GatusEndpointKey = config.Canaries[0].GatusEndpointKey
+			return config, contract
+		},
+		"missing operation": func(config CanaryConfig, contract DiagnosticContract) (CanaryConfig, DiagnosticContract) {
+			config.Canaries = config.Canaries[:len(config.Canaries)-1]
+			return config, contract
+		},
+		"extra operation": func(config CanaryConfig, contract DiagnosticContract) (CanaryConfig, DiagnosticContract) {
+			config.Canaries = append(config.Canaries, config.Canaries[0])
+			return config, contract
+		},
+		"wrong service": func(config CanaryConfig, contract DiagnosticContract) (CanaryConfig, DiagnosticContract) {
+			config.Canaries[0].GatusEndpointKey = "public-data_wrong-service"
+			return config, contract
+		},
+		"revision drift": func(config CanaryConfig, contract DiagnosticContract) (CanaryConfig, DiagnosticContract) {
+			contract.RegistryRevision = strings.Repeat("0", 40)
+			return config, contract
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			config, candidate := mutate(canaries, contract)
+			if _, err := BuildDiagnosticCompatibilityReceipt(head, tested, "../..", candidate, config); err == nil {
+				t.Fatal("non-bijective or stale compatibility proof was accepted")
+			}
+		})
+	}
+}
+
+func TestDiagnosticCompatibilityCLIRejectsNonBijectiveCanaryFiles(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := mustRead(t, "../../config/canaries.json")
+	var base map[string]any
+	if err := json.Unmarshal(raw, &base); err != nil {
+		t.Fatal(err)
+	}
+	catalogPath, err := filepath.Abs("../../config/registry/health-probe-catalog.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base["catalog_path"] = catalogPath
+
+	mutations := map[string]func(map[string]any){
+		"duplicate service": func(config map[string]any) {
+			canaries := config["canaries"].([]any)
+			canaries[1].(map[string]any)["gatus_endpoint_key"] = canaries[0].(map[string]any)["gatus_endpoint_key"]
+		},
+		"missing operation": func(config map[string]any) {
+			canaries := config["canaries"].([]any)
+			config["canaries"] = canaries[:len(canaries)-1]
+		},
+		"extra operation": func(config map[string]any) {
+			canaries := config["canaries"].([]any)
+			config["canaries"] = append(canaries, canaries[0])
+		},
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			encoded, err := json.Marshal(base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var candidate map[string]any
+			if err := json.Unmarshal(encoded, &candidate); err != nil {
+				t.Fatal(err)
+			}
+			mutate(candidate)
+			configPath := filepath.Join(t.TempDir(), "canaries.json")
+			updated, err := json.Marshal(candidate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(configPath, updated, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			command := exec.Command("go", "run", "./cmd/health-compatibility", "-pin", "config/registry/diagnostic-contract-pin.json", "-canaries", configPath, "-repo-root", ".", "-health-head", strings.Repeat("a", 40), "-tested-revision", strings.Repeat("b", 40), "-output", filepath.Join(t.TempDir(), "receipt.json"))
+			command.Dir = repoRoot
+			output, err := command.CombinedOutput()
+			if err == nil {
+				t.Fatal("compatibility CLI accepted a non-bijective canary file")
+			}
+			if string(output) != "health compatibility proof failed\nexit status 1\n" {
+				t.Fatalf("CLI emitted an unexpected or input-bearing error: %q", output)
+			}
+		})
+	}
+}
+
+func TestDiagnosticTestManifestRejectsSourceDriftAndReceiptIsReproducible(t *testing.T) {
+	contract := mustLoadDiagnosticContract(t)
+	canaries, err := LoadCanaryConfig("../../config/canaries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := strings.Repeat("a", 40)
+	tested := strings.Repeat("b", 40)
+	first, err := BuildDiagnosticCompatibilityReceipt(head, tested, "../..", contract, canaries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := BuildDiagnosticCompatibilityReceipt(head, tested, "../..", contract, canaries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(first, second) {
+		t.Fatal("compatibility receipt is not reproducible")
+	}
+
+	tempRoot := t.TempDir()
+	for _, source := range contract.testManifest.Sources {
+		raw := mustRead(t, filepath.Join("../..", filepath.FromSlash(source.Path)))
+		destination := filepath.Join(tempRoot, filepath.FromSlash(source.Path))
+		if err := os.MkdirAll(filepath.Dir(destination), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if source.Path == "internal/health/diagnostic_test.go" {
+			raw = append(raw, []byte("\n// drift\n")...)
+		}
+		if err := os.WriteFile(destination, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := BuildDiagnosticCompatibilityReceipt(head, tested, tempRoot, contract, canaries); err == nil {
+		t.Fatal("test source drift was accepted")
 	}
 }
 

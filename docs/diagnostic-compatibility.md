@@ -33,10 +33,14 @@ diagnostic subject resolves only when all of these values agree exactly:
 5. the diagnostic contract is pinned to the accepted Registry merge commit.
 
 The result binds the Registry operation ID to the existing Gatus endpoint key,
-which is the current Health service identity. Unknown, duplicate, fuzzy,
-cross-operation, or revision-mismatched identities are rejected. The diagnostic
-cause and actions are deliberately absent from `Summarize`, so this bridge
-cannot alter Gatus success, error, cadence, or alert thresholds.
+which is the current Health service identity. The compatibility proof requires
+the exact reviewed ten-operation and ten-service bijection: duplicate service
+IDs, subsets, missing operations, extra mappings, renamed services, unknown,
+fuzzy, cross-operation, or revision-mismatched identities are rejected. This
+strict gate belongs to the #19 proof command and does not make unrelated canary
+loading globally require this one release. The diagnostic cause and actions are
+deliberately absent from `Summarize`, so this bridge cannot alter Gatus success,
+error, cadence, or alert thresholds.
 
 ## Redaction boundary
 
@@ -65,7 +69,10 @@ make diagnostic-compatibility HEALTH_HEAD="$(git rev-parse HEAD)"
 The generated `out/diagnostic-compatibility.json` binds both the Health source
 head and the exact CI checkout revision (a pull request merge revision when
 applicable), plus the Registry revision, three contract digests, eleven fixture
-digests, ten exact operation/service bindings, required test names, and
+digests, ten exact operation/service bindings, and a non-self-referential test
+manifest. The manifest pins the exact test names, count, source paths, and
+source SHA-256 values; the generator reads and parses those exact source bytes
+before issuing a receipt. The receipt also keeps the manifest digest and
 unchanged exposure boundaries. CI uploads it as
 `diagnostic-compatibility-<commit>`. Registry #568 can consume that exact-head
 artifact as Health's compatibility proof; the generated receipt is not a

@@ -17,7 +17,7 @@ type DiagnosticCompatibilityReceipt struct {
 	Contracts        DiagnosticCompatibilityPins       `json:"contracts"`
 	Fixtures         []DiagnosticFixtureProof          `json:"fixtures"`
 	Bindings         []DiagnosticServiceBindingProof   `json:"bindings"`
-	RequiredTests    []string                          `json:"required_tests"`
+	TestProof        DiagnosticTestProof               `json:"test_proof"`
 	Boundaries       DiagnosticCompatibilityBoundaries `json:"boundaries"`
 }
 
@@ -49,9 +49,26 @@ type DiagnosticCompatibilityBoundaries struct {
 	Deployment            string `json:"deployment"`
 }
 
-func BuildDiagnosticCompatibilityReceipt(healthHead, testedRevision string, contract DiagnosticContract, canaries CanaryConfig) (DiagnosticCompatibilityReceipt, error) {
+var expectedDiagnosticServiceBindings = map[string]string{
+	"dpr-op-00000001": "public-data_holiday-emergency-clinics",
+	"dpr-op-00000002": "public-data_election-codes",
+	"dpr-op-00000003": "public-data_medical-institution-codes",
+	"dpr-op-00000004": "public-data_private-resource-services",
+	"dpr-op-00000005": "public-data_culture-facility-restaurants",
+	"dpr-op-00000006": "public-data_qnet-practical-pass-rate",
+	"dpr-op-00000007": "public-data_weather-nearby-realtime",
+	"dpr-op-00000008": "public-data_transit-card-chargers",
+	"dpr-op-00000009": "public-data_bus-depot-status",
+	"dpr-op-00000010": "public-data_university-majors",
+}
+
+func BuildDiagnosticCompatibilityReceipt(healthHead, testedRevision, repoRoot string, contract DiagnosticContract, canaries CanaryConfig) (DiagnosticCompatibilityReceipt, error) {
 	if !commitPattern.MatchString(healthHead) || !commitPattern.MatchString(testedRevision) {
 		return DiagnosticCompatibilityReceipt{}, errors.New("health head and tested revision must be exact commits")
+	}
+	testProof, err := contract.ValidateTestManifest(repoRoot)
+	if err != nil {
+		return DiagnosticCompatibilityReceipt{}, err
 	}
 	fixtures := make([]DiagnosticFixtureProof, 0, len(contract.fixtureNames))
 	for _, name := range contract.fixtureNames {
@@ -87,6 +104,9 @@ func BuildDiagnosticCompatibilityReceipt(healthHead, testedRevision string, cont
 			ServiceID: binding.ServiceID, RegistryRevision: binding.RegistryRevision,
 		})
 	}
+	if err := validateExactDiagnosticServiceBindings(canaries); err != nil {
+		return DiagnosticCompatibilityReceipt{}, err
+	}
 	sort.Slice(bindings, func(i, j int) bool { return bindings[i].OperationID < bindings[j].OperationID })
 
 	return DiagnosticCompatibilityReceipt{
@@ -98,16 +118,7 @@ func BuildDiagnosticCompatibilityReceipt(healthHead, testedRevision string, cont
 		Contracts:        DiagnosticCompatibilityPins{Schema: contract.Schema, Mapping: contract.Mapping, Consumer: contract.Consumer},
 		Fixtures:         fixtures,
 		Bindings:         bindings,
-		RequiredTests: []string{
-			"TestPinnedSchemaAndCLIStyleFixturesAreCompatible",
-			"TestAcceptedDiagnosticFixturesMatchExactRegistryContract",
-			"TestDiagnosticDecoderFailsClosedForUnknownVersionEnumAndExtraField",
-			"TestDiagnosticSubjectBindsExactlyOnceToConfiguredService",
-			"TestDiagnosticSubjectRejectsUnknownCrossOperationDuplicateAndStaleRevision",
-			"TestDiagnosticProducerBoundaryRejectsEveryRedactionLeakClass",
-			"TestDiagnosticCauseCannotChangeGatusProjection",
-			"TestDiagnosticPinRejectsRevisionAndArtifactDrift",
-		},
+		TestProof:        testProof,
 		Boundaries: DiagnosticCompatibilityBoundaries{
 			ExistingHealthProbeV1: "preserved",
 			GatusProjection:       "unchanged_enum_only",
@@ -116,4 +127,24 @@ func BuildDiagnosticCompatibilityReceipt(healthHead, testedRevision string, cont
 			Deployment:            "not_performed",
 		},
 	}, nil
+}
+
+func validateExactDiagnosticServiceBindings(canaries CanaryConfig) error {
+	if len(canaries.Canaries) != len(expectedDiagnosticServiceBindings) {
+		return errors.New("diagnostic compatibility requires the exact canary set")
+	}
+	seenOperations := make(map[string]bool, len(canaries.Canaries))
+	seenServices := make(map[string]bool, len(canaries.Canaries))
+	for _, canary := range canaries.Canaries {
+		expectedService, ok := expectedDiagnosticServiceBindings[canary.OperationID]
+		if !ok || canary.GatusEndpointKey != expectedService || seenOperations[canary.OperationID] || seenServices[canary.GatusEndpointKey] {
+			return errors.New("diagnostic compatibility requires an exact operation and service bijection")
+		}
+		seenOperations[canary.OperationID] = true
+		seenServices[canary.GatusEndpointKey] = true
+	}
+	if len(seenOperations) != len(expectedDiagnosticServiceBindings) || len(seenServices) != len(expectedDiagnosticServiceBindings) {
+		return errors.New("diagnostic compatibility operation and service binding is incomplete")
+	}
+	return nil
 }
