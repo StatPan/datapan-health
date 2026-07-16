@@ -1,0 +1,17 @@
+{
+  "schema_version": "datapan.health-correlation-rule.v1",
+  "rule_id": "data-go-kr-provider-outage-bounded-v1",
+  "version": 1,
+  "provider": "data.go.kr",
+  "registry_revision": "8c5d397f13929ec2b85e63e4ca600887f37929b8",
+  "catalog_sha256": "e84f0da2f532a32833def1118a4610bf2322f370783d120b84cf85306d244840",
+  "window_seconds": 900,
+  "future_skew_seconds": 30,
+  "notice_max_age_seconds": 86400,
+  "minimum_affected_operations": 2,
+  "minimum_control_operations": 1,
+  "affected_categories": ["provider_failure", "timeout", "transport_failure"],
+  "control_categories": ["healthy"],
+  "notice_authorities": ["provider", "provider_portal"],
+  "notice_hosts": ["data.go.kr", "www.data.go.kr"]
+}

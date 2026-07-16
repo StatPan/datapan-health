@@ -1,0 +1,50 @@
+{
+  "schema_version": "datapan.health-correlation-replay.v1",
+  "assessed_at": "2026-07-17T00:15:00Z",
+  "scope": {
+    "provider": "data.go.kr",
+    "dependency_class": "data_go_kr_gateway",
+    "credential_scope_id": "public-canary"
+  },
+  "observations": [
+    {
+      "schema_version": "datapan.health-observation.v1",
+      "observation_ref": "health-observation:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "observed_at": "2026-07-17T00:14:00Z",
+      "operation_id": "dpr-op-00000001",
+      "dependency_class": "data_go_kr_gateway",
+      "probe_policy_key": "dpr-op-00000001",
+      "probe_policy_version": 1,
+      "credential_scope_id": "public-canary",
+      "outcome": "unhealthy",
+      "category": "timeout",
+      "http_status": 0,
+      "redaction": {
+        "credentials_removed": true,
+        "query_values_removed": true,
+        "response_rows_removed": true,
+        "raw_provider_text_removed": true
+      }
+    },
+    {
+      "schema_version": "datapan.health-observation.v1",
+      "observation_ref": "health-observation:sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "observed_at": "2026-07-17T00:14:00Z",
+      "operation_id": "dpr-op-00000003",
+      "dependency_class": "data_go_kr_gateway",
+      "probe_policy_key": "dpr-op-00000003",
+      "probe_policy_version": 1,
+      "credential_scope_id": "public-canary",
+      "outcome": "healthy",
+      "category": "healthy",
+      "http_status": 200,
+      "redaction": {
+        "credentials_removed": true,
+        "query_values_removed": true,
+        "response_rows_removed": true,
+        "raw_provider_text_removed": true
+      }
+    }
+  ],
+  "provider_notices": []
+}
