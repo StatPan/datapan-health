@@ -1,0 +1,84 @@
+{
+  "schema_version": "datapan.diagnostic-envelope.v1",
+  "assessed_at": "2026-07-16T00:00:00Z",
+  "fixture": {
+    "status": "deterministic_example",
+    "scenario_id": "approval-required",
+    "snapshot_at": "2026-07-16T00:00:00Z"
+  },
+  "subject": {
+    "source_id": "data_go_kr",
+    "dataset_id": "fixture-dataset-approval",
+    "operation_id": "fixture-operation-approval",
+    "provider_id": "data_go_kr"
+  },
+  "cause": {
+    "code": "approval_required",
+    "determination": "observed",
+    "layer": "access",
+    "explanation_id": "diagnosis.approval_required"
+  },
+  "ownership": {
+    "accountable_party": "user",
+    "support_reference_id": "data-go-kr:application"
+  },
+  "actions": {
+    "recommended": [
+      {
+        "action_id": "apply_for_operation",
+        "actor": "user",
+        "rationale_id": "action.apply_for_operation"
+      }
+    ],
+    "avoid": [
+      {
+        "action_id": "reissue_credential",
+        "actor": "user",
+        "rationale_id": "avoid.reissue_does_not_grant_operation"
+      }
+    ]
+  },
+  "evidence_refs": [
+    {
+      "kind": "approval_record",
+      "ref_id": "approval:fixture-operation-approval:not-applied",
+      "authority": "data_go_kr_portal",
+      "scope": {
+        "level": "operation",
+        "subject_ref": "envelope_subject"
+      },
+      "version": "portal-snapshot-v1",
+      "approval": {
+        "state": "not_applied",
+        "effective_scope": {
+          "level": "operation",
+          "subject_ref": "envelope_subject"
+        }
+      },
+      "supports": [
+        "cause",
+        "scope",
+        "determination",
+        "ownership",
+        "action"
+      ],
+      "timing": {
+        "basis": "relative_to_assessed_at",
+        "observed_age_seconds": 0,
+        "validity": "current_at_assessment",
+        "validity_policy_version": "portal-snapshot-v1",
+        "remaining_validity_seconds": 604800
+      }
+    }
+  ],
+  "redaction": {
+    "secret_values_present": false,
+    "secret_hashes_present": false,
+    "authorization_headers_present": false,
+    "credential_bearing_urls_present": false,
+    "raw_provider_text_present": false,
+    "raw_provider_urls_present": false,
+    "response_bodies_present": false,
+    "user_identity_present": false
+  }
+}
