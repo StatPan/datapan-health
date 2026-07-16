@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.datapan.dev/datapan.health-public-diagnosis-snapshot.v1.schema.json",
+  "title": "Datapan Health reviewed diagnosis snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "registry_revision", "diagnostic_vocabulary_sha256", "correlation_rule", "assertion_policy", "operations"],
+  "properties": {
+    "schema_version": {"const": "datapan.health-public-diagnosis-snapshot.v1"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "registry_revision": {"const": "f90d2d62258e50d562ff08b993c75bc0a4dad6fa"},
+    "diagnostic_vocabulary_sha256": {"const": "aa03c42960a59725b829b934ad07548dacb8f149c7a920a35a9e32c0459b49fc"},
+    "correlation_rule": {
+      "type": "object", "additionalProperties": false,
+      "required": ["rule_id", "version", "sha256"],
+      "properties": {
+        "rule_id": {"const": "data-go-kr-provider-outage-bounded-v1"},
+        "version": {"const": 1},
+        "sha256": {"const": "df2749887d8adda659a01416e003d2e00ce19d37304dfaeec3dea61809ed0f02"}
+      }
+    },
+    "assertion_policy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "policy_set_id", "artifact_sha256", "policy_set_version", "diagnostic_vocabulary_sha256"],
+      "properties": {
+        "path": {"const": "drafts/operation-assertion-policies/operation-assertion-policies.v1.json"},
+        "policy_set_id": {"const": "datapan-health-canary-assertions"},
+        "artifact_sha256": {"const": "d9b39f40e2068180cf46ebf8eca2037aeff19523b76f648bb06666758ed8c1d3"},
+        "policy_set_version": {"const": 1},
+        "diagnostic_vocabulary_sha256": {"const": "aa03c42960a59725b829b934ad07548dacb8f149c7a920a35a9e32c0459b49fc"}
+      }
+    },
+    "operations": {
+      "type": "array", "minItems": 10, "maxItems": 10,
+      "items": {"$ref": "#/$defs/operation"},
+      "allOf": [
+        {"contains": {"properties": {"operation_id": {"const": "dpr-op-00000001"}}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"operation_id": {"const": "dpr-op-00000002"}}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"operation_id": {"const": "dpr-op-00000003"}}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"operation_id": {"const": "dpr-op-00000004"}}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"operation_id": {"const": "dpr-op-00000005"}}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"operation_id": {"const": "dpr-op-00000006"}}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"operation_id": {"const": "dpr-op-00000007"}}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"operation_id": {"const": "dpr-op-00000008"}}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"operation_id": {"const": "dpr-op-00000009"}}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"operation_id": {"const": "dpr-op-00000010"}}}, "minContains": 1, "maxContains": 1}
+      ]
+    }
+  },
+  "$defs": {
+    "operation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["operation_id", "operation_revision_sha256", "projection_sha256", "evidence_state", "diagnosis"],
+      "properties": {
+        "operation_id": {"type": "string", "pattern": "^dpr-op-[0-9]{8}$"},
+        "operation_revision_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "projection_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "evidence_state": {"enum": ["accepted", "not_observed", "unknown", "rejected"]},
+        "assessed_at": {"type": "string", "format": "date-time"},
+        "valid_until": {"type": "string", "format": "date-time"},
+        "source": {"$ref": "#/$defs/source"},
+        "correlation": {"$ref": "#/$defs/correlation"},
+        "assertion": {"$ref": "#/$defs/assertion"},
+        "diagnosis": {"$ref": "#/$defs/diagnosis"}
+      }
+    },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "schema_version", "sha256"],
+      "properties": {
+        "kind": {"enum": ["correlation_receipt", "assertion_request"]},
+        "schema_version": {"enum": ["datapan.health-correlation-receipt.v1", "datapan.health-assertion-evaluation.v1"]},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "correlation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["affected_count", "control_count", "notice_linked"],
+      "properties": {
+        "affected_count": {"type": "integer", "minimum": 2, "maximum": 10},
+        "control_count": {"type": "integer", "minimum": 1, "maximum": 10},
+        "notice_linked": {"type": "boolean"}
+      }
+    },
+    "assertion": {
+      "type": "object", "additionalProperties": false,
+      "required": ["dimension", "outcome", "observed_field_count"],
+      "properties": {
+        "dimension": {"enum": ["contract", "presence", "semantic", "freshness", "transport"]},
+        "outcome": {"enum": ["pass", "fail", "not_observed", "unknown"]},
+        "observed_field_count": {"type": "integer", "minimum": 0, "maximum": 1024}
+      }
+    },
+    "diagnosis": {
+      "type": "object", "additionalProperties": false,
+      "required": ["code", "determination", "accountable_party", "recommended_action_ids", "avoid_action_ids"],
+      "properties": {
+        "code": {"enum": ["provider_outage", "contract_drift", "unknown"]},
+        "determination": {"enum": ["observed", "inferred", "unknown"]},
+        "accountable_party": {"enum": ["shared", "provider", "unknown"]},
+        "recommended_action_ids": {"type": "array", "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,95}$"}},
+        "avoid_action_ids": {"type": "array", "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,95}$"}}
+      },
+      "allOf": [{
+        "if": {"properties": {"code": {"const": "unknown"}}},
+        "then": {"properties": {
+          "determination": {"const": "unknown"},
+          "accountable_party": {"const": "unknown"},
+          "recommended_action_ids": {"maxItems": 0},
+          "avoid_action_ids": {"maxItems": 0}
+        }}
+      }]
+    }
+  }
+}

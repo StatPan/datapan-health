@@ -16,3 +16,8 @@ proof merged by PR #23. It is not copied from Gatus and intentionally excludes
 Gatus endpoint keys, dataset/provider/request detail, receipts, and diagnostic
 evidence payloads. Changes require browser/CORS/leak compatibility review and
 an explicit consumer upgrade; a new unknown version is not accepted as v1.
+
+`datapan.health-public-diagnosis-snapshot.v1.schema.json` is Health-owned by
+issue #27. It is an internal atomic input to the existing public status adapter,
+not a new public response version. Its exact Registry, vocabulary, correlation
+rule, assertion policy, and ten-operation identities are fail-closed.

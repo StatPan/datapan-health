@@ -19,16 +19,22 @@ var healthArchiveSchema []byte
 //go:embed datapan.health-public-status.v1.schema.json
 var healthPublicStatusSchema []byte
 
+//go:embed datapan.health-public-diagnosis-snapshot.v1.schema.json
+var healthPublicDiagnosisSnapshotSchema []byte
+
 var (
-	healthProbeOnce        sync.Once
-	healthProbe            *jsonschema.Schema
-	healthProbeErr         error
-	healthArchiveOnce      sync.Once
-	healthArchive          *jsonschema.Schema
-	healthArchiveErr       error
-	healthPublicStatusOnce sync.Once
-	healthPublicStatus     *jsonschema.Schema
-	healthPublicStatusErr  error
+	healthProbeOnce                   sync.Once
+	healthProbe                       *jsonschema.Schema
+	healthProbeErr                    error
+	healthArchiveOnce                 sync.Once
+	healthArchive                     *jsonschema.Schema
+	healthArchiveErr                  error
+	healthPublicStatusOnce            sync.Once
+	healthPublicStatus                *jsonschema.Schema
+	healthPublicStatusErr             error
+	healthPublicDiagnosisSnapshotOnce sync.Once
+	healthPublicDiagnosisSnapshot     *jsonschema.Schema
+	healthPublicDiagnosisSnapshotErr  error
 )
 
 func ValidateHealthProbeV1(data []byte) error {
@@ -52,6 +58,13 @@ func ValidateHealthPublicStatusV1(data []byte) error {
 		healthPublicStatus, healthPublicStatusErr = compile(healthPublicStatusSchema, "https://schemas.datapan.dev/datapan.health-public-status.v1.schema.json")
 	})
 	return validate(data, healthPublicStatus, healthPublicStatusErr, "public status")
+}
+
+func ValidateHealthPublicDiagnosisSnapshotV1(data []byte) error {
+	healthPublicDiagnosisSnapshotOnce.Do(func() {
+		healthPublicDiagnosisSnapshot, healthPublicDiagnosisSnapshotErr = compile(healthPublicDiagnosisSnapshotSchema, "https://schemas.datapan.dev/datapan.health-public-diagnosis-snapshot.v1.schema.json")
+	})
+	return validate(data, healthPublicDiagnosisSnapshot, healthPublicDiagnosisSnapshotErr, "public diagnosis snapshot")
 }
 
 func compile(source []byte, uri string) (*jsonschema.Schema, error) {

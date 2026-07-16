@@ -15,6 +15,8 @@ func main() {
 	listen := flag.String("listen", env("PUBLIC_STATUS_LISTEN", ":8082"), "private listener for the public status adapter")
 	gatusStatusURL := flag.String("gatus-status-url", env("GATUS_STATUS_URL", "http://gatus:8080/api/v1/endpoints/statuses"), "private Gatus summary URL")
 	canaryPath := flag.String("canaries", env("CANARY_CONFIG", "config/canaries.json"), "reviewed public canary identity map")
+	diagnosisPath := flag.String("diagnosis-snapshot", env("PUBLIC_DIAGNOSIS_SNAPSHOT", "data/public-diagnosis-snapshot.json"), "atomic reviewed diagnosis snapshot")
+	assertionPinPath := flag.String("assertion-pin", env("ASSERTION_POLICY_PIN", "config/registry/assertion-policy-contract-pin.json"), "exact assertion policy contract")
 	originList := flag.String("allowed-origins", os.Getenv("PUBLIC_STATUS_ALLOWED_ORIGINS"), "comma-separated exact HTTPS browser origins")
 	flag.Parse()
 
@@ -26,8 +28,16 @@ func main() {
 	if err != nil {
 		fatal()
 	}
+	assertionContract, err := health.LoadAssertionPolicyContract(*assertionPinPath, canaries)
+	if err != nil {
+		fatal()
+	}
+	publicSource, err := health.NewDiagnosisOverlaySource(source, *diagnosisPath, assertionContract)
+	if err != nil {
+		fatal()
+	}
 	origins := splitOrigins(*originList)
-	handler, err := health.NewPublicStatusHandler(source, origins)
+	handler, err := health.NewPublicStatusHandler(publicSource, origins)
 	if err != nil {
 		fatal()
 	}
