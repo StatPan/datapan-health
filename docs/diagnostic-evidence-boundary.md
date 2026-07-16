@@ -1,12 +1,15 @@
 # M003 diagnostic evidence boundary
 
 Status: Health consumer requirements and gap audit for issue #17. This is not a
-cross-repository schema decision.
+runtime implementation or publication decision.
 
-The product-level source is Datapan team mission M003 and its proposed
-`datapan.diagnosis.v1` meaning. This document tests whether Health can supply
-that meaning from public observations; it does not replace the team mission or
-the Registry-owned serialization and compatibility review.
+The product-level source is Datapan team mission M003. Registry issue #566 and
+PR #569 merged the draft `datapan.diagnostic-envelope.v1` schema and consumer
+contract at commit `2ada3ddea5a497bf315999ea5e30e3474fc86a9b`. This
+document evaluates Health against those actual bytes. The draft is test input,
+not runtime authority: Registry #567 must accept the data.go.kr evidence
+mapping, and Registry #568 requires exact CLI, Health, and Web compatibility
+receipts before publication.
 
 ## Decision
 
@@ -22,12 +25,13 @@ approval has not propagated, or the provider has applied another access
 policy. Health must preserve the evidence and report an unknown cause until an
 authoritative signal or a sufficiently strong correlation rule exists.
 
-The future common diagnostic contract therefore needs to keep three things
+The merged draft diagnostic contract keeps three things
 separate:
 
 1. objective observations from one execution;
 2. authority-bound policy or approval facts;
-3. a versioned diagnosis with an explicit confidence and evidence list.
+3. a versioned cause with one `observed`/`inferred`/`unknown` determination and
+   typed evidence references.
 
 Health is a consumer and correlator of that contract. Datapan CLI owns the
 probe execution and local credential/input preflight. Datapan Registry owns
@@ -38,7 +42,7 @@ incident nor a Registry policy can manufacture a portal approval fact.
 
 | Surface | Evidence available now | Boundary |
 | --- | --- | --- |
-| Pinned receipt | Operation/Registry identity, execution attempted and budget, latency, HTTP/provider/semantic/body observations, data/schema/freshness states, outcome/category/retryability/reason, redaction assertions | `datapan.health-probe.v1` categories are coarse and contain no evidence-source, scope, confidence, approval state, or correlation identity |
+| Pinned receipt | Operation/Registry identity, execution attempted and budget, latency, HTTP/provider/semantic/body observations, data/schema/freshness states, outcome/category/retryability/reason, redaction assertions | `datapan.health-probe.v1` categories are coarse and contain no typed evidence authority/scope/timing, cause determination, approval record, or versioned correlation identity |
 | Runner adapter | Strict schema and nested-field validation; exact configured-canary resolution | Gatus receives only `outcome`, `category`, and latency; detailed evidence stays private |
 | Local receipt sink | Complete already-redacted v1 receipt, append-only JSONL with mode `0600` | No application retention limit, compaction, deletion, or schema-migration mechanism is implemented here |
 | Gatus/PostgreSQL | Per-canary result, enum-only error, heartbeat, two-failure alert threshold, seven-day bounded result history | Two failures create an incident signal, not a root-cause verdict; PostgreSQL retention/backup is infra-owned |
@@ -69,37 +73,36 @@ versioned rule. `Unavailable` means the current contract lacks enough evidence.
 | Approval propagation | Registry can mark an operation credential-required; a skipped `approval_required` result may survive only as a coarse blocked category/reason in the private receipt | Submitted, pending, approved, rejected, propagation start/end, or whether a `403` is approval-related | No authoritative approval-state observation, observation time, authority, or distinction from input blocking |
 | Input | `attempted=false`, safe parameter names, `parameter_blocked`, and the reason can show local preflight blocking | Whether an attempted `400/403` came from a bad value, provider policy, stale docs, or server defect | No preflight result per constraint, no provider-neutral input-failure class, and no policy version tied to the assertion |
 | Quota or throttling | Explicit HTTP `429` maps to `rate_limited`; latency and retryability are retained | Account quota exhaustion versus per-operation, per-IP, burst, or provider-wide throttling; reset time unless explicitly observed | No quota scope/kind, reset observation, provider code class, or independent comparison cohort |
-| Provider outage | Transport failure, timeout, `5xx`, provider failure, heartbeat silence, and repeated observations are available | Root-cause attribution to the provider from one canary or one credential; local network and adapter defects can look identical | No vantage point, dependency target, control canary, cohort/window evidence, or diagnosis confidence |
+| Provider outage | Transport failure, timeout, `5xx`, provider failure, heartbeat silence, and repeated observations are available | Root-cause attribution to the provider from one canary or one credential; local network and adapter defects can look identical | No vantage point, dependency target, control canary, cohort/window evidence, or versioned determination rule |
 | Contract or semantic data quality | Provider semantic failure, unclassified response/schema drift, body shape, data presence, schema status, and freshness status exist | Structural conformance or freshness when the producer reports `not_observed`; empty data as a failure without policy | Current canaries stop mainly at L0-L4; no assertion policy/result identity for expected shape, presence, or freshness |
 
 The present categories are still valuable for status and aggregation. They must
 be treated as observations or coarse failure classes, not renamed into precise
 root causes in the UI or archive.
 
-## Minimum common diagnostic evidence
+## Accepted draft consumer surface
 
-The following is a Health consumer requirement. Field names are illustrative;
-the Datapan product-level contract must choose the final schema and ownership.
-Every new field must be additive in a new receipt version or in an optional,
-versioned diagnostic block. Health must reject unknown enum values until its
-pinned consumer is updated.
+Health must consume the exact Registry draft rather than a parallel local
+model. The following names and constraints come from the merged schema and
+`consumer-contract.v1.json`. Any published revision requires a new exact pin;
+Health must reject unknown versions and enum values until its consumer is
+updated.
 
-| Evidence group | Minimum semantics | Authority | Exposure |
-| --- | --- | --- | --- |
-| Identity and time | Stable operation key, Registry revision, observation time, probe ID, diagnostic-contract version | Registry for operation identity; producer for execution identity | Public service alias/time; detailed identity private |
-| Execution phase | `preflight`, `request`, `response`, or `semantic`; attempted flag; bounded timeout/request budget | CLI | Phase may be public; detailed execution private |
-| Dependency scope | Provider-neutral dependency class and a stable public dependency ID; vantage class if more than one exists | Registry for dependency class; Health config for public alias | Allowlisted alias only; no raw host/path |
-| Credential evidence | Presence check result and check kind such as `not_checked`, `missing`, `configured`, `provider_accepted`, `provider_rejected`; never the value, fingerprint, owner, or profile name | CLI observation; provider response only proves acceptance/rejection for that request | Aggregate state only if explicitly approved; otherwise private |
-| Approval evidence | `not_required`, `required_unknown`, `submitted`, `pending`, `approved`, `rejected`, or `not_observed`, plus authority and observed-at time | Portal/approved adapter for live state; Registry only for requirement policy | Private by default; public diagnosis may expose only a coarse allowlisted state |
-| Input evidence | Versioned input-policy key, local constraint result, and provider-neutral failed-constraint class without values | Registry policy and CLI evaluator | Constraint class may be public; names and all values private |
-| Response evidence | Transport result, HTTP status class, provider-code class, retry-after/reset observation when safe, parse/semantic/body-shape state | CLI/provider adapter | Public only through bounded enums; raw codes/messages private |
-| Data-quality evidence | Assertion-policy key/version and separate results for shape, presence, semantic validity, and freshness | Registry-reviewed policy evaluated by CLI/adapter | Allowlisted result enums public; rows/timestamps from payload never public |
-| Diagnosis | Cause family, `observed`/`inferred`/`unknown` confidence, rule key/version, evidence references, retryability | Producer for direct diagnosis; Health for correlation diagnosis | Cause/confidence can be public only after privacy review |
-| Correlation | Window start/end, expected and observed sample counts, affected/control service counts, and cohort rule version | Health | Counts and rule version may be public; no user/credential identity |
-| Notice evidence | Stable notice ID, source authority, published/effective/resolved times, affected public dependency/operation scope, and redaction-safe reference | Portal/provider notice source; Health only records and correlates | Allowlisted public notice metadata; never infer an unpublished notice |
-| Ownership | One of `user`, `portal`, `provider`, or `datapan`, with the evidence that supports assignment | Common diagnosis policy | Public only with diagnosis/confidence; `unknown` when evidence is insufficient |
-| Next action | Versioned action-template key, wait/retry condition, safe time bound when authoritative, and prohibited action such as unnecessary key reissue | Registry vocabulary; product renderer supplies presentation | Bounded template and parameters only; no user state or credential data |
-| Reproduction | Safe CLI handoff identity and command template, or an explicit `not_available` reason | CLI contract | No credential, query value, raw URL, or shell-ready untrusted provider text |
+| Contract group | Exact semantics Health relies on | Authority and Health boundary |
+| --- | --- | --- |
+| Version and time | `schema_version=datapan.diagnostic-envelope.v1` and RFC 3339 `assessed_at` | The producer supplies assessment time; Health selects the decoder by exact version. |
+| Subject | `source_id`, `provider_id`, `dataset_id`, and `operation_id` | Registry supplies stable identity. Health needs a manifest-bound one-to-one operation-to-canary bridge; fuzzy or positional matching is forbidden. |
+| Cause | `code`, `determination`, `layer`, and `explanation_id` | Determination is exactly `observed`, `inferred`, or `unknown`; numeric/probability confidence is forbidden. Health may author only evidence-backed correlation causes. |
+| Ownership | `accountable_party` and optional `support_reference_id` | Bounded parties are `user`, `datapan`, `data_go_kr`, `provider`, `shared`, or `unknown`. Health must keep `unknown` when evidence cannot assign responsibility. |
+| Actions | Exact `recommended` and `avoid` objects with `action_id`, `actor`, and `rationale_id` | Cause-specific schema rules reject contradictory actions. Health renders IDs only; it does not synthesize free text or new vocabulary. |
+| Evidence identity | `kind`, bounded `ref_id`, `authority`, optional `version`, `supports`, and a subject-bound `scope` | Each kind has an authority and scope allowlist. `subject_ref` is always `envelope_subject`; duplicated subject identity is not accepted. |
+| Evidence time | `basis=relative_to_assessed_at`, non-negative `observed_age_seconds`, `validity`, `validity_policy_version`, and positive remaining validity for current evidence | Evidence supporting cause, determination, or action must be current. Provider response is bounded to 300 seconds, Health correlation to 900 seconds, and provider notice to 86,400 seconds. |
+| Approval, request, and response | Typed `approval_record`, `request_validation`, and `provider_response` payloads | Approval state comes only from `data_go_kr_portal` or `provider_portal`; CLI owns request validation; provider/CLI response classes do not turn a generic `401/403` into an approval or credential verdict. |
+| Health correlation | `kind=health_observation`, `authority=datapan_health`, operation scope, and `health_correlation.{state,probe_policy_version}` | State is `unavailable`, `degraded`, `operational`, or `unknown`. A versioned bounded rule and exact evidence cohort are required before Health emits it. |
+| Provider notice | `kind=provider_notice` with provider/provider-portal authority and `notice.{state,notice_version}` | Health can correlate only reviewed, current, exact-scope notices; it cannot invent notice authority from timing alone. |
+| Contract and quality | Versioned response-contract and quality assertions; freshness additionally carries reference time, actual time, maximum age, and state | Semantic, presence, contract, and freshness results are valid only under an exact operation-bound policy. Missing policy/evidence remains unknown or not observed. |
+| Validation | Operation-scoped `validation_result` with required/achieved L1-L4, policy version, and result | A `ready` cause requires passed validation at or above the required level. Health cannot equate transport success with reusable data. |
+| Redaction | Eight required false assertions for secret values/hashes, authorization headers, credential-bearing URLs, raw provider text/URLs, response bodies, and user identity | Assertions are necessary but not sufficient: every producer boundary also needs negative leak fixtures before Health accepts the envelope. |
 
 Two absences are deliberate:
 
@@ -108,7 +111,7 @@ Two absences are deliberate:
   diagnosis.
 - There is no raw provider message, request URL, query value, authorization
   header, response body, or row. Provider adapters must convert them to reviewed
-  bounded classes before the receipt crosses into Health.
+  bounded classes before the envelope crosses into Health.
 
 ## Correlation and incident rules
 
@@ -118,8 +121,8 @@ name all evidence it used. The first safe rule set should obey these limits:
 - One observation can report a direct fact such as `credential_missing`, an
   explicit `429`, a timeout, or evaluated schema drift. It cannot report a
   provider outage or approval propagation as proven root cause.
-- Two consecutive failures are an alert threshold only. They do not raise
-  diagnostic confidence by themselves.
+- Two consecutive failures are an alert threshold only. They do not change a
+  cause determination by themselves.
 - Provider/dependency outage is at most inferred when multiple independent
   operations for the same dependency fail in a bounded window while suitable
   control operations do not. Without a control or independent vantage, keep
@@ -144,7 +147,8 @@ name all evidence it used. The first safe rule set should obey these limits:
 
 ### Receipt ingestion
 
-- Continue accepting pinned v1 receipts while a future contract is introduced.
+- Continue accepting pinned v1 receipts when the accepted diagnostic envelope
+  is introduced.
 - Select the decoder by exact `schema_version`; do not silently coerce a new
   category into an existing v1 category.
 - Store original redacted bytes or a canonical digest beside normalized fields
@@ -181,35 +185,43 @@ name all evidence it used. The first safe rule set should obey these limits:
 
 ## Ordered work and ownership
 
-1. **Product-level contract decision (Datapan team, CLI, Registry, Health).**
-   Agree on cause families, direct versus inferred confidence, field authority,
-   privacy, and versioning. Health supplies this document as consumer input;
-   this repository does not finalize the schema.
-2. **Producer evidence (Datapan CLI).** Add only evidence the executor or a
-   reviewed provider adapter can observe: phase, credential check kind, input
-   constraint result, approval observation when authoritative, response class,
-   and assertion-policy results. Preserve redaction and exact provenance.
-3. **Policy evidence (Datapan Registry).** Version stable dependency identity,
-   diagnosis vocabulary/action templates, approval requirement, input policy,
-   and live-probe semantic/schema/freshness assertion policy. Registry must not
-   claim a user's live approval state.
-4. **Health dual-version ingestion.** After a merged producer contract exists,
-   pin its schema/provenance, add strict fixtures, preserve v1 compatibility,
-   and keep the Gatus projection minimized.
-5. **Health correlation ledger.** Add versioned, replayable rules and derived
-   incident records with evidence windows, confidence, and supersession. Start
-   with offline tests; do not alter public alerting during this step.
-6. **Archive/public diagnosis.** After privacy review, publish an additive safe
-   projection and migration/query guidance. Retain v1 observations unchanged.
+1. **Registry evidence mapping — Registry #567.** Accept static data.go.kr
+   mapping and corroboration requirements without turning a generic `401/403`
+   into approval, credential, or outage certainty. This is the remaining
+   upstream semantic dependency for Health implementation.
+2. **Health compatibility proof and operation identity — Health #19.** Pin the
+   exact accepted contract and mapping, preserve `datapan.health-probe.v1`, add
+   strict fixtures and producer-boundary leak tests, bind every Registry
+   operation to exactly one canary, and emit the digest-bound Health receipt
+   required by Registry #568. The merged #566 draft is test input until #567
+   and the accepted revision are known.
+3. **Safe browser status interface — Health #20.** After #19, expose an
+   allowlisted public operation identity and JSON projection with explicit
+   non-credentialed CORS behavior. This is separate from the Gatus HTML surface
+   and does not authorize rollout.
+4. **Correlation and provider notices — Health #21.** After Registry #567 and
+   Health #19, add versioned, bounded, replayable `health_observation` rules and
+   exact-scope provider-notice links with immutable/superseding history. Start
+   offline and do not alter public alerting.
+5. **Contract, semantic, and freshness policy — Health #22.** After Registry
+   #567, a versioned Registry assertion policy, and Health #19, evaluate these
+   states only for the exact operation/policy pair. Absence remains unknown or
+   not observed.
+6. **Registry publication — Registry #568.** Publish only after CLI, Health,
+   and Web provide compatibility receipts for the exact accepted bytes.
+   Publication does not deploy Health or Datapan Web.
+7. **Archive/public diagnosis — future privacy-reviewed task.** Publish only an
+   additive safe projection and migration/query guidance; retain v1
+   observations unchanged.
 
 Datapan-data remains the authority for completeness, freshness, and semantic
 quality of reviewed published artifacts. Health can contribute only what its
 representative live probes actually evaluate; it must not promote a live probe
 to an artifact-quality verdict or duplicate datapan-data evidence.
 
-Steps 4-6 are executable Health-owned tickets once their stated prerequisites
-exist. Steps 1-3 are cross-repository decisions or producer/policy work and must
-be routed by the Datapan team lead rather than implemented from this repository.
+Health #19-#22 are executable repository work packets with explicit
+prerequisites. Registry #567 and #568, CLI producer changes, Web rendering, and
+public rollout remain outside this repository.
 
 ## Completion test for this audit
 

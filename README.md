@@ -42,8 +42,10 @@ and rollback inputs for `statpan-infra#475` are in
 
 M003의 원인 진단 범위, 현재 구분 가능한 증거, 공통 계약에 필요한 최소 필드와
 호환성 경계는 [diagnostic evidence boundary](docs/diagnostic-evidence-boundary.md)에
-정리되어 있습니다. 이 문서는 Health 소비자 요구사항이며 제품군 공통 schema를
-단독으로 확정하지 않습니다.
+정리되어 있습니다. 이 문서는 Registry PR #569에서 병합된
+`datapan.diagnostic-envelope.v1` draft의 Health 소비자 요구사항이며, Registry #567의
+evidence mapping과 #568의 소비자 호환성 증거 전에는 runtime/publication 권위로
+사용하지 않습니다.
 
 입력 계약은 merged `datapan-cli`의 `datapan.health-probe.v1`입니다. 이 저장소는 CLI commit `2fc8343993b7704b50f7d50fcba2642fca439c7f`에서 가져온 [pinned schema](schemas/datapan.health-probe.v1.schema.json)와 [provenance](schemas/PROVENANCE.md)를 보관합니다. runner는 이 schema를 embed하여 runtime에 검증하고, CI test는 합성 healthy/unhealthy CLI-style receipt의 호환성과 pinned digest를 확인합니다.
 
