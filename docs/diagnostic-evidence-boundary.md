@@ -83,13 +83,14 @@ The present categories are still valuable for status and aggregation. They must
 be treated as observations or coarse failure classes, not renamed into precise
 root causes in the UI or archive.
 
-## Accepted draft consumer surface
+## Merged draft consumer surface
 
-Health must consume the exact Registry draft rather than a parallel local
-model. The following names and constraints come from the merged schema and
-`consumer-contract.v1.json`. Any published revision requires a new exact pin;
-Health must reject unknown versions and enum values until its consumer is
-updated.
+A future Health implementation must consume the exact accepted Registry
+artifacts rather than a parallel local model. The following names and
+constraints come from the currently merged draft schema and
+`consumer-contract.v1.json`. Any accepted or published revision requires a new
+exact pin; Health must reject unknown versions and enum values until its
+consumer is updated.
 
 | Contract group | Exact semantics Health relies on | Authority and Health boundary |
 | --- | --- | --- |
