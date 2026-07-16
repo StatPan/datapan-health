@@ -1,0 +1,88 @@
+{
+  "schema_version": "datapan.health-correlation-replay.v1",
+  "assessed_at": "2026-07-17T00:15:00Z",
+  "scope": {
+    "provider": "data.go.kr",
+    "dependency_class": "data_go_kr_gateway",
+    "canary_scope_alias": "datapan-health-public-canary-v1"
+  },
+  "observations": [
+    {
+      "schema_version": "datapan.health-observation.v1",
+      "observation_ref": "health-observation:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "observed_at": "2026-07-17T00:05:00Z",
+      "operation_id": "dpr-op-00000001",
+      "dependency_class": "data_go_kr_gateway",
+      "probe_policy_key": "dpr-op-00000001",
+      "probe_policy_version": 1,
+      "canary_scope_alias": "datapan-health-public-canary-v1",
+      "outcome": "unhealthy",
+      "category": "timeout",
+      "http_status": 0,
+      "redaction": {
+        "credentials_removed": true,
+        "query_values_removed": true,
+        "response_rows_removed": true,
+        "raw_provider_text_removed": true
+      }
+    },
+    {
+      "schema_version": "datapan.health-observation.v1",
+      "observation_ref": "health-observation:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "observed_at": "2026-07-17T00:06:00Z",
+      "operation_id": "dpr-op-00000002",
+      "dependency_class": "data_go_kr_gateway",
+      "probe_policy_key": "dpr-op-00000002",
+      "probe_policy_version": 1,
+      "canary_scope_alias": "datapan-health-public-canary-v1",
+      "outcome": "unhealthy",
+      "category": "provider_failure",
+      "http_status": 503,
+      "redaction": {
+        "credentials_removed": true,
+        "query_values_removed": true,
+        "response_rows_removed": true,
+        "raw_provider_text_removed": true
+      }
+    },
+    {
+      "schema_version": "datapan.health-observation.v1",
+      "observation_ref": "health-observation:sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "observed_at": "2026-07-17T00:07:00Z",
+      "operation_id": "dpr-op-00000003",
+      "dependency_class": "data_go_kr_gateway",
+      "probe_policy_key": "dpr-op-00000003",
+      "probe_policy_version": 1,
+      "canary_scope_alias": "datapan-health-public-canary-v1",
+      "outcome": "healthy",
+      "category": "healthy",
+      "http_status": 200,
+      "redaction": {
+        "credentials_removed": true,
+        "query_values_removed": true,
+        "response_rows_removed": true,
+        "raw_provider_text_removed": true
+      }
+    }
+  ],
+  "provider_notices": [
+    {
+      "schema_version": "datapan.provider-notice-projection.v1",
+      "notice_id": "data-go-kr-maintenance-20260717",
+      "version": 1,
+      "authority": "provider_portal",
+      "observed_at": "2026-07-17T00:10:00Z",
+      "effective_from": "2026-07-17T00:00:00Z",
+      "effective_until": "2026-07-17T01:00:00Z",
+      "state": "active",
+      "effect": "degraded",
+      "dependency_class": "data_go_kr_gateway",
+      "operation_ids": [
+        "dpr-op-00000001",
+        "dpr-op-00000002"
+      ],
+      "source_ref": "https://www.data.go.kr/bbs/notice/20260717",
+      "content_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  ]
+}
