@@ -95,7 +95,7 @@ consumer is updated.
 | Contract group | Exact semantics Health relies on | Authority and Health boundary |
 | --- | --- | --- |
 | Version and time | `schema_version=datapan.diagnostic-envelope.v1` and RFC 3339 `assessed_at` | The producer supplies assessment time; Health selects the decoder by exact version. |
-| Subject | `source_id`, `provider_id`, `dataset_id`, and `operation_id` | Registry supplies stable identity. Health needs a manifest-bound one-to-one operation-to-canary bridge; fuzzy or positional matching is forbidden. |
+| Subject | `source_id`, `provider_id`, `dataset_id`, and `operation_id` | Registry supplies stable identity. Every subject Health accepts must map to exactly one configured canary through a manifest-bound bridge; unknown, duplicate, fuzzy, or positional matches are forbidden. This does not require Health to configure every Registry operation. |
 | Cause | `code`, `determination`, `layer`, and `explanation_id` | Determination is exactly `observed`, `inferred`, or `unknown`; numeric/probability confidence is forbidden. Health may author only evidence-backed correlation causes. |
 | Ownership | `accountable_party` and optional `support_reference_id` | Bounded parties are `user`, `datapan`, `data_go_kr`, `provider`, `shared`, or `unknown`. Health must keep `unknown` when evidence cannot assign responsibility. |
 | Actions | Exact `recommended` and `avoid` objects with `action_id`, `actor`, and `rationale_id` | Cause-specific schema rules reject contradictory actions. Health renders IDs only; it does not synthesize free text or new vocabulary. |
@@ -212,8 +212,9 @@ name all evidence it used. The first safe rule set should obey these limits:
    upstream semantic dependency for Health implementation.
 2. **Health compatibility proof and operation identity — Health #19.** Pin the
    exact accepted contract and mapping, preserve `datapan.health-probe.v1`, add
-   strict fixtures and producer-boundary leak tests, bind every Registry
-   operation to exactly one canary, and emit the digest-bound Health receipt
+   strict fixtures and producer-boundary leak tests, bind every
+   Health-accepted/configured operation subject to exactly one canary, and emit
+   the digest-bound Health receipt
    required by Registry #568. The merged #566 draft is test input until #567
    and the accepted revision are known.
 3. **Safe browser status interface — Health #20.** After #19, expose an
