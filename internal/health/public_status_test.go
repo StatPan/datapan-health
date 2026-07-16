@@ -123,6 +123,42 @@ func TestPublicStatusHandlerCORSMatrix(t *testing.T) {
 	}
 }
 
+func TestPublicStatusPreflightVaryCacheDimensions(t *testing.T) {
+	handler, err := NewPublicStatusHandler(staticPublicSource{document: testPublicDocument(t)}, []string{"https://datapan.statpan.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantVary = "Accept-Encoding, Origin, Access-Control-Request-Method, Access-Control-Request-Headers"
+	tests := []struct {
+		name, origin, requestedMethod, requestedHeaders string
+		wantStatus                                      int
+	}{
+		{"get-empty-headers", "https://datapan.statpan.com", http.MethodGet, "", http.StatusNoContent},
+		{"head-empty-headers", "https://datapan.statpan.com", http.MethodHead, "", http.StatusNoContent},
+		{"post-empty-headers", "https://datapan.statpan.com", http.MethodPost, "", http.StatusForbidden},
+		{"get-authorization", "https://datapan.statpan.com", http.MethodGet, "Authorization", http.StatusForbidden},
+		{"no-origin", "", http.MethodGet, "", http.StatusForbidden},
+		{"denied-origin", "https://evil.example", http.MethodGet, "", http.StatusForbidden},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodOptions, "/v1/status", nil)
+			req.Header.Set("Origin", test.origin)
+			req.Header.Set("Access-Control-Request-Method", test.requestedMethod)
+			req.Header.Set("Access-Control-Request-Headers", test.requestedHeaders)
+			recorder := httptest.NewRecorder()
+			recorder.Header().Set("Vary", "Accept-Encoding, origin")
+			handler.ServeHTTP(recorder, req)
+			if recorder.Code != test.wantStatus {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			if got := recorder.Header().Get("Vary"); got != wantVary {
+				t.Fatalf("Vary=%q want=%q", got, wantVary)
+			}
+		})
+	}
+}
+
 func TestPublicStatusSourceProjectsExactIdentityAndFreshness(t *testing.T) {
 	config, err := LoadCanaryConfig("../../config/canaries.json")
 	if err != nil {

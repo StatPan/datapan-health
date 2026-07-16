@@ -37,8 +37,10 @@ method, or requested header fails closed.
 Successful responses have a byte-derived strong ETag and
 `Cache-Control: public, max-age=30, stale-if-error=60, no-transform`.
 `If-None-Match` returns 304. Errors are generic, `no-store`, and never contain
-an upstream URL, response, or parser detail. `Vary: Origin` keeps browser
-origin decisions cache-safe.
+an upstream URL, response, or parser detail. Normal responses vary on `Origin`;
+all preflight responses additionally vary on `Access-Control-Request-Method`
+and `Access-Control-Request-Headers`, including denied variants, so caches
+cannot reuse one browser policy decision for another request shape.
 
 ## Local container smoke
 

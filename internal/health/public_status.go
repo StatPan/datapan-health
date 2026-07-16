@@ -250,7 +250,10 @@ func NewPublicStatusHandler(source PublicStatusSource, origins []string) (*Publi
 }
 
 func (h *PublicStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Vary", "Origin")
+	mergeVary(w.Header(), "Origin")
+	if r.Method == http.MethodOptions {
+		mergeVary(w.Header(), "Access-Control-Request-Method", "Access-Control-Request-Headers")
+	}
 	if r.URL.Path != "/v1/status" || r.URL.RawQuery != "" {
 		writePublicError(w, http.StatusNotFound)
 		return
@@ -306,6 +309,32 @@ func (h *PublicStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+func mergeVary(header http.Header, fields ...string) {
+	values := make([]string, 0, len(header.Values("Vary"))+len(fields))
+	seen := map[string]bool{}
+	for _, line := range header.Values("Vary") {
+		for _, value := range strings.Split(line, ",") {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			key := strings.ToLower(value)
+			if !seen[key] {
+				seen[key] = true
+				values = append(values, http.CanonicalHeaderKey(value))
+			}
+		}
+	}
+	for _, value := range fields {
+		key := strings.ToLower(value)
+		if !seen[key] {
+			seen[key] = true
+			values = append(values, http.CanonicalHeaderKey(value))
+		}
+	}
+	header.Set("Vary", strings.Join(values, ", "))
 }
 
 func writePublicError(w http.ResponseWriter, status int) {
