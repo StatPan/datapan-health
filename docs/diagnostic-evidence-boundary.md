@@ -3,6 +3,11 @@
 Status: Health consumer requirements and gap audit for issue #17. This is not a
 cross-repository schema decision.
 
+The product-level source is Datapan team mission M003 and its proposed
+`datapan.diagnosis.v1` meaning. This document tests whether Health can supply
+that meaning from public observations; it does not replace the team mission or
+the Registry-owned serialization and compatibility review.
+
 ## Decision
 
 Datapan Health can report that a reviewed public operation was healthy,
@@ -38,6 +43,7 @@ incident nor a Registry policy can manufacture a portal approval fact.
 | Local receipt sink | Complete already-redacted v1 receipt, append-only JSONL with mode `0600` | No application retention limit, compaction, deletion, or schema-migration mechanism is implemented here |
 | Gatus/PostgreSQL | Per-canary result, enum-only error, heartbeat, two-failure alert threshold, seven-day bounded result history | Two failures create an incident signal, not a root-cause verdict; PostgreSQL retention/backup is infra-owned |
 | Public Parquet archive | Public service/time/Registry revision, outcome/category, latency, data/schema/freshness state, schedule tier; non-healthy observation rows and daily rollups | It intentionally excludes reason/provider/operation/user detail and cannot reconstruct a more precise diagnosis |
+| Provider notice | No notice feed, notice identity, effective window, affected scope, or incident link exists | Health cannot currently correlate a provider/portal notice with a probe incident |
 
 The implementation evidence is in:
 
@@ -90,6 +96,10 @@ pinned consumer is updated.
 | Data-quality evidence | Assertion-policy key/version and separate results for shape, presence, semantic validity, and freshness | Registry-reviewed policy evaluated by CLI/adapter | Allowlisted result enums public; rows/timestamps from payload never public |
 | Diagnosis | Cause family, `observed`/`inferred`/`unknown` confidence, rule key/version, evidence references, retryability | Producer for direct diagnosis; Health for correlation diagnosis | Cause/confidence can be public only after privacy review |
 | Correlation | Window start/end, expected and observed sample counts, affected/control service counts, and cohort rule version | Health | Counts and rule version may be public; no user/credential identity |
+| Notice evidence | Stable notice ID, source authority, published/effective/resolved times, affected public dependency/operation scope, and redaction-safe reference | Portal/provider notice source; Health only records and correlates | Allowlisted public notice metadata; never infer an unpublished notice |
+| Ownership | One of `user`, `portal`, `provider`, or `datapan`, with the evidence that supports assignment | Common diagnosis policy | Public only with diagnosis/confidence; `unknown` when evidence is insufficient |
+| Next action | Versioned action-template key, wait/retry condition, safe time bound when authoritative, and prohibited action such as unnecessary key reissue | Registry vocabulary; product renderer supplies presentation | Bounded template and parameters only; no user state or credential data |
+| Reproduction | Safe CLI handoff identity and command template, or an explicit `not_available` reason | CLI contract | No credential, query value, raw URL, or shell-ready untrusted provider text |
 
 Two absences are deliberate:
 
@@ -114,6 +124,11 @@ name all evidence it used. The first safe rule set should obey these limits:
   operations for the same dependency fail in a bounded window while suitable
   control operations do not. Without a control or independent vantage, keep
   the cause `unknown` and expose the observed failure class.
+- A provider or portal notice is corroborating evidence only when its declared
+  affected scope and effective window overlap the canary incident. Temporal
+  overlap raises an inference through a versioned rule; it does not rewrite the
+  original observations or prove causation by itself. Notice corrections and
+  withdrawals supersede the derived link rather than deleting it.
 - Credential-wide failure is at most inferred when an independently defined
   credential control fails alongside previously healthy operations. Health
   must not correlate or publish a user or credential identifier.
@@ -159,6 +174,10 @@ name all evidence it used. The first safe rule set should obey these limits:
 - Public derived incidents need a stable incident ID, rule version, evidence
   window, and supersession relation. The current `incidents/` file is a list of
   non-healthy observations, not an incident lifecycle ledger.
+- Notice correlation additionally needs stable notice provenance, effective
+  intervals, affected-scope matching, and a supersession link. Scraped notice
+  text must not enter the public diagnostic envelope without a reviewed,
+  redaction-safe projection.
 
 ## Ordered work and ownership
 
@@ -171,8 +190,9 @@ name all evidence it used. The first safe rule set should obey these limits:
    constraint result, approval observation when authoritative, response class,
    and assertion-policy results. Preserve redaction and exact provenance.
 3. **Policy evidence (Datapan Registry).** Version stable dependency identity,
-   approval requirement, input policy, and semantic/schema/freshness assertion
-   policy. Registry must not claim a user's live approval state.
+   diagnosis vocabulary/action templates, approval requirement, input policy,
+   and live-probe semantic/schema/freshness assertion policy. Registry must not
+   claim a user's live approval state.
 4. **Health dual-version ingestion.** After a merged producer contract exists,
    pin its schema/provenance, add strict fixtures, preserve v1 compatibility,
    and keep the Gatus projection minimized.
@@ -181,6 +201,11 @@ name all evidence it used. The first safe rule set should obey these limits:
    with offline tests; do not alter public alerting during this step.
 6. **Archive/public diagnosis.** After privacy review, publish an additive safe
    projection and migration/query guidance. Retain v1 observations unchanged.
+
+Datapan-data remains the authority for completeness, freshness, and semantic
+quality of reviewed published artifacts. Health can contribute only what its
+representative live probes actually evaluate; it must not promote a live probe
+to an artifact-quality verdict or duplicate datapan-data evidence.
 
 Steps 4-6 are executable Health-owned tickets once their stated prerequisites
 exist. Steps 1-3 are cross-repository decisions or producer/policy work and must
