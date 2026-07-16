@@ -1,5 +1,6 @@
 RUNTIME_IMAGE ?= datapan-health-runtime:test
 ARCHIVE_IMAGE ?= datapan-health-archive:test
+TESTED_REVISION ?= $(HEALTH_HEAD)
 
 .PHONY: test quality build images image-smoke release-oci smoke visual archive-smoke hf-publish-smoke diagnostic-compatibility
 
@@ -33,7 +34,7 @@ archive-smoke:
 
 diagnostic-compatibility:
 	test -n "$(HEALTH_HEAD)"
-	go run ./cmd/health-compatibility -health-head "$(HEALTH_HEAD)" -output out/diagnostic-compatibility.json
+	go run ./cmd/health-compatibility -health-head "$(HEALTH_HEAD)" -tested-revision "$(TESTED_REVISION)" -output out/diagnostic-compatibility.json
 
 hf-publish-smoke:
 	./scripts/hf-publish-smoke.sh

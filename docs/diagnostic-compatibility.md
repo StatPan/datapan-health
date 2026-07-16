@@ -62,9 +62,11 @@ make archive-smoke
 make diagnostic-compatibility HEALTH_HEAD="$(git rev-parse HEAD)"
 ```
 
-The generated `out/diagnostic-compatibility.json` binds the Health commit,
-Registry revision, three contract digests, eleven fixture digests, ten exact
-operation/service bindings, required test names, and unchanged exposure
-boundaries. CI uploads it as `diagnostic-compatibility-<commit>`. Registry #568
-can consume that exact-head artifact as Health's compatibility proof; the
-generated receipt is not a runtime or rollout authorization.
+The generated `out/diagnostic-compatibility.json` binds both the Health source
+head and the exact CI checkout revision (a pull request merge revision when
+applicable), plus the Registry revision, three contract digests, eleven fixture
+digests, ten exact operation/service bindings, required test names, and
+unchanged exposure boundaries. CI uploads it as
+`diagnostic-compatibility-<commit>`. Registry #568 can consume that exact-head
+artifact as Health's compatibility proof; the generated receipt is not a
+runtime or rollout authorization.

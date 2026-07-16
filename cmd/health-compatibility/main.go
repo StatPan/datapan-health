@@ -14,6 +14,7 @@ func main() {
 	pinPath := flag.String("pin", "config/registry/diagnostic-contract-pin.json", "exact diagnostic contract pin")
 	canaryPath := flag.String("canaries", "config/canaries.json", "configured canary map")
 	healthHead := flag.String("health-head", "", "exact tested Health commit")
+	testedRevision := flag.String("tested-revision", "", "exact CI checkout revision; defaults to Health head")
 	output := flag.String("output", "", "receipt output path; stdout when empty")
 	flag.Parse()
 
@@ -25,7 +26,10 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	receipt, err := health.BuildDiagnosticCompatibilityReceipt(*healthHead, contract, canaries)
+	if *testedRevision == "" {
+		*testedRevision = *healthHead
+	}
+	receipt, err := health.BuildDiagnosticCompatibilityReceipt(*healthHead, *testedRevision, contract, canaries)
 	if err != nil {
 		fatal(err)
 	}

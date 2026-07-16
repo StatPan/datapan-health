@@ -196,11 +196,12 @@ func TestDiagnosticCompatibilityReceiptBindsHeadContractsFixturesAndServices(t *
 		t.Fatal(err)
 	}
 	head := strings.Repeat("a", 40)
-	receipt, err := BuildDiagnosticCompatibilityReceipt(head, contract, canaries)
+	testedRevision := strings.Repeat("b", 40)
+	receipt, err := BuildDiagnosticCompatibilityReceipt(head, testedRevision, contract, canaries)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if receipt.SchemaVersion != DiagnosticCompatibilityReceiptVersion || receipt.Status != "consumer_compatible" || receipt.HealthHead != head || receipt.RegistryRevision != AcceptedDiagnosticRegistryRevision {
+	if receipt.SchemaVersion != DiagnosticCompatibilityReceiptVersion || receipt.Status != "consumer_compatible" || receipt.HealthHead != head || receipt.TestedRevision != testedRevision || receipt.RegistryRevision != AcceptedDiagnosticRegistryRevision {
 		t.Fatalf("receipt identity is incomplete: %#v", receipt)
 	}
 	if receipt.Contracts.Schema.SHA256 != AcceptedDiagnosticSchemaSHA256 || receipt.Contracts.Mapping.SHA256 != AcceptedDiagnosticMappingSHA256 || receipt.Contracts.Consumer.SHA256 != AcceptedDiagnosticConsumerSHA256 {
@@ -212,8 +213,11 @@ func TestDiagnosticCompatibilityReceiptBindsHeadContractsFixturesAndServices(t *
 	if receipt.Boundaries.ExistingHealthProbeV1 != "preserved" || receipt.Boundaries.GatusProjection != "unchanged_enum_only" || receipt.Boundaries.PublicAPI != "not_implemented" || receipt.Boundaries.Deployment != "not_performed" {
 		t.Fatalf("receipt crossed issue #19 boundaries: %#v", receipt.Boundaries)
 	}
-	if _, err := BuildDiagnosticCompatibilityReceipt("main", contract, canaries); err == nil {
+	if _, err := BuildDiagnosticCompatibilityReceipt("main", testedRevision, contract, canaries); err == nil {
 		t.Fatal("non-commit Health head was accepted")
+	}
+	if _, err := BuildDiagnosticCompatibilityReceipt(head, "merge", contract, canaries); err == nil {
+		t.Fatal("non-commit tested revision was accepted")
 	}
 }
 

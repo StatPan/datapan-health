@@ -12,6 +12,7 @@ type DiagnosticCompatibilityReceipt struct {
 	SchemaVersion    string                            `json:"schema_version"`
 	Status           string                            `json:"status"`
 	HealthHead       string                            `json:"health_head"`
+	TestedRevision   string                            `json:"tested_revision"`
 	RegistryRevision string                            `json:"registry_revision"`
 	Contracts        DiagnosticCompatibilityPins       `json:"contracts"`
 	Fixtures         []DiagnosticFixtureProof          `json:"fixtures"`
@@ -48,9 +49,9 @@ type DiagnosticCompatibilityBoundaries struct {
 	Deployment            string `json:"deployment"`
 }
 
-func BuildDiagnosticCompatibilityReceipt(healthHead string, contract DiagnosticContract, canaries CanaryConfig) (DiagnosticCompatibilityReceipt, error) {
-	if !commitPattern.MatchString(healthHead) {
-		return DiagnosticCompatibilityReceipt{}, errors.New("health head must be an exact commit")
+func BuildDiagnosticCompatibilityReceipt(healthHead, testedRevision string, contract DiagnosticContract, canaries CanaryConfig) (DiagnosticCompatibilityReceipt, error) {
+	if !commitPattern.MatchString(healthHead) || !commitPattern.MatchString(testedRevision) {
+		return DiagnosticCompatibilityReceipt{}, errors.New("health head and tested revision must be exact commits")
 	}
 	fixtures := make([]DiagnosticFixtureProof, 0, len(contract.fixtureNames))
 	for _, name := range contract.fixtureNames {
@@ -92,6 +93,7 @@ func BuildDiagnosticCompatibilityReceipt(healthHead string, contract DiagnosticC
 		SchemaVersion:    DiagnosticCompatibilityReceiptVersion,
 		Status:           "consumer_compatible",
 		HealthHead:       healthHead,
+		TestedRevision:   testedRevision,
 		RegistryRevision: contract.RegistryRevision,
 		Contracts:        DiagnosticCompatibilityPins{Schema: contract.Schema, Mapping: contract.Mapping, Consumer: contract.Consumer},
 		Fixtures:         fixtures,

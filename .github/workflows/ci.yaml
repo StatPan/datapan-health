@@ -22,7 +22,7 @@ jobs:
       - run: make image-smoke
       - run: make archive-smoke
       - run: make visual
-      - run: make diagnostic-compatibility HEALTH_HEAD="$GITHUB_SHA"
+      - run: make diagnostic-compatibility HEALTH_HEAD="${{ github.event.pull_request.head.sha || github.sha }}" TESTED_REVISION="$GITHUB_SHA"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: diagnostic-compatibility-${{ github.sha }}
