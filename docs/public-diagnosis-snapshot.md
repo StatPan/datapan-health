@@ -33,12 +33,24 @@ Contract `pass`는 해당 차원의 evidence로 보존하지만 전체 서비스
 `not_asserted`이므로 `not_observed`로 남는다. 단일 HTTP 실패나 timeout은 진단 근거가
 아니다.
 
+`not_asserted` dimension에 안전한 field name이 들어와도 evaluator는 이를 assertion
+성공으로 해석하지 않고 `not_observed`로 유지한다. 이때 `observed_field_count`는 실제로
+받은 최소화 field name 개수이므로 0일 필요가 없다. 반대로 asserted contract의 empty
+payload `not_observed`는 count 0이어야 한다. Projector, writer와 reader가 이 구분을 같은
+방식으로 검증한다.
+
 ## Failure and privacy boundary
 
 전체 version/policy binding이 잘못되면 snapshot을 거부한다. Operation 하나의 entry가
 missing, stale, future, duplicate, unsupported, superseded, digest-mismatched, malformed,
 out-of-operation이거나 leak field를 포함하면 그 operation만 `unknown` 또는 `rejected`로
 닫힌다. 다른 operation과 Gatus availability는 유지된다.
+
+같은 operation에 여러 source가 들어올 때 하나라도 invalid라면 `rejected`가 terminal
+상태다. 이후의 valid source나 처리 순서가 이를 `accepted`로 덮을 수 없다. Reader는
+entry가 자기 digest를 다시 계산했더라도 schema와 같은 per-entry 상한을 재검증하며,
+correlation affected/control count는 각각 10 이하, assertion observed field count는
+1024 이하만 허용한다.
 
 Reader는 source kind별로 검토된 진단 tuple 전체를 고정한다. Correlation은
 `provider_outage/{inferred|observed}/provider/check_provider_status/reissue_credential`, assertion

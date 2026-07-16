@@ -51,7 +51,7 @@ func TestDiagnosisSnapshotCrossContractAssertionFailPassAndNotObserved(t *testin
 	now := time.Date(2026, 7, 17, 0, 15, 0, 0, time.UTC)
 	fail := assertionRequestFor(t, inputs.assertion, now, "dpr-op-00000001", "contract", []string{"__undeclared_field__"})
 	pass := assertionRequestFor(t, inputs.assertion, now, "dpr-op-00000002", "contract", []string{inputs.assertion.policyByOperation["dpr-op-00000002"].Dimensions.Contract.DeclaredResponseFields[0]})
-	notObserved := assertionRequestFor(t, inputs.assertion, now, "dpr-op-00000003", "semantic", nil)
+	notObserved := assertionRequestFor(t, inputs.assertion, now, "dpr-op-00000003", "semantic", []string{"safeField"})
 	snapshot, proof, err := ProjectDiagnosisSnapshot(now, []CorrelationReceipt{}, []AssertionEvaluationRequest{fail, pass, notObserved}, inputs.canaries, inputs.diagnostic, inputs.assertion)
 	if err != nil {
 		t.Fatal(err)
@@ -65,8 +65,19 @@ func TestDiagnosisSnapshotCrossContractAssertionFailPassAndNotObserved(t *testin
 		t.Fatalf("pass=%#v", passed)
 	}
 	semantic := diagnosisEntryByID(t, snapshot, "dpr-op-00000003")
-	if semantic.EvidenceState != "not_observed" || semantic.Diagnosis.Code != "unknown" || semantic.Assertion.Outcome != "not_observed" {
+	if semantic.EvidenceState != "not_observed" || semantic.Diagnosis.Code != "unknown" || semantic.Assertion.Outcome != "not_observed" || semantic.Assertion.ObservedFieldCount != 1 {
 		t.Fatalf("semantic=%#v", semantic)
+	}
+	path := filepath.Join(t.TempDir(), "snapshot.json")
+	if err := WriteDiagnosisSnapshotAtomic(path, snapshot, inputs.assertion); err != nil {
+		t.Fatalf("writer rejected policy-consistent not_asserted evidence: %v", err)
+	}
+	read, _, err := ReadDiagnosisSnapshot(path, now, inputs.assertion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry := diagnosisEntryByID(t, read, "dpr-op-00000003"); entry.EvidenceState != "not_observed" || entry.Assertion == nil || entry.Assertion.ObservedFieldCount != 1 {
+		t.Fatalf("reader contradicted the pinned evaluator: %#v", entry)
 	}
 	if proof.Counts.Accepted != 2 || proof.Counts.NotObserved != 1 || proof.Counts.Unknown != 7 {
 		t.Fatalf("counts=%#v", proof.Counts)
@@ -139,6 +150,51 @@ func TestDiagnosisSnapshotProjectorRejectsRuleNoticePolicyIdentityAndConflicts(t
 	}
 	if entry := diagnosisEntryByID(t, snapshot, "dpr-op-00000001"); entry.EvidenceState != "rejected" || entry.Diagnosis.Code != "unknown" {
 		t.Fatalf("conflicting diagnoses were arbitrarily selected: %#v", entry)
+	}
+}
+
+func TestDiagnosisSnapshotRejectedEvidenceIsTerminalAcrossSourceOrder(t *testing.T) {
+	inputs := mustDiagnosisInputs(t)
+	replay := mustCorrelationReplay(t, "observed-notice.json")
+	validCorrelation, err := CorrelateProviderOutage(inputs.rule, inputs.canaries, replay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidCorrelation := validCorrelation
+	invalidCorrelation.Rule.SHA256 = strings.Repeat("f", 64)
+	declared := inputs.assertion.policyByOperation["dpr-op-00000001"].Dimensions.Contract.DeclaredResponseFields[0]
+	validAssertion := assertionRequestFor(t, inputs.assertion, replay.AssessedAt, "dpr-op-00000001", "contract", []string{declared})
+	invalidAssertion := validAssertion
+	invalidBinding := *invalidAssertion.PolicyBinding
+	invalidBinding.PolicySetVersion = 2
+	invalidAssertion.PolicyBinding = &invalidBinding
+
+	cases := []struct {
+		name         string
+		correlations []CorrelationReceipt
+		assertions   []AssertionEvaluationRequest
+	}{
+		{"invalid correlation before valid assertion", []CorrelationReceipt{invalidCorrelation}, []AssertionEvaluationRequest{validAssertion}},
+		{"valid correlation before invalid assertion", []CorrelationReceipt{validCorrelation}, []AssertionEvaluationRequest{invalidAssertion}},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot, _, err := ProjectDiagnosisSnapshot(replay.AssessedAt, test.correlations, test.assertions, inputs.canaries, inputs.diagnostic, inputs.assertion)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if entry := diagnosisEntryByID(t, snapshot, "dpr-op-00000001"); entry.EvidenceState != "rejected" || entry.Diagnosis.Code != "unknown" {
+				t.Fatalf("valid evidence overwrote a terminal rejection: %#v", entry)
+			}
+		})
+	}
+
+	accepted := DiagnosisSnapshotEntry{OperationID: "dpr-op-00000001", OperationRevisionSHA256: assertionPolicyOperationOneRevision, EvidenceState: "accepted", Diagnosis: unknownPublicDiagnosis()}
+	rejected := unknownDiagnosisEntry(accepted.OperationID, accepted.OperationRevisionSHA256, "rejected")
+	for _, pair := range [][2]DiagnosisSnapshotEntry{{rejected, accepted}, {accepted, rejected}} {
+		if got := mergeDiagnosisCandidate(pair[0], pair[1]); got.EvidenceState != "rejected" {
+			t.Fatalf("merge order made rejection non-terminal: %#v", got)
+		}
 	}
 }
 
@@ -258,19 +314,21 @@ func TestDiagnosisSnapshotReaderRejectsRehashedUnreviewedTuplesAndNegativeCounts
 		"recommended action": func(entry *DiagnosisSnapshotEntry) {
 			entry.Diagnosis.RecommendedActionIDs = []string{"check_provider_status"}
 		},
-		"avoid action":   func(entry *DiagnosisSnapshotEntry) { entry.Diagnosis.AvoidActionIDs = nil },
-		"determination":  func(entry *DiagnosisSnapshotEntry) { entry.Diagnosis.Determination = "observed" },
-		"negative count": func(entry *DiagnosisSnapshotEntry) { entry.Assertion.ObservedFieldCount = -1 },
+		"avoid action":               func(entry *DiagnosisSnapshotEntry) { entry.Diagnosis.AvoidActionIDs = nil },
+		"determination":              func(entry *DiagnosisSnapshotEntry) { entry.Diagnosis.Determination = "observed" },
+		"negative count":             func(entry *DiagnosisSnapshotEntry) { entry.Assertion.ObservedFieldCount = -1 },
+		"count above schema maximum": func(entry *DiagnosisSnapshotEntry) { entry.Assertion.ObservedFieldCount = 1025 },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
-			candidate := base
-			candidate.Operations = append([]DiagnosisSnapshotEntry(nil), base.Operations...)
+			raw, _ := json.Marshal(base)
+			var candidate DiagnosisSnapshot
+			_ = json.Unmarshal(raw, &candidate)
 			entry := &candidate.Operations[0]
 			mutate(entry)
 			entry.ProjectionSHA256 = diagnosisEntryDigest(*entry)
 			path := filepath.Join(t.TempDir(), "snapshot.json")
-			raw, err := json.Marshal(candidate)
+			raw, err = json.Marshal(candidate)
 			if err != nil || os.WriteFile(path, raw, 0o600) != nil {
 				t.Fatal("could not write adversarial snapshot")
 			}
@@ -281,6 +339,50 @@ func TestDiagnosisSnapshotReaderRejectsRehashedUnreviewedTuplesAndNegativeCounts
 			entry = func() *DiagnosisSnapshotEntry { value := diagnosisEntryByID(t, got, "dpr-op-00000001"); return &value }()
 			if entry.EvidenceState != "rejected" || entry.Diagnosis.Code != "unknown" || counts.Rejected < 1 {
 				t.Fatalf("self-rehashed unreviewed projection was accepted: %#v %#v", entry, counts)
+			}
+		})
+	}
+}
+
+func TestDiagnosisSnapshotReaderRejectsRehashedCorrelationCountsAboveSchemaMaximum(t *testing.T) {
+	inputs := mustDiagnosisInputs(t)
+	replay := mustCorrelationReplay(t, "observed-notice.json")
+	receipt, err := CorrelateProviderOutage(inputs.rule, inputs.canaries, replay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, _, err := ProjectDiagnosisSnapshot(replay.AssessedAt, []CorrelationReceipt{receipt}, nil, inputs.canaries, inputs.diagnostic, inputs.assertion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*DiagnosisCorrelationBoundary)
+	}{
+		{"affected above maximum", func(boundary *DiagnosisCorrelationBoundary) { boundary.AffectedCount = 11 }},
+		{"control above maximum", func(boundary *DiagnosisCorrelationBoundary) { boundary.ControlCount = 11 }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, _ := json.Marshal(base)
+			var candidate DiagnosisSnapshot
+			_ = json.Unmarshal(raw, &candidate)
+			entry := &candidate.Operations[0]
+			if entry.Correlation == nil {
+				t.Fatal("expected correlation projection")
+			}
+			test.mutate(entry.Correlation)
+			entry.ProjectionSHA256 = diagnosisEntryDigest(*entry)
+			path := filepath.Join(t.TempDir(), "snapshot.json")
+			raw, _ = json.Marshal(candidate)
+			if err := os.WriteFile(path, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, counts, err := ReadDiagnosisSnapshot(path, replay.AssessedAt, inputs.assertion)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotEntry := diagnosisEntryByID(t, got, entry.OperationID); gotEntry.EvidenceState != "rejected" || counts.Rejected < 1 {
+				t.Fatalf("self-rehashed out-of-range correlation was accepted: %#v %#v", gotEntry, counts)
 			}
 		})
 	}

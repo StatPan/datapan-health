@@ -321,7 +321,7 @@ func validCorrelationSnapshotTiming(timing CorrelationEvidenceTiming) bool {
 
 func evaluateAssertionForSnapshot(request AssertionEvaluationRequest, generatedAt time.Time, contract AssertionPolicyContract) (AssertionEvaluation, string, bool) {
 	policy, ok := contract.policyByOperation[request.OperationID]
-	if !ok || request.AssessedAt.IsZero() || request.AssessedAt.After(generatedAt.Add(diagnosisFutureSkew)) || generatedAt.Sub(request.AssessedAt) > maxDiagnosisEvidenceAge || request.SchemaVersion != AssertionEvaluationSchemaVersion || request.OperationRevisionSHA256 != policy.OperationRevisionSHA256 || request.PolicyBinding == nil || !acceptedAssertionBinding(*request.PolicyBinding) || (request.ActivePolicyBinding != nil && !acceptedAssertionBinding(*request.ActivePolicyBinding)) || !validAssertionDimension(request.Dimension) || !uniqueSafeFields(request.Observation.ResponseFields) {
+	if !ok || request.AssessedAt.IsZero() || request.AssessedAt.After(generatedAt.Add(diagnosisFutureSkew)) || generatedAt.Sub(request.AssessedAt) > maxDiagnosisEvidenceAge || request.SchemaVersion != AssertionEvaluationSchemaVersion || request.OperationRevisionSHA256 != policy.OperationRevisionSHA256 || request.PolicyBinding == nil || !acceptedAssertionBinding(*request.PolicyBinding) || (request.ActivePolicyBinding != nil && !acceptedAssertionBinding(*request.ActivePolicyBinding)) || !validAssertionDimension(request.Dimension) || len(request.Observation.ResponseFields) > 1024 || !uniqueSafeFields(request.Observation.ResponseFields) {
 		return AssertionEvaluation{}, "rejected", false
 	}
 	evaluation := contract.Evaluate(request)
@@ -378,6 +378,12 @@ func samePublicDiagnosis(left, right PublicDiagnosis) bool {
 }
 
 func mergeDiagnosisCandidate(current, candidate DiagnosisSnapshotEntry) DiagnosisSnapshotEntry {
+	if current.EvidenceState == "rejected" {
+		return current
+	}
+	if candidate.EvidenceState == "rejected" {
+		return candidate
+	}
 	currentDiagnoses := current.Diagnosis.Code != "unknown"
 	candidateDiagnoses := candidate.Diagnosis.Code != "unknown"
 	if currentDiagnoses && candidateDiagnoses {
@@ -388,9 +394,6 @@ func mergeDiagnosisCandidate(current, candidate DiagnosisSnapshotEntry) Diagnosi
 	}
 	if candidateDiagnoses {
 		return candidate
-	}
-	if current.EvidenceState == "rejected" {
-		return current
 	}
 	if candidate.EvidenceState == "accepted" || (candidate.EvidenceState == "not_observed" && current.EvidenceState == "unknown") {
 		return candidate
@@ -584,10 +587,10 @@ func validSnapshotEntry(entry DiagnosisSnapshotEntry, now time.Time, contract As
 		return false
 	}
 	if entry.Source.Kind == "correlation_receipt" {
-		return entry.EvidenceState == "accepted" && entry.Source.SchemaVersion == CorrelationReceiptSchemaVersion && entry.Correlation != nil && entry.Assertion == nil && entry.Correlation.AffectedCount >= 2 && entry.Correlation.ControlCount >= 1 && (entry.Diagnosis.Determination == "inferred" || entry.Diagnosis.Determination == "observed") && (entry.Diagnosis.Determination == "observed") == entry.Correlation.NoticeLinked && samePublicDiagnosis(entry.Diagnosis, reviewedProviderOutageDiagnosis(entry.Diagnosis.Determination))
+		return entry.EvidenceState == "accepted" && entry.Source.SchemaVersion == CorrelationReceiptSchemaVersion && entry.Correlation != nil && entry.Assertion == nil && entry.Correlation.AffectedCount >= 2 && entry.Correlation.AffectedCount <= 10 && entry.Correlation.ControlCount >= 1 && entry.Correlation.ControlCount <= 10 && (entry.Diagnosis.Determination == "inferred" || entry.Diagnosis.Determination == "observed") && (entry.Diagnosis.Determination == "observed") == entry.Correlation.NoticeLinked && samePublicDiagnosis(entry.Diagnosis, reviewedProviderOutageDiagnosis(entry.Diagnosis.Determination))
 	}
 	if entry.Source.Kind == "assertion_request" {
-		if entry.Source.SchemaVersion != AssertionEvaluationSchemaVersion || entry.Assertion == nil || entry.Correlation != nil || !validAssertionDimension(entry.Assertion.Dimension) || entry.Assertion.ObservedFieldCount < 0 {
+		if entry.Source.SchemaVersion != AssertionEvaluationSchemaVersion || entry.Assertion == nil || entry.Correlation != nil || !validAssertionDimension(entry.Assertion.Dimension) || entry.Assertion.ObservedFieldCount < 0 || entry.Assertion.ObservedFieldCount > 1024 {
 			return false
 		}
 		switch entry.Assertion.Outcome {
@@ -596,7 +599,7 @@ func validSnapshotEntry(entry DiagnosisSnapshotEntry, now time.Time, contract As
 		case "pass":
 			return entry.EvidenceState == "accepted" && entry.Assertion.Dimension == "contract" && entry.Assertion.ObservedFieldCount > 0 && samePublicDiagnosis(entry.Diagnosis, unknownPublicDiagnosis())
 		case "not_observed":
-			return entry.EvidenceState == "not_observed" && entry.Assertion.ObservedFieldCount == 0 && samePublicDiagnosis(entry.Diagnosis, unknownPublicDiagnosis())
+			return entry.EvidenceState == "not_observed" && ((entry.Assertion.Dimension == "contract" && entry.Assertion.ObservedFieldCount == 0) || entry.Assertion.Dimension != "contract") && samePublicDiagnosis(entry.Diagnosis, unknownPublicDiagnosis())
 		case "unknown":
 			return entry.EvidenceState == "unknown" && samePublicDiagnosis(entry.Diagnosis, unknownPublicDiagnosis())
 		default:
