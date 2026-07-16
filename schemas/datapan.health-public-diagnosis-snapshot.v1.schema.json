@@ -68,7 +68,7 @@
       "type": "object", "additionalProperties": false,
       "required": ["kind", "schema_version", "sha256"],
       "properties": {
-        "kind": {"enum": ["correlation_receipt", "assertion_evaluation"]},
+        "kind": {"enum": ["correlation_receipt", "assertion_request"]},
         "schema_version": {"enum": ["datapan.health-correlation-receipt.v1", "datapan.health-assertion-evaluation.v1"]},
         "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
       }
@@ -84,10 +84,11 @@
     },
     "assertion": {
       "type": "object", "additionalProperties": false,
-      "required": ["dimension", "outcome"],
+      "required": ["dimension", "outcome", "observed_field_count"],
       "properties": {
         "dimension": {"enum": ["contract", "presence", "semantic", "freshness", "transport"]},
-        "outcome": {"enum": ["pass", "fail", "not_observed", "unknown"]}
+        "outcome": {"enum": ["pass", "fail", "not_observed", "unknown"]},
+        "observed_field_count": {"type": "integer", "minimum": 0, "maximum": 1024}
       }
     },
     "diagnosis": {

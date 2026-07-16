@@ -17,8 +17,10 @@ import (
 
 const (
 	DiagnosisSnapshotSchemaVersion    = "datapan.health-public-diagnosis-snapshot.v1"
-	DiagnosisSnapshotSchemaSHA256     = "570d85372ca4a137162887182cf4b63928ba5354f0aa1bbc041735153c996274"
+	DiagnosisSnapshotSchemaSHA256     = "b76a6f99862be6fab797a107d8a10e5786e3990c555e380b7ec1f6f88dd33e77"
 	DiagnosisProjectionReceiptVersion = "datapan.health-diagnosis-projector-receipt.v1"
+	DiagnosisSnapshotDigestAlgorithm  = "sha256"
+	DiagnosisSnapshotCanonicalization = "json.marshal-indent.two-spaces+lf.v1"
 	maxDiagnosisSnapshotBytes         = 512 * 1024
 	maxDiagnosisEvidenceAge           = 15 * time.Minute
 	diagnosisFutureSkew               = 30 * time.Second
@@ -63,27 +65,26 @@ type DiagnosisCorrelationBoundary struct {
 }
 
 type DiagnosisAssertionBoundary struct {
-	Dimension string `json:"dimension"`
-	Outcome   string `json:"outcome"`
-}
-
-type AssessedAssertionEvaluation struct {
-	AssessedAt time.Time           `json:"assessed_at"`
-	Evaluation AssertionEvaluation `json:"evaluation"`
+	Dimension          string `json:"dimension"`
+	Outcome            string `json:"outcome"`
+	ObservedFieldCount int    `json:"observed_field_count"`
 }
 
 type DiagnosisProjectionReceipt struct {
-	SchemaVersion        string                   `json:"schema_version"`
-	GeneratedAt          time.Time                `json:"generated_at"`
-	HealthHead           string                   `json:"health_head,omitempty"`
-	TestedRevision       string                   `json:"tested_revision,omitempty"`
-	SnapshotSchemaSHA256 string                   `json:"snapshot_schema_sha256,omitempty"`
-	SnapshotSHA256       string                   `json:"snapshot_sha256"`
-	CorrelationRule      CorrelationRuleReference `json:"correlation_rule"`
-	AssertionPolicy      AssertionPolicyBinding   `json:"assertion_policy"`
-	SourceProof          *DiagnosisSourceProof    `json:"source_proof,omitempty"`
-	Counts               DiagnosisCounts          `json:"counts"`
-	Boundaries           struct {
+	SchemaVersion            string                   `json:"schema_version"`
+	GeneratedAt              time.Time                `json:"generated_at"`
+	HealthHead               string                   `json:"health_head,omitempty"`
+	TestedRevision           string                   `json:"tested_revision,omitempty"`
+	SnapshotSchemaSHA256     string                   `json:"snapshot_schema_sha256,omitempty"`
+	SnapshotSHA256           string                   `json:"snapshot_sha256"`
+	SnapshotDigestAlgorithm  string                   `json:"snapshot_digest_algorithm"`
+	SnapshotCanonicalization string                   `json:"snapshot_canonicalization"`
+	SnapshotBytes            int                      `json:"snapshot_bytes"`
+	CorrelationRule          CorrelationRuleReference `json:"correlation_rule"`
+	AssertionPolicy          AssertionPolicyBinding   `json:"assertion_policy"`
+	SourceProof              *DiagnosisSourceProof    `json:"source_proof,omitempty"`
+	Counts                   DiagnosisCounts          `json:"counts"`
+	Boundaries               struct {
 		AvailabilityV1  string `json:"availability_v1"`
 		ArchiveV1       string `json:"archive_v1"`
 		ProviderRuntime string `json:"provider_runtime"`
@@ -98,7 +99,7 @@ type DiagnosisCounts struct {
 	Rejected    int `json:"rejected"`
 }
 
-func ProjectDiagnosisSnapshot(generatedAt time.Time, correlations []CorrelationReceipt, assertions []AssessedAssertionEvaluation, canaries CanaryConfig, diagnostic DiagnosticContract, assertionContract AssertionPolicyContract) (DiagnosisSnapshot, DiagnosisProjectionReceipt, error) {
+func ProjectDiagnosisSnapshot(generatedAt time.Time, correlations []CorrelationReceipt, assertions []AssertionEvaluationRequest, canaries CanaryConfig, diagnostic DiagnosticContract, assertionContract AssertionPolicyContract) (DiagnosisSnapshot, DiagnosisProjectionReceipt, error) {
 	generatedAt = generatedAt.UTC()
 	if generatedAt.IsZero() || len(correlations) > 100 || len(assertions) > 1000 || len(assertionContract.policyByOperation) != len(canaries.Canaries) {
 		return DiagnosisSnapshot{}, DiagnosisProjectionReceipt{}, errors.New("invalid diagnosis projection input")
@@ -130,6 +131,9 @@ func ProjectDiagnosisSnapshot(generatedAt time.Time, correlations []CorrelationR
 	contractDrift, err := diagnosisTemplate(diagnostic, "contract-drift.json")
 	if err != nil {
 		return DiagnosisSnapshot{}, DiagnosisProjectionReceipt{}, err
+	}
+	if !samePublicDiagnosis(providerOutage, reviewedProviderOutageDiagnosis("inferred")) || !samePublicDiagnosis(contractDrift, reviewedContractDriftDiagnosis()) {
+		return DiagnosisSnapshot{}, DiagnosisProjectionReceipt{}, errors.New("accepted diagnosis templates do not match reviewed public tuples")
 	}
 
 	for _, receipt := range correlations {
@@ -171,30 +175,29 @@ func ProjectDiagnosisSnapshot(generatedAt time.Time, correlations []CorrelationR
 		}
 	}
 
-	for _, record := range assertions {
-		evaluation := record.Evaluation
-		current, known := entries[evaluation.OperationID]
+	for _, request := range assertions {
+		current, known := entries[request.OperationID]
 		if !known {
 			continue
 		}
-		if seenKinds[evaluation.OperationID]["assertion_evaluation"] {
-			entries[evaluation.OperationID] = unknownDiagnosisEntry(current.OperationID, current.OperationRevisionSHA256, "rejected")
+		if seenKinds[request.OperationID]["assertion_request"] {
+			entries[request.OperationID] = unknownDiagnosisEntry(current.OperationID, current.OperationRevisionSHA256, "rejected")
 			continue
 		}
-		seenKinds[evaluation.OperationID]["assertion_evaluation"] = true
-		raw, err := json.Marshal(record)
+		seenKinds[request.OperationID]["assertion_request"] = true
+		raw, err := json.Marshal(request)
 		if err != nil {
 			return DiagnosisSnapshot{}, DiagnosisProjectionReceipt{}, err
 		}
-		state, valid := validateAssertionForSnapshot(record, generatedAt, assertionContract)
+		evaluation, state, valid := evaluateAssertionForSnapshot(request, generatedAt, assertionContract)
 		if !valid {
-			entries[evaluation.OperationID] = unknownDiagnosisEntry(current.OperationID, current.OperationRevisionSHA256, "rejected")
+			entries[request.OperationID] = unknownDiagnosisEntry(current.OperationID, current.OperationRevisionSHA256, "rejected")
 			continue
 		}
-		assessed := record.AssessedAt.UTC()
+		assessed := evaluation.AssessedAt.UTC()
 		validUntil := assessed.Add(maxDiagnosisEvidenceAge)
 		candidate := DiagnosisSnapshotEntry{OperationID: evaluation.OperationID, OperationRevisionSHA256: evaluation.OperationRevisionSHA256, EvidenceState: state, AssessedAt: &assessed, ValidUntil: &validUntil,
-			Source: &DiagnosisSnapshotSourceRef{Kind: "assertion_evaluation", SchemaVersion: AssertionEvaluationSchemaVersion, SHA256: digest(raw)}, Assertion: &DiagnosisAssertionBoundary{Dimension: evaluation.Dimension, Outcome: evaluation.Outcome}, Diagnosis: unknownPublicDiagnosis()}
+			Source: &DiagnosisSnapshotSourceRef{Kind: "assertion_request", SchemaVersion: AssertionEvaluationSchemaVersion, SHA256: digest(raw)}, Assertion: &DiagnosisAssertionBoundary{Dimension: evaluation.Dimension, Outcome: evaluation.Outcome, ObservedFieldCount: evaluation.ObservedFieldCount}, Diagnosis: unknownPublicDiagnosis()}
 		if evaluation.Dimension == "contract" && evaluation.Outcome == "fail" {
 			candidate.Diagnosis = contractDrift
 		}
@@ -209,11 +212,11 @@ func ProjectDiagnosisSnapshot(generatedAt time.Time, correlations []CorrelationR
 		}
 		snapshot.Operations = append(snapshot.Operations, entry)
 	}
-	encoded, err := json.Marshal(snapshot)
-	if err != nil || schemas.ValidateHealthPublicDiagnosisSnapshotV1(encoded) != nil {
+	artifact, err := EncodeDiagnosisSnapshotArtifact(snapshot)
+	if err != nil {
 		return DiagnosisSnapshot{}, DiagnosisProjectionReceipt{}, errors.New("projected diagnosis snapshot is invalid")
 	}
-	receipt := DiagnosisProjectionReceipt{SchemaVersion: DiagnosisProjectionReceiptVersion, GeneratedAt: generatedAt, SnapshotSHA256: digest(encoded), Counts: countDiagnosisEntries(snapshot.Operations)}
+	receipt := DiagnosisProjectionReceipt{SchemaVersion: DiagnosisProjectionReceiptVersion, GeneratedAt: generatedAt, SnapshotSHA256: digest(artifact), SnapshotDigestAlgorithm: DiagnosisSnapshotDigestAlgorithm, SnapshotCanonicalization: DiagnosisSnapshotCanonicalization, SnapshotBytes: len(artifact), Counts: countDiagnosisEntries(snapshot.Operations)}
 	receipt.CorrelationRule = snapshot.CorrelationRule
 	receipt.AssertionPolicy = snapshot.AssertionPolicy
 	receipt.Boundaries.AvailabilityV1, receipt.Boundaries.ArchiveV1 = "unchanged", "unchanged"
@@ -316,30 +319,33 @@ func validCorrelationSnapshotTiming(timing CorrelationEvidenceTiming) bool {
 	return timing.ObservedAgeSeconds+timing.RemainingValiditySeconds == 900 || (timing.ObservedAgeSeconds == 900 && timing.RemainingValiditySeconds == 1)
 }
 
-func validateAssertionForSnapshot(record AssessedAssertionEvaluation, generatedAt time.Time, contract AssertionPolicyContract) (string, bool) {
-	evaluation := record.Evaluation
-	policy, ok := contract.policyByOperation[evaluation.OperationID]
-	if !ok || record.AssessedAt.IsZero() || record.AssessedAt.After(generatedAt.Add(diagnosisFutureSkew)) || generatedAt.Sub(record.AssessedAt) > maxDiagnosisEvidenceAge || evaluation.SchemaVersion != AssertionEvaluationSchemaVersion || evaluation.RegistryRevision != AcceptedAssertionRegistryRevision || evaluation.OperationRevisionSHA256 != policy.OperationRevisionSHA256 || evaluation.PolicySetID != acceptedAssertionPolicySetID || evaluation.PolicySetVersion != acceptedAssertionPolicySetVersion || evaluation.PolicyArtifactSHA256 != AcceptedAssertionPolicyArtifactSHA256 || evaluation.DiagnosticVocabularySHA256 != AcceptedAssertionDiagnosticVocabularySHA || !validAssertionDimension(evaluation.Dimension) {
-		return "rejected", false
+func evaluateAssertionForSnapshot(request AssertionEvaluationRequest, generatedAt time.Time, contract AssertionPolicyContract) (AssertionEvaluation, string, bool) {
+	policy, ok := contract.policyByOperation[request.OperationID]
+	if !ok || request.AssessedAt.IsZero() || request.AssessedAt.After(generatedAt.Add(diagnosisFutureSkew)) || generatedAt.Sub(request.AssessedAt) > maxDiagnosisEvidenceAge || request.SchemaVersion != AssertionEvaluationSchemaVersion || request.OperationRevisionSHA256 != policy.OperationRevisionSHA256 || request.PolicyBinding == nil || !acceptedAssertionBinding(*request.PolicyBinding) || (request.ActivePolicyBinding != nil && !acceptedAssertionBinding(*request.ActivePolicyBinding)) || !validAssertionDimension(request.Dimension) || !uniqueSafeFields(request.Observation.ResponseFields) {
+		return AssertionEvaluation{}, "rejected", false
+	}
+	evaluation := contract.Evaluate(request)
+	if evaluation.AssessedAt.IsZero() || !evaluation.AssessedAt.Equal(request.AssessedAt.UTC()) || evaluation.ObservedFieldCount < 0 {
+		return AssertionEvaluation{}, "rejected", false
 	}
 	dimension := assertionDimension(policy, evaluation.Dimension)
 	if dimension.State == "not_asserted" {
-		return "not_observed", evaluation.Outcome == "not_observed" && evaluation.ReasonCode == dimension.ReasonCode
+		return evaluation, "not_observed", evaluation.Outcome == "not_observed" && evaluation.ReasonCode == dimension.ReasonCode && evaluation.ObservedFieldCount == len(request.Observation.ResponseFields)
 	}
 	if evaluation.Dimension != "contract" || dimension.State != "asserted" {
-		return "rejected", false
+		return AssertionEvaluation{}, "rejected", false
 	}
 	switch evaluation.Outcome {
 	case "pass":
-		return "accepted", evaluation.ReasonCode == "declared_response_fields_match"
+		return evaluation, "accepted", evaluation.ReasonCode == "declared_response_fields_match" && evaluation.ObservedFieldCount > 0
 	case "fail":
-		return "accepted", evaluation.ReasonCode == "undeclared_response_field"
+		return evaluation, "accepted", evaluation.ReasonCode == "undeclared_response_field" && evaluation.ObservedFieldCount > 0
 	case "not_observed":
-		return "not_observed", evaluation.ReasonCode == "empty_payload_without_contract_observation"
+		return evaluation, "not_observed", evaluation.ReasonCode == "empty_payload_without_contract_observation" && evaluation.ObservedFieldCount == 0
 	case "unknown":
-		return "unknown", evaluation.ReasonCode == "invalid_or_stale_policy_binding" || evaluation.ReasonCode == "unsupported_or_unsafe_observation"
+		return evaluation, "unknown", (evaluation.ReasonCode == "invalid_or_stale_policy_binding" || evaluation.ReasonCode == "unsupported_or_unsafe_observation") && evaluation.ObservedFieldCount == len(request.Observation.ResponseFields)
 	default:
-		return "rejected", false
+		return AssertionEvaluation{}, "rejected", false
 	}
 }
 
@@ -357,6 +363,18 @@ func diagnosisTemplate(contract DiagnosticContract, fixture string) (PublicDiagn
 		return PublicDiagnosis{}, errors.New("accepted diagnosis template failed closed")
 	}
 	return projected, nil
+}
+
+func reviewedProviderOutageDiagnosis(determination string) PublicDiagnosis {
+	return PublicDiagnosis{Code: "provider_outage", Determination: determination, AccountableParty: "provider", RecommendedActionIDs: []string{"check_provider_status"}, AvoidActionIDs: []string{"reissue_credential"}}
+}
+
+func reviewedContractDriftDiagnosis() PublicDiagnosis {
+	return PublicDiagnosis{Code: "contract_drift", Determination: "inferred", AccountableParty: "shared", RecommendedActionIDs: []string{"refresh_contract"}, AvoidActionIDs: []string{"reissue_credential"}}
+}
+
+func samePublicDiagnosis(left, right PublicDiagnosis) bool {
+	return left.Code == right.Code && left.Determination == right.Determination && left.AccountableParty == right.AccountableParty && exactStrings(left.RecommendedActionIDs, right.RecommendedActionIDs) && exactStrings(left.AvoidActionIDs, right.AvoidActionIDs)
 }
 
 func mergeDiagnosisCandidate(current, candidate DiagnosisSnapshotEntry) DiagnosisSnapshotEntry {
@@ -413,15 +431,22 @@ func countDiagnosisEntries(entries []DiagnosisSnapshotEntry) DiagnosisCounts {
 	return counts
 }
 
+func EncodeDiagnosisSnapshotArtifact(snapshot DiagnosisSnapshot) ([]byte, error) {
+	raw, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil || schemas.ValidateHealthPublicDiagnosisSnapshotV1(raw) != nil {
+		return nil, errors.New("diagnosis snapshot is invalid")
+	}
+	return append(raw, '\n'), nil
+}
+
 func WriteDiagnosisSnapshotAtomic(path string, snapshot DiagnosisSnapshot, contract AssertionPolicyContract) error {
 	if !validDiagnosisSnapshotDocument(snapshot, contract) {
 		return errors.New("diagnosis snapshot is invalid")
 	}
-	raw, err := json.MarshalIndent(snapshot, "", "  ")
-	if err != nil || schemas.ValidateHealthPublicDiagnosisSnapshotV1(raw) != nil {
-		return errors.New("diagnosis snapshot is invalid")
+	raw, err := EncodeDiagnosisSnapshotArtifact(snapshot)
+	if err != nil {
+		return err
 	}
-	raw = append(raw, '\n')
 	directory := filepath.Dir(path)
 	temp, err := os.CreateTemp(directory, ".diagnosis-snapshot-*")
 	if err != nil {
@@ -547,7 +572,7 @@ func validSnapshotEntry(entry DiagnosisSnapshotEntry, now time.Time, contract As
 		return false
 	}
 	if entry.Source == nil {
-		return entry.EvidenceState == "unknown" || entry.EvidenceState == "rejected"
+		return (entry.EvidenceState == "unknown" || entry.EvidenceState == "rejected") && entry.AssessedAt == nil && entry.ValidUntil == nil && entry.Correlation == nil && entry.Assertion == nil && samePublicDiagnosis(entry.Diagnosis, unknownPublicDiagnosis())
 	}
 	if entry.AssessedAt == nil || entry.ValidUntil == nil || entry.AssessedAt.IsZero() || entry.ValidUntil.Before(*entry.AssessedAt) || entry.ValidUntil.Sub(*entry.AssessedAt) > maxDiagnosisEvidenceAge || entry.AssessedAt.After(now.Add(diagnosisFutureSkew)) {
 		return false
@@ -559,21 +584,21 @@ func validSnapshotEntry(entry DiagnosisSnapshotEntry, now time.Time, contract As
 		return false
 	}
 	if entry.Source.Kind == "correlation_receipt" {
-		return entry.EvidenceState == "accepted" && entry.Source.SchemaVersion == CorrelationReceiptSchemaVersion && entry.Correlation != nil && entry.Assertion == nil && entry.Correlation.AffectedCount >= 2 && entry.Correlation.ControlCount >= 1 && entry.Diagnosis.Code == "provider_outage" && (entry.Diagnosis.Determination == "inferred" || entry.Diagnosis.Determination == "observed") && (entry.Diagnosis.Determination == "observed") == entry.Correlation.NoticeLinked
+		return entry.EvidenceState == "accepted" && entry.Source.SchemaVersion == CorrelationReceiptSchemaVersion && entry.Correlation != nil && entry.Assertion == nil && entry.Correlation.AffectedCount >= 2 && entry.Correlation.ControlCount >= 1 && (entry.Diagnosis.Determination == "inferred" || entry.Diagnosis.Determination == "observed") && (entry.Diagnosis.Determination == "observed") == entry.Correlation.NoticeLinked && samePublicDiagnosis(entry.Diagnosis, reviewedProviderOutageDiagnosis(entry.Diagnosis.Determination))
 	}
-	if entry.Source.Kind == "assertion_evaluation" {
-		if entry.Source.SchemaVersion != AssertionEvaluationSchemaVersion || entry.Assertion == nil || entry.Correlation != nil || !validAssertionDimension(entry.Assertion.Dimension) {
+	if entry.Source.Kind == "assertion_request" {
+		if entry.Source.SchemaVersion != AssertionEvaluationSchemaVersion || entry.Assertion == nil || entry.Correlation != nil || !validAssertionDimension(entry.Assertion.Dimension) || entry.Assertion.ObservedFieldCount < 0 {
 			return false
 		}
 		switch entry.Assertion.Outcome {
 		case "fail":
-			return entry.EvidenceState == "accepted" && entry.Assertion.Dimension == "contract" && entry.Diagnosis.Code == "contract_drift"
+			return entry.EvidenceState == "accepted" && entry.Assertion.Dimension == "contract" && entry.Assertion.ObservedFieldCount > 0 && samePublicDiagnosis(entry.Diagnosis, reviewedContractDriftDiagnosis())
 		case "pass":
-			return entry.EvidenceState == "accepted" && entry.Assertion.Dimension == "contract" && entry.Diagnosis.Code == "unknown"
+			return entry.EvidenceState == "accepted" && entry.Assertion.Dimension == "contract" && entry.Assertion.ObservedFieldCount > 0 && samePublicDiagnosis(entry.Diagnosis, unknownPublicDiagnosis())
 		case "not_observed":
-			return entry.EvidenceState == "not_observed" && entry.Diagnosis.Code == "unknown"
+			return entry.EvidenceState == "not_observed" && entry.Assertion.ObservedFieldCount == 0 && samePublicDiagnosis(entry.Diagnosis, unknownPublicDiagnosis())
 		case "unknown":
-			return entry.EvidenceState == "unknown" && entry.Diagnosis.Code == "unknown"
+			return entry.EvidenceState == "unknown" && samePublicDiagnosis(entry.Diagnosis, unknownPublicDiagnosis())
 		default:
 			return false
 		}

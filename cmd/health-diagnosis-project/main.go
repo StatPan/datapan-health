@@ -19,7 +19,7 @@ func main() {
 	diagnosticPin := flag.String("diagnostic-pin", "config/registry/diagnostic-contract-pin.json", "exact diagnostic contract")
 	assertionPin := flag.String("assertion-pin", "config/registry/assertion-policy-contract-pin.json", "exact assertion policy contract")
 	replayPath := flag.String("correlation-replay", "", "optional redacted correlation replay")
-	assertionsPath := flag.String("assertions", "", "optional assessed assertion evaluation array")
+	assertionsPath := flag.String("assertions", "", "optional exact assertion evaluation request array")
 	generatedAtValue := flag.String("generated-at", "", "RFC3339 projection time; defaults to replay assessed_at")
 	output := flag.String("output", "out/public-diagnosis-snapshot.json", "atomic snapshot output")
 	receiptOutput := flag.String("receipt-output", "out/diagnosis-projector-receipt.json", "projection receipt output")
@@ -96,9 +96,9 @@ func main() {
 	}
 }
 
-func readAssertions(path string) ([]health.AssessedAssertionEvaluation, error) {
+func readAssertions(path string) ([]health.AssertionEvaluationRequest, error) {
 	if path == "" {
-		return []health.AssessedAssertionEvaluation{}, nil
+		return []health.AssertionEvaluationRequest{}, nil
 	}
 	file, err := os.Open(path)
 	if err != nil {
@@ -109,7 +109,7 @@ func readAssertions(path string) ([]health.AssessedAssertionEvaluation, error) {
 	if err != nil || len(raw) > 1024*1024 {
 		return nil, fmt.Errorf("assertions input unavailable")
 	}
-	var assertions []health.AssessedAssertionEvaluation
+	var assertions []health.AssertionEvaluationRequest
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&assertions); err != nil || len(assertions) > 1000 {

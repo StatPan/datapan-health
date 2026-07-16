@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 )
 
 const AssertionCompatibilityReceiptVersion = "datapan.health-assertion-policy-compatibility-receipt.v1"
@@ -95,7 +96,7 @@ func BuildAssertionCompatibilityReceipt(healthHead, testedRevision, repoRoot str
 }
 
 func buildAssertionCompatibilityCases(contract AssertionPolicyContract, binding AssertionPolicyBinding) []AssertionCompatibilityCase {
-	base := AssertionEvaluationRequest{SchemaVersion: AssertionEvaluationSchemaVersion, OperationID: "dpr-op-00000001", OperationRevisionSHA256: contract.policyByOperation["dpr-op-00000001"].OperationRevisionSHA256, Dimension: "contract", PolicyBinding: &binding}
+	base := AssertionEvaluationRequest{SchemaVersion: AssertionEvaluationSchemaVersion, AssessedAt: time.Date(2026, 7, 17, 0, 15, 0, 0, time.UTC), OperationID: "dpr-op-00000001", OperationRevisionSHA256: contract.policyByOperation["dpr-op-00000001"].OperationRevisionSHA256, Dimension: "contract", PolicyBinding: &binding}
 	caseFor := func(name, dimension, expected string, fields []string, mutate func(*AssertionEvaluationRequest)) AssertionCompatibilityCase {
 		request := base
 		request.Dimension = dimension

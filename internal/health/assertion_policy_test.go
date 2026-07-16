@@ -13,6 +13,8 @@ import (
 const assertionPolicyPinPath = "../../config/registry/assertion-policy-contract-pin.json"
 const assertionPolicyOperationOneRevision = "3ef6296cd2e2c0d568523f0474f8806cd607b8b6e4fd605ef491af78700793a4"
 
+var assertionPolicyAssessedAt = time.Date(2026, 7, 17, 0, 15, 0, 0, time.UTC)
+
 func TestAssertionPolicyLoadsExactRegistryRevisionAndCanaryBijection(t *testing.T) {
 	contract, canaries := mustAssertionContract(t)
 	if contract.RegistryRevision != AcceptedAssertionRegistryRevision || contract.PolicySet.ID != acceptedAssertionPolicySetID || contract.PolicySet.Version != 1 {
@@ -42,7 +44,7 @@ func TestAssertionPolicyContractPassFailAndEmptyArePolicyDriven(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			got := contract.Evaluate(AssertionEvaluationRequest{SchemaVersion: AssertionEvaluationSchemaVersion, OperationID: "dpr-op-00000001", OperationRevisionSHA256: assertionPolicyOperationOneRevision, Dimension: "contract", PolicyBinding: &binding, Observation: AssertionObservation{ResponseFields: test.fields}})
+			got := contract.Evaluate(AssertionEvaluationRequest{SchemaVersion: AssertionEvaluationSchemaVersion, AssessedAt: assertionPolicyAssessedAt, OperationID: "dpr-op-00000001", OperationRevisionSHA256: assertionPolicyOperationOneRevision, Dimension: "contract", PolicyBinding: &binding, Observation: AssertionObservation{ResponseFields: test.fields}})
 			if got.Outcome != test.want {
 				t.Fatalf("got %q, want %q: %#v", got.Outcome, test.want, got)
 			}
@@ -56,7 +58,7 @@ func TestAssertionPolicyUnassertedDimensionsNeverInferHealth(t *testing.T) {
 	for _, dimension := range []string{"transport", "presence", "semantic", "freshness"} {
 		t.Run(dimension, func(t *testing.T) {
 			for _, fields := range [][]string{nil, {"dutyAddr"}, {"__undeclared_field__"}} {
-				got := contract.Evaluate(AssertionEvaluationRequest{SchemaVersion: AssertionEvaluationSchemaVersion, OperationID: "dpr-op-00000001", OperationRevisionSHA256: assertionPolicyOperationOneRevision, Dimension: dimension, PolicyBinding: &binding, Observation: AssertionObservation{ResponseFields: fields}})
+				got := contract.Evaluate(AssertionEvaluationRequest{SchemaVersion: AssertionEvaluationSchemaVersion, AssessedAt: assertionPolicyAssessedAt, OperationID: "dpr-op-00000001", OperationRevisionSHA256: assertionPolicyOperationOneRevision, Dimension: dimension, PolicyBinding: &binding, Observation: AssertionObservation{ResponseFields: fields}})
 				if got.Outcome != "not_observed" {
 					t.Fatalf("%s inferred a health result from non-authoritative evidence: %#v", dimension, got)
 				}
@@ -90,7 +92,7 @@ func TestAssertionPolicyMissingMismatchedAndSupersededBindingsAreUnknown(t *test
 	for name, mutate := range mutations {
 		t.Run(name, func(t *testing.T) {
 			binding := accepted
-			request := AssertionEvaluationRequest{SchemaVersion: AssertionEvaluationSchemaVersion, OperationID: "dpr-op-00000001", OperationRevisionSHA256: assertionPolicyOperationOneRevision, Dimension: "contract", PolicyBinding: &binding, Observation: AssertionObservation{ResponseFields: []string{"dutyAddr"}}}
+			request := AssertionEvaluationRequest{SchemaVersion: AssertionEvaluationSchemaVersion, AssessedAt: assertionPolicyAssessedAt, OperationID: "dpr-op-00000001", OperationRevisionSHA256: assertionPolicyOperationOneRevision, Dimension: "contract", PolicyBinding: &binding, Observation: AssertionObservation{ResponseFields: []string{"dutyAddr"}}}
 			mutate(&request)
 			if got := contract.Evaluate(request); got.Outcome != "unknown" {
 				t.Fatalf("invalid or stale binding became a health result: %#v", got)
@@ -101,7 +103,7 @@ func TestAssertionPolicyMissingMismatchedAndSupersededBindingsAreUnknown(t *test
 
 func TestAssertionPolicyRequestRejectsUnsupportedEnumsAndEvidenceLeaks(t *testing.T) {
 	binding := acceptedBindingForTest()
-	base := AssertionEvaluationRequest{SchemaVersion: AssertionEvaluationSchemaVersion, OperationID: "dpr-op-00000001", OperationRevisionSHA256: assertionPolicyOperationOneRevision, Dimension: "contract", PolicyBinding: &binding, Observation: AssertionObservation{ResponseFields: []string{"dutyAddr"}}}
+	base := AssertionEvaluationRequest{SchemaVersion: AssertionEvaluationSchemaVersion, AssessedAt: assertionPolicyAssessedAt, OperationID: "dpr-op-00000001", OperationRevisionSHA256: assertionPolicyOperationOneRevision, Dimension: "contract", PolicyBinding: &binding, Observation: AssertionObservation{ResponseFields: []string{"dutyAddr"}}}
 	encoded, err := json.Marshal(base)
 	if err != nil {
 		t.Fatal(err)
@@ -159,7 +161,7 @@ func TestAssertionPolicyLeavesAvailabilityProjectionUnchanged(t *testing.T) {
 	want := Summarize(receipt, "public-data_example")
 	contract, _ := mustAssertionContract(t)
 	binding := acceptedBindingForTest()
-	_ = contract.Evaluate(AssertionEvaluationRequest{SchemaVersion: AssertionEvaluationSchemaVersion, OperationID: "dpr-op-00000001", OperationRevisionSHA256: assertionPolicyOperationOneRevision, Dimension: "semantic", PolicyBinding: &binding})
+	_ = contract.Evaluate(AssertionEvaluationRequest{SchemaVersion: AssertionEvaluationSchemaVersion, AssessedAt: assertionPolicyAssessedAt, OperationID: "dpr-op-00000001", OperationRevisionSHA256: assertionPolicyOperationOneRevision, Dimension: "semantic", PolicyBinding: &binding})
 	got := Summarize(receipt, "public-data_example")
 	if got != want {
 		t.Fatalf("assertion evaluation changed availability v1 projection: %#v != %#v", got, want)

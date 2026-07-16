@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -126,6 +127,7 @@ type AssertionPolicyBinding struct {
 
 type AssertionEvaluationRequest struct {
 	SchemaVersion           string                  `json:"schema_version"`
+	AssessedAt              time.Time               `json:"assessed_at"`
 	OperationID             string                  `json:"operation_id"`
 	OperationRevisionSHA256 string                  `json:"operation_revision_sha256"`
 	Dimension               string                  `json:"dimension"`
@@ -141,18 +143,19 @@ type AssertionObservation struct {
 }
 
 type AssertionEvaluation struct {
-	SchemaVersion              string `json:"schema_version"`
-	RegistryRevision           string `json:"registry_revision"`
-	OperationID                string `json:"operation_id"`
-	OperationRevisionSHA256    string `json:"operation_revision_sha256,omitempty"`
-	Dimension                  string `json:"dimension"`
-	PolicySetID                string `json:"policy_set_id"`
-	PolicySetVersion           int    `json:"policy_set_version"`
-	PolicyArtifactSHA256       string `json:"policy_artifact_sha256"`
-	DiagnosticVocabularySHA256 string `json:"diagnostic_vocabulary_sha256"`
-	Outcome                    string `json:"outcome"`
-	ReasonCode                 string `json:"reason_code"`
-	ObservedFieldCount         int    `json:"observed_field_count,omitempty"`
+	SchemaVersion              string    `json:"schema_version"`
+	AssessedAt                 time.Time `json:"assessed_at"`
+	RegistryRevision           string    `json:"registry_revision"`
+	OperationID                string    `json:"operation_id"`
+	OperationRevisionSHA256    string    `json:"operation_revision_sha256,omitempty"`
+	Dimension                  string    `json:"dimension"`
+	PolicySetID                string    `json:"policy_set_id"`
+	PolicySetVersion           int       `json:"policy_set_version"`
+	PolicyArtifactSHA256       string    `json:"policy_artifact_sha256"`
+	DiagnosticVocabularySHA256 string    `json:"diagnostic_vocabulary_sha256"`
+	Outcome                    string    `json:"outcome"`
+	ReasonCode                 string    `json:"reason_code"`
+	ObservedFieldCount         int       `json:"observed_field_count,omitempty"`
 }
 
 func LoadAssertionPolicyContract(path string, canaries CanaryConfig) (AssertionPolicyContract, error) {
@@ -338,7 +341,7 @@ func DecodeAssertionEvaluationRequest(reader io.Reader) (AssertionEvaluationRequ
 		return AssertionEvaluationRequest{}, errors.New("assertion evaluation request could not be read")
 	}
 	var request AssertionEvaluationRequest
-	if err := decodeStrictBytes(raw, &request); err != nil || request.SchemaVersion != AssertionEvaluationSchemaVersion || request.OperationID == "" || !sha256Pattern.MatchString(request.OperationRevisionSHA256) || !validAssertionDimension(request.Dimension) || !uniqueSafeFields(request.Observation.ResponseFields) {
+	if err := decodeStrictBytes(raw, &request); err != nil || request.SchemaVersion != AssertionEvaluationSchemaVersion || request.AssessedAt.IsZero() || request.OperationID == "" || !sha256Pattern.MatchString(request.OperationRevisionSHA256) || !validAssertionDimension(request.Dimension) || !uniqueSafeFields(request.Observation.ResponseFields) {
 		return AssertionEvaluationRequest{}, errors.New("unsupported assertion evaluation request")
 	}
 	return request, nil
@@ -346,14 +349,14 @@ func DecodeAssertionEvaluationRequest(reader io.Reader) (AssertionEvaluationRequ
 
 func (c AssertionPolicyContract) Evaluate(request AssertionEvaluationRequest) AssertionEvaluation {
 	result := AssertionEvaluation{
-		SchemaVersion: AssertionEvaluationSchemaVersion, RegistryRevision: c.RegistryRevision,
+		SchemaVersion: AssertionEvaluationSchemaVersion, AssessedAt: request.AssessedAt.UTC(), RegistryRevision: c.RegistryRevision,
 		OperationID: request.OperationID, Dimension: request.Dimension,
 		PolicySetID: c.PolicySet.ID, PolicySetVersion: c.PolicySet.Version,
 		PolicyArtifactSHA256:       AcceptedAssertionPolicyArtifactSHA256,
 		DiagnosticVocabularySHA256: AcceptedAssertionDiagnosticVocabularySHA,
 		Outcome:                    "unknown", ReasonCode: "invalid_or_stale_policy_binding",
 	}
-	if request.SchemaVersion != AssertionEvaluationSchemaVersion || !sha256Pattern.MatchString(request.OperationRevisionSHA256) || !validAssertionDimension(request.Dimension) || !uniqueSafeFields(request.Observation.ResponseFields) {
+	if request.SchemaVersion != AssertionEvaluationSchemaVersion || request.AssessedAt.IsZero() || !sha256Pattern.MatchString(request.OperationRevisionSHA256) || !validAssertionDimension(request.Dimension) || !uniqueSafeFields(request.Observation.ResponseFields) {
 		result.ReasonCode = "unsupported_or_unsafe_observation"
 		return result
 	}
@@ -362,6 +365,7 @@ func (c AssertionPolicyContract) Evaluate(request AssertionEvaluationRequest) As
 		return result
 	}
 	result.OperationRevisionSHA256 = policy.OperationRevisionSHA256
+	result.ObservedFieldCount = len(request.Observation.ResponseFields)
 	dimension := assertionDimension(policy, request.Dimension)
 	if dimension.State == "not_asserted" {
 		result.Outcome, result.ReasonCode = "not_observed", dimension.ReasonCode
@@ -370,7 +374,6 @@ func (c AssertionPolicyContract) Evaluate(request AssertionEvaluationRequest) As
 	if request.Dimension != "contract" || dimension.State != "asserted" {
 		return result
 	}
-	result.ObservedFieldCount = len(request.Observation.ResponseFields)
 	if len(request.Observation.ResponseFields) == 0 {
 		result.Outcome, result.ReasonCode = "not_observed", "empty_payload_without_contract_observation"
 		return result

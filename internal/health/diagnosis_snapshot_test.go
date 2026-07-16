@@ -1,6 +1,7 @@
 package health
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -48,10 +49,10 @@ func TestDiagnosisSnapshotCrossContractProviderOutageInferredAndObserved(t *test
 func TestDiagnosisSnapshotCrossContractAssertionFailPassAndNotObserved(t *testing.T) {
 	inputs := mustDiagnosisInputs(t)
 	now := time.Date(2026, 7, 17, 0, 15, 0, 0, time.UTC)
-	fail := assertionEvaluationFor(t, inputs.assertion, "dpr-op-00000001", "contract", []string{"__undeclared_field__"})
-	pass := assertionEvaluationFor(t, inputs.assertion, "dpr-op-00000002", "contract", []string{inputs.assertion.policyByOperation["dpr-op-00000002"].Dimensions.Contract.DeclaredResponseFields[0]})
-	notObserved := assertionEvaluationFor(t, inputs.assertion, "dpr-op-00000003", "semantic", nil)
-	snapshot, proof, err := ProjectDiagnosisSnapshot(now, []CorrelationReceipt{}, []AssessedAssertionEvaluation{{AssessedAt: now, Evaluation: fail}, {AssessedAt: now, Evaluation: pass}, {AssessedAt: now, Evaluation: notObserved}}, inputs.canaries, inputs.diagnostic, inputs.assertion)
+	fail := assertionRequestFor(t, inputs.assertion, now, "dpr-op-00000001", "contract", []string{"__undeclared_field__"})
+	pass := assertionRequestFor(t, inputs.assertion, now, "dpr-op-00000002", "contract", []string{inputs.assertion.policyByOperation["dpr-op-00000002"].Dimensions.Contract.DeclaredResponseFields[0]})
+	notObserved := assertionRequestFor(t, inputs.assertion, now, "dpr-op-00000003", "semantic", nil)
+	snapshot, proof, err := ProjectDiagnosisSnapshot(now, []CorrelationReceipt{}, []AssertionEvaluationRequest{fail, pass, notObserved}, inputs.canaries, inputs.diagnostic, inputs.assertion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,10 +120,12 @@ func TestDiagnosisSnapshotProjectorRejectsRuleNoticePolicyIdentityAndConflicts(t
 		})
 	}
 
-	fail := assertionEvaluationFor(t, inputs.assertion, "dpr-op-00000001", "contract", []string{"__undeclared_field__"})
+	fail := assertionRequestFor(t, inputs.assertion, replay.AssessedAt, "dpr-op-00000001", "contract", []string{"__undeclared_field__"})
 	drifted := fail
-	drifted.PolicySetVersion = 2
-	snapshot, _, err := ProjectDiagnosisSnapshot(replay.AssessedAt, nil, []AssessedAssertionEvaluation{{AssessedAt: replay.AssessedAt, Evaluation: drifted}}, inputs.canaries, inputs.diagnostic, inputs.assertion)
+	driftedBinding := *drifted.PolicyBinding
+	driftedBinding.PolicySetVersion = 2
+	drifted.PolicyBinding = &driftedBinding
+	snapshot, _, err := ProjectDiagnosisSnapshot(replay.AssessedAt, nil, []AssertionEvaluationRequest{drifted}, inputs.canaries, inputs.diagnostic, inputs.assertion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +133,7 @@ func TestDiagnosisSnapshotProjectorRejectsRuleNoticePolicyIdentityAndConflicts(t
 		t.Fatalf("superseded assertion was accepted: %#v", entry)
 	}
 
-	snapshot, _, err = ProjectDiagnosisSnapshot(replay.AssessedAt, []CorrelationReceipt{base}, []AssessedAssertionEvaluation{{AssessedAt: replay.AssessedAt, Evaluation: fail}}, inputs.canaries, inputs.diagnostic, inputs.assertion)
+	snapshot, _, err = ProjectDiagnosisSnapshot(replay.AssessedAt, []CorrelationReceipt{base}, []AssertionEvaluationRequest{fail}, inputs.canaries, inputs.diagnostic, inputs.assertion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,9 +145,9 @@ func TestDiagnosisSnapshotProjectorRejectsRuleNoticePolicyIdentityAndConflicts(t
 func TestDiagnosisSnapshotReadFailsClosedPerOperationForLeakDigestDuplicateAndTime(t *testing.T) {
 	inputs := mustDiagnosisInputs(t)
 	now := time.Date(2026, 7, 17, 0, 15, 0, 0, time.UTC)
-	fail := assertionEvaluationFor(t, inputs.assertion, "dpr-op-00000001", "contract", []string{"__undeclared_field__"})
-	notObserved := assertionEvaluationFor(t, inputs.assertion, "dpr-op-00000002", "semantic", nil)
-	base, _, err := ProjectDiagnosisSnapshot(now, nil, []AssessedAssertionEvaluation{{AssessedAt: now, Evaluation: fail}, {AssessedAt: now, Evaluation: notObserved}}, inputs.canaries, inputs.diagnostic, inputs.assertion)
+	fail := assertionRequestFor(t, inputs.assertion, now, "dpr-op-00000001", "contract", []string{"__undeclared_field__"})
+	notObserved := assertionRequestFor(t, inputs.assertion, now, "dpr-op-00000002", "semantic", nil)
+	base, _, err := ProjectDiagnosisSnapshot(now, nil, []AssertionEvaluationRequest{fail, notObserved}, inputs.canaries, inputs.diagnostic, inputs.assertion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,12 +245,98 @@ func TestDiagnosisSnapshotReadRejectsGlobalVersionPolicyAndOversize(t *testing.T
 	}
 }
 
+func TestDiagnosisSnapshotReaderRejectsRehashedUnreviewedTuplesAndNegativeCounts(t *testing.T) {
+	inputs := mustDiagnosisInputs(t)
+	now := time.Date(2026, 7, 17, 0, 15, 0, 0, time.UTC)
+	request := assertionRequestFor(t, inputs.assertion, now, "dpr-op-00000001", "contract", []string{"__undeclared_field__"})
+	base, _, err := ProjectDiagnosisSnapshot(now, nil, []AssertionEvaluationRequest{request}, inputs.canaries, inputs.diagnostic, inputs.assertion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]func(*DiagnosisSnapshotEntry){
+		"accountable party": func(entry *DiagnosisSnapshotEntry) { entry.Diagnosis.AccountableParty = "provider" },
+		"recommended action": func(entry *DiagnosisSnapshotEntry) {
+			entry.Diagnosis.RecommendedActionIDs = []string{"check_provider_status"}
+		},
+		"avoid action":   func(entry *DiagnosisSnapshotEntry) { entry.Diagnosis.AvoidActionIDs = nil },
+		"determination":  func(entry *DiagnosisSnapshotEntry) { entry.Diagnosis.Determination = "observed" },
+		"negative count": func(entry *DiagnosisSnapshotEntry) { entry.Assertion.ObservedFieldCount = -1 },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			candidate := base
+			candidate.Operations = append([]DiagnosisSnapshotEntry(nil), base.Operations...)
+			entry := &candidate.Operations[0]
+			mutate(entry)
+			entry.ProjectionSHA256 = diagnosisEntryDigest(*entry)
+			path := filepath.Join(t.TempDir(), "snapshot.json")
+			raw, err := json.Marshal(candidate)
+			if err != nil || os.WriteFile(path, raw, 0o600) != nil {
+				t.Fatal("could not write adversarial snapshot")
+			}
+			got, counts, err := ReadDiagnosisSnapshot(path, now, inputs.assertion)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry = func() *DiagnosisSnapshotEntry { value := diagnosisEntryByID(t, got, "dpr-op-00000001"); return &value }()
+			if entry.EvidenceState != "rejected" || entry.Diagnosis.Code != "unknown" || counts.Rejected < 1 {
+				t.Fatalf("self-rehashed unreviewed projection was accepted: %#v %#v", entry, counts)
+			}
+		})
+	}
+}
+
+func TestDiagnosisSnapshotProjectorEvaluatesExactAssessedRequest(t *testing.T) {
+	inputs := mustDiagnosisInputs(t)
+	now := time.Date(2026, 7, 17, 0, 15, 0, 0, time.UTC)
+	request := assertionRequestFor(t, inputs.assertion, now, "dpr-op-00000001", "contract", []string{"__undeclared_field__"})
+	first, _, err := ProjectDiagnosisSnapshot(now, nil, []AssertionEvaluationRequest{request}, inputs.canaries, inputs.diagnostic, inputs.assertion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := diagnosisEntryByID(t, first, request.OperationID)
+	if entry.Assertion == nil || entry.Assertion.Outcome != "fail" || entry.Assertion.ObservedFieldCount != 1 || entry.AssessedAt == nil || !entry.AssessedAt.Equal(now) {
+		t.Fatalf("request was not evaluated by the pinned policy: %#v", entry)
+	}
+	repackaged := request
+	repackaged.AssessedAt = now.Add(-time.Minute)
+	second, _, err := ProjectDiagnosisSnapshot(now, nil, []AssertionEvaluationRequest{repackaged}, inputs.canaries, inputs.diagnostic, inputs.assertion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondEntry := diagnosisEntryByID(t, second, request.OperationID)
+	if secondEntry.Source == nil || entry.Source == nil || secondEntry.Source.SHA256 == entry.Source.SHA256 || secondEntry.AssessedAt == nil || !secondEntry.AssessedAt.Equal(repackaged.AssessedAt) {
+		t.Fatalf("assessed_at was not bound into the exact source request: first=%#v second=%#v", entry, secondEntry)
+	}
+}
+
+func TestDiagnosisSnapshotReceiptDigestsExactStoredArtifactBytes(t *testing.T) {
+	inputs := mustDiagnosisInputs(t)
+	now := time.Date(2026, 7, 17, 0, 15, 0, 0, time.UTC)
+	snapshot, receipt, err := ProjectDiagnosisSnapshot(now, nil, nil, inputs.canaries, inputs.diagnostic, inputs.assertion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "snapshot.json")
+	if err := WriteDiagnosisSnapshotAtomic(path, snapshot, inputs.assertion); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compact, _ := json.Marshal(snapshot)
+	if receipt.SnapshotDigestAlgorithm != "sha256" || receipt.SnapshotCanonicalization != DiagnosisSnapshotCanonicalization || receipt.SnapshotBytes != len(raw) || receipt.SnapshotSHA256 != digest(raw) || receipt.SnapshotSHA256 == digest(compact) || len(raw) == 0 || raw[len(raw)-1] != '\n' || !bytes.Contains(raw, []byte("\n  \"generated_at\"")) {
+		t.Fatalf("receipt does not bind exact indented+LF artifact bytes: %#v", receipt)
+	}
+}
+
 func TestDiagnosisSnapshotAtomicUpdateNeverExposesPartialJSON(t *testing.T) {
 	inputs := mustDiagnosisInputs(t)
 	now := time.Date(2026, 7, 17, 0, 15, 0, 0, time.UTC)
 	unknown, _, _ := ProjectDiagnosisSnapshot(now, nil, nil, inputs.canaries, inputs.diagnostic, inputs.assertion)
-	fail := assertionEvaluationFor(t, inputs.assertion, "dpr-op-00000001", "contract", []string{"__undeclared_field__"})
-	diagnosed, _, _ := ProjectDiagnosisSnapshot(now, nil, []AssessedAssertionEvaluation{{AssessedAt: now, Evaluation: fail}}, inputs.canaries, inputs.diagnostic, inputs.assertion)
+	fail := assertionRequestFor(t, inputs.assertion, now, "dpr-op-00000001", "contract", []string{"__undeclared_field__"})
+	diagnosed, _, _ := ProjectDiagnosisSnapshot(now, nil, []AssertionEvaluationRequest{fail}, inputs.canaries, inputs.diagnostic, inputs.assertion)
 	path := filepath.Join(t.TempDir(), "snapshot.json")
 	if err := WriteDiagnosisSnapshotAtomic(path, unknown, inputs.assertion); err != nil {
 		t.Fatal(err)
@@ -288,8 +377,8 @@ func TestDiagnosisSnapshotAtomicUpdateNeverExposesPartialJSON(t *testing.T) {
 func TestDiagnosisOverlayPreservesAvailabilityAndPublicContract(t *testing.T) {
 	inputs := mustDiagnosisInputs(t)
 	now := publicNow
-	fail := assertionEvaluationFor(t, inputs.assertion, "dpr-op-00000001", "contract", []string{"__undeclared_field__"})
-	snapshot, _, err := ProjectDiagnosisSnapshot(now, nil, []AssessedAssertionEvaluation{{AssessedAt: now, Evaluation: fail}}, inputs.canaries, inputs.diagnostic, inputs.assertion)
+	fail := assertionRequestFor(t, inputs.assertion, now, "dpr-op-00000001", "contract", []string{"__undeclared_field__"})
+	snapshot, _, err := ProjectDiagnosisSnapshot(now, nil, []AssertionEvaluationRequest{fail}, inputs.canaries, inputs.diagnostic, inputs.assertion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,11 +458,11 @@ func mustDiagnosisInputs(t *testing.T) diagnosisInputs {
 	return diagnosisInputs{rule, canaries, diagnostic, assertion}
 }
 
-func assertionEvaluationFor(t *testing.T, contract AssertionPolicyContract, operationID, dimension string, fields []string) AssertionEvaluation {
+func assertionRequestFor(t *testing.T, contract AssertionPolicyContract, assessedAt time.Time, operationID, dimension string, fields []string) AssertionEvaluationRequest {
 	t.Helper()
 	policy := contract.policyByOperation[operationID]
 	binding := acceptedDiagnosisAssertionBinding()
-	return contract.Evaluate(AssertionEvaluationRequest{SchemaVersion: AssertionEvaluationSchemaVersion, OperationID: operationID, OperationRevisionSHA256: policy.OperationRevisionSHA256, Dimension: dimension, PolicyBinding: &binding, Observation: AssertionObservation{ResponseFields: fields}})
+	return AssertionEvaluationRequest{SchemaVersion: AssertionEvaluationSchemaVersion, AssessedAt: assessedAt, OperationID: operationID, OperationRevisionSHA256: policy.OperationRevisionSHA256, Dimension: dimension, PolicyBinding: &binding, Observation: AssertionObservation{ResponseFields: fields}}
 }
 
 func diagnosisEntryByID(t *testing.T, snapshot DiagnosisSnapshot, id string) DiagnosisSnapshotEntry {
