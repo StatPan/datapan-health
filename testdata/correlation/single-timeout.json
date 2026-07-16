@@ -4,7 +4,7 @@
   "scope": {
     "provider": "data.go.kr",
     "dependency_class": "data_go_kr_gateway",
-    "credential_scope_id": "public-canary"
+    "canary_scope_alias": "datapan-health-public-canary-v1"
   },
   "observations": [
     {
@@ -15,7 +15,7 @@
       "dependency_class": "data_go_kr_gateway",
       "probe_policy_key": "dpr-op-00000001",
       "probe_policy_version": 1,
-      "credential_scope_id": "public-canary",
+      "canary_scope_alias": "datapan-health-public-canary-v1",
       "outcome": "unhealthy",
       "category": "timeout",
       "http_status": 0,
@@ -34,7 +34,7 @@
       "dependency_class": "data_go_kr_gateway",
       "probe_policy_key": "dpr-op-00000003",
       "probe_policy_version": 1,
-      "credential_scope_id": "public-canary",
+      "canary_scope_alias": "datapan-health-public-canary-v1",
       "outcome": "healthy",
       "category": "healthy",
       "http_status": 200,

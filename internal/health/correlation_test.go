@@ -23,13 +23,83 @@ func TestCorrelationReplayInfersOnlyWithBoundedAffectedAndControlCounts(t *testi
 	if receipt.Result.Cause != "provider_outage" || receipt.Result.Determination != "inferred" || receipt.Result.AffectedCount != 2 || receipt.Result.ControlCount != 1 || receipt.NoticeEvidence.LinkedNoticeRef != "" {
 		t.Fatalf("unexpected inferred receipt: %#v", receipt)
 	}
-	if len(receipt.AffectedEvidence) != 2 || len(receipt.ControlEvidence) != 1 || len(receipt.HealthObservationEvidence) != 2 || receipt.AffectedEvidence[0].OperationID != "dpr-op-00000001" || receipt.Rule.SHA256 != rule.SHA256 || receipt.Boundaries.AlertPolicy != "unchanged" || receipt.Boundaries.PublicProjection != "unchanged" {
+	if len(receipt.AffectedEvidence) != 2 || len(receipt.ControlEvidence) != 1 || len(receipt.HealthObservationEvidence) != 2 || len(receipt.HealthObservationBindings) != 2 || receipt.AffectedEvidence[0].OperationID != "dpr-op-00000001" || receipt.Rule.SHA256 != AcceptedCorrelationRuleSHA256 || receipt.Boundaries.AlertPolicy != "unchanged" || receipt.Boundaries.PublicProjection != "unchanged" {
 		t.Fatalf("correlation evidence or boundary is incomplete: %#v", receipt)
 	}
 	for _, evidence := range receipt.HealthObservationEvidence {
-		if evidence.Kind != "health_observation" || evidence.Authority != "datapan_health" || evidence.Scope.Level != "operation" || evidence.Scope.DependencyClass != replay.Scope.DependencyClass || evidence.HealthCorrelation.ProbePolicyVersion != 1 || evidence.HealthCorrelation.AffectedCount != 2 || evidence.HealthCorrelation.ControlCount != 1 || !strings.HasPrefix(evidence.RefID, "health-correlation:sha256:") {
+		if evidence.Kind != "health_observation" || evidence.Authority != "datapan_health" || evidence.Scope.Level != "operation" || evidence.Scope.SubjectRef != "envelope_subject" || evidence.Scope.DetailID != "dependency:"+replay.Scope.DependencyClass || evidence.HealthCorrelation.ProbePolicyVersion == "" || !strings.HasPrefix(evidence.RefID, "health:correlation:") {
 			t.Fatalf("health_observation evidence is not exact and replayable: %#v", evidence)
 		}
+	}
+}
+
+func TestCorrelationHealthObservationEmitterMatchesPinnedDiagnosticEnvelope(t *testing.T) {
+	rule, canaries := mustCorrelationInputs(t)
+	replay := mustCorrelationReplay(t, "inferred.json")
+	receipt, err := CorrelateProviderOutage(rule, canaries, replay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := mustLoadDiagnosticContract(t)
+	fixture := mustDiagnosticFixture(t, contract, "provider-outage.json")
+	for _, binding := range receipt.HealthObservationBindings {
+		var evidence CorrelationHealthEvidence
+		for _, candidate := range receipt.HealthObservationEvidence {
+			if candidate.RefID == binding.EvidenceRefID {
+				evidence = candidate
+			}
+		}
+		if evidence.RefID == "" {
+			t.Fatalf("missing emitted evidence for binding %#v", binding)
+		}
+		var envelope map[string]any
+		if err := json.Unmarshal(fixture, &envelope); err != nil {
+			t.Fatal(err)
+		}
+		envelope["assessed_at"] = replay.AssessedAt.Format(time.RFC3339)
+		envelope["subject"] = map[string]any{"source_id": "data_go_kr", "provider_id": "data_go_kr", "dataset_id": binding.DatasetID, "operation_id": binding.OperationID}
+		envelope["evidence_refs"] = []any{evidence}
+		encoded, err := json.Marshal(envelope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := contract.Decode(bytes.NewReader(encoded))
+		if err != nil {
+			t.Fatalf("emitted health_observation is not accepted by pinned diagnostic schema: %v\n%s", err, encoded)
+		}
+		if decoded.Subject.OperationID != binding.OperationID || decoded.Subject.DatasetID != binding.DatasetID {
+			t.Fatalf("diagnostic envelope subject drifted from emitted binding: %#v", decoded.Subject)
+		}
+	}
+}
+
+func TestCorrelationCanaryScopeAliasCannotReflectCredentialMaterial(t *testing.T) {
+	rule, canaries := mustCorrelationInputs(t)
+	for name, unsafe := range map[string]string{
+		"hash":              strings.Repeat("a", 64),
+		"fingerprint label": "credential-fingerprint",
+		"value label":       "secret-value",
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, target := range []string{"replay", "observation"} {
+				replay := mustCorrelationReplay(t, "inferred.json")
+				if target == "replay" {
+					replay.Scope.CanaryScopeAlias = unsafe
+				} else {
+					replay.Observations[0].CanaryScopeAlias = unsafe
+				}
+				if _, err := CorrelateProviderOutage(rule, canaries, replay); err == nil {
+					t.Fatalf("unreviewed %s canary scope alias was accepted", target)
+				}
+				encoded, err := json.Marshal(replay)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := DecodeCorrelationReplay(bytes.NewReader(encoded)); err == nil {
+					t.Fatalf("decoder accepted unreviewed %s canary scope alias", target)
+				}
+			}
+		})
 	}
 }
 
@@ -71,10 +141,6 @@ func TestCorrelationFalsePositiveReplaysRemainUnknown(t *testing.T) {
 			for index := 0; index < 2; index++ {
 				replay.Observations[index].ObservedAt = replay.AssessedAt.Add(-901 * time.Second)
 			}
-			return replay
-		},
-		"mixed credential scopes": func(replay CorrelationReplay) CorrelationReplay {
-			replay.Observations[1].CredentialScopeID = "different-canary-credential-scope"
 			return replay
 		},
 		"mixed dependency scopes": func(replay CorrelationReplay) CorrelationReplay {
@@ -214,9 +280,11 @@ func TestCorrelationReplayDecoderAndRuleFailClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, mutation := range map[string][]byte{
-		"single affected":  bytes.Replace(ruleRaw, []byte(`"minimum_affected_operations": 2`), []byte(`"minimum_affected_operations": 1`), 1),
-		"missing control":  bytes.Replace(ruleRaw, []byte(`"minimum_control_operations": 1`), []byte(`"minimum_control_operations": 0`), 1),
-		"unbounded window": bytes.Replace(ruleRaw, []byte(`"window_seconds": 900`), []byte(`"window_seconds": 3600`), 1),
+		"single affected":              bytes.Replace(ruleRaw, []byte(`"minimum_affected_operations": 2`), []byte(`"minimum_affected_operations": 1`), 1),
+		"missing control":              bytes.Replace(ruleRaw, []byte(`"minimum_control_operations": 1`), []byte(`"minimum_control_operations": 0`), 1),
+		"unbounded window":             bytes.Replace(ruleRaw, []byte(`"window_seconds": 900`), []byte(`"window_seconds": 3600`), 1),
+		"same-version 60-second drift": bytes.Replace(ruleRaw, []byte(`"window_seconds": 900`), []byte(`"window_seconds": 60`), 1),
+		"unimplemented version bump":   bytes.Replace(ruleRaw, []byte(`"version": 1`), []byte(`"version": 2`), 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := t.TempDir() + "/rule.json"
@@ -227,6 +295,11 @@ func TestCorrelationReplayDecoderAndRuleFailClosed(t *testing.T) {
 				t.Fatal("unsafe rule drift was accepted")
 			}
 		})
+	}
+	rule, canaries := mustCorrelationInputs(t)
+	rule.WindowSeconds = 60
+	if _, err := CorrelateProviderOutage(rule, canaries, mustCorrelationReplay(t, "inferred.json")); err == nil {
+		t.Fatal("in-memory same-version rule drift was accepted")
 	}
 }
 

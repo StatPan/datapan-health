@@ -64,7 +64,7 @@ Gatus에는 `assessment.outcome`, `assessment.category`, `observation.latency_ms
 
 `health-correlation`은 immutable Health observation reference와 검토된 provider-notice
 projection으로부터 redacted offline receipt를 결정적으로 생성합니다. 동일 dependency와
-credential scope에서 여러 affected operation과 healthy control을 모두 요구하므로 단일
+reviewed non-secret canary scope에서 여러 affected operation과 healthy control을 모두 요구하므로 단일
 timeout 또는 5xx만으로 provider outage를 확정하지 않습니다. 상세 계약과 notice
 supersession 규칙은 [bounded correlation replay](docs/correlation-replay.md)에 있습니다.
 이 명령은 alert policy, public status output, provider state 또는 deployment를 변경하지

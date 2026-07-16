@@ -21,13 +21,14 @@ const (
 	HealthObservationSchemaVersion  = "datapan.health-observation.v1"
 	ProviderNoticeSchemaVersion     = "datapan.provider-notice-projection.v1"
 	AcceptedCorrelationRuleID       = "data-go-kr-provider-outage-bounded-v1"
+	AcceptedCorrelationRuleSHA256   = "df2749887d8adda659a01416e003d2e00ce19d37304dfaeec3dea61809ed0f02"
+	AcceptedCanaryScopeAlias        = "datapan-health-public-canary-v1"
 	maxCorrelationReplayBytes       = 1024 * 1024
 )
 
 var (
 	immutableObservationRefPattern = regexp.MustCompile(`^health-observation:sha256:[0-9a-f]{64}$`)
 	noticeIDPattern                = regexp.MustCompile(`^[a-z][a-z0-9.-]{0,95}$`)
-	credentialScopePattern         = regexp.MustCompile(`^[a-z][a-z0-9.-]{0,95}$`)
 	dependencyClassPattern         = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 )
 
@@ -62,9 +63,9 @@ type CorrelationReplay struct {
 }
 
 type CorrelationScope struct {
-	Provider          string `json:"provider"`
-	DependencyClass   string `json:"dependency_class"`
-	CredentialScopeID string `json:"credential_scope_id"`
+	Provider         string `json:"provider"`
+	DependencyClass  string `json:"dependency_class"`
+	CanaryScopeAlias string `json:"canary_scope_alias"`
 }
 
 // HealthObservation contains only minimized, already-redacted evidence. The
@@ -78,7 +79,7 @@ type HealthObservation struct {
 	DependencyClass    string               `json:"dependency_class"`
 	ProbePolicyKey     string               `json:"probe_policy_key"`
 	ProbePolicyVersion int                  `json:"probe_policy_version"`
-	CredentialScopeID  string               `json:"credential_scope_id"`
+	CanaryScopeAlias   string               `json:"canary_scope_alias"`
 	Outcome            string               `json:"outcome"`
 	Category           string               `json:"category"`
 	HTTPStatus         int                  `json:"http_status,omitempty"`
@@ -112,16 +113,17 @@ type ProviderNotice struct {
 }
 
 type CorrelationReceipt struct {
-	SchemaVersion             string                      `json:"schema_version"`
-	AssessedAt                time.Time                   `json:"assessed_at"`
-	Rule                      CorrelationRuleReference    `json:"rule"`
-	Scope                     CorrelationScope            `json:"scope"`
-	Result                    CorrelationResult           `json:"result"`
-	AffectedEvidence          []CorrelationObservationRef `json:"affected_evidence"`
-	ControlEvidence           []CorrelationObservationRef `json:"control_evidence"`
-	HealthObservationEvidence []CorrelationHealthEvidence `json:"health_observation_evidence"`
-	NoticeEvidence            NoticeEvidence              `json:"notice_evidence"`
-	Boundaries                CorrelationBoundaries       `json:"boundaries"`
+	SchemaVersion             string                             `json:"schema_version"`
+	AssessedAt                time.Time                          `json:"assessed_at"`
+	Rule                      CorrelationRuleReference           `json:"rule"`
+	Scope                     CorrelationScope                   `json:"scope"`
+	Result                    CorrelationResult                  `json:"result"`
+	AffectedEvidence          []CorrelationObservationRef        `json:"affected_evidence"`
+	ControlEvidence           []CorrelationObservationRef        `json:"control_evidence"`
+	HealthObservationEvidence []CorrelationHealthEvidence        `json:"health_observation_evidence"`
+	HealthObservationBindings []CorrelationHealthEvidenceBinding `json:"health_observation_bindings"`
+	NoticeEvidence            NoticeEvidence                     `json:"notice_evidence"`
+	Boundaries                CorrelationBoundaries              `json:"boundaries"`
 }
 
 type CorrelationRuleReference struct {
@@ -144,38 +146,41 @@ type CorrelationObservationRef struct {
 }
 
 type CorrelationHealthEvidence struct {
-	Kind                    string                    `json:"kind"`
-	RefID                   string                    `json:"ref_id"`
-	Authority               string                    `json:"authority"`
-	Version                 string                    `json:"version"`
-	Scope                   CorrelationEvidenceScope  `json:"scope"`
-	HealthCorrelation       HealthCorrelationEvidence `json:"health_correlation"`
-	ImmutableObservationRef string                    `json:"immutable_observation_ref"`
-	Supports                []string                  `json:"supports"`
-	Timing                  CorrelationEvidenceTiming `json:"timing"`
+	Kind              string                    `json:"kind"`
+	RefID             string                    `json:"ref_id"`
+	Authority         string                    `json:"authority"`
+	Version           string                    `json:"version"`
+	Scope             CorrelationEvidenceScope  `json:"scope"`
+	HealthCorrelation HealthCorrelationEvidence `json:"health_correlation"`
+	Supports          []string                  `json:"supports"`
+	Timing            CorrelationEvidenceTiming `json:"timing"`
 }
 
 type CorrelationEvidenceScope struct {
-	Level           string `json:"level"`
-	OperationID     string `json:"operation_id"`
-	DependencyClass string `json:"dependency_class"`
+	Level      string `json:"level"`
+	SubjectRef string `json:"subject_ref"`
+	DetailID   string `json:"detail_id,omitempty"`
 }
 
 type HealthCorrelationEvidence struct {
 	State              string `json:"state"`
-	RuleID             string `json:"rule_id"`
-	RuleVersion        int    `json:"rule_version"`
-	ProbePolicyKey     string `json:"probe_policy_key"`
-	ProbePolicyVersion int    `json:"probe_policy_version"`
-	AffectedCount      int    `json:"affected_count"`
-	ControlCount       int    `json:"control_count"`
+	ProbePolicyVersion string `json:"probe_policy_version"`
 }
 
 type CorrelationEvidenceTiming struct {
-	ObservedAt               time.Time `json:"observed_at"`
-	AssessedAt               time.Time `json:"assessed_at"`
-	WindowSeconds            int       `json:"window_seconds"`
-	RemainingValiditySeconds int       `json:"remaining_validity_seconds"`
+	Basis                    string `json:"basis"`
+	ObservedAgeSeconds       int    `json:"observed_age_seconds"`
+	Validity                 string `json:"validity"`
+	ValidityPolicyVersion    string `json:"validity_policy_version"`
+	RemainingValiditySeconds int    `json:"remaining_validity_seconds"`
+}
+
+type CorrelationHealthEvidenceBinding struct {
+	OperationID             string `json:"operation_id"`
+	DatasetID               string `json:"dataset_id"`
+	DependencyClass         string `json:"dependency_class"`
+	ImmutableObservationRef string `json:"immutable_observation_ref"`
+	EvidenceRefID           string `json:"evidence_ref_id"`
 }
 
 type NoticeEvidence struct {
@@ -200,17 +205,30 @@ func LoadCorrelationRule(path string) (CorrelationRule, error) {
 	if err := decodeStrict(bytes.NewReader(raw), &rule); err != nil {
 		return CorrelationRule{}, errors.New("invalid correlation rule")
 	}
-	if rule.SchemaVersion != CorrelationRuleSchemaVersion || rule.RuleID != AcceptedCorrelationRuleID || rule.Version != 1 || rule.Provider != "data.go.kr" || rule.RegistryRevision != AcceptedDiagnosticRegistryRevision || rule.CatalogSHA256 != AcceptedHealthProbeCatalogSHA256 {
-		return CorrelationRule{}, errors.New("unsupported correlation rule identity")
-	}
-	if rule.WindowSeconds < 60 || rule.WindowSeconds > 900 || rule.FutureSkewSeconds < 0 || rule.FutureSkewSeconds > 30 || rule.NoticeMaxAgeSeconds < rule.WindowSeconds || rule.NoticeMaxAgeSeconds > 86400 || rule.MinimumAffectedOperations < 2 || rule.MinimumControlOperations < 1 {
-		return CorrelationRule{}, errors.New("unsafe correlation rule bounds")
-	}
-	if !exactStrings(rule.AffectedCategories, []string{"provider_failure", "timeout", "transport_failure"}) || !exactStrings(rule.ControlCategories, []string{"healthy"}) || !exactStrings(rule.NoticeAuthorities, []string{"provider", "provider_portal"}) || !exactStrings(rule.NoticeHosts, []string{"data.go.kr", "www.data.go.kr"}) {
-		return CorrelationRule{}, errors.New("unsupported correlation rule semantics")
-	}
 	rule.SHA256 = digest(raw)
+	if !validAcceptedCorrelationRule(rule) {
+		return CorrelationRule{}, errors.New("unsupported correlation rule")
+	}
 	return rule, nil
+}
+
+func validAcceptedCorrelationRule(rule CorrelationRule) bool {
+	return rule.SchemaVersion == CorrelationRuleSchemaVersion &&
+		rule.RuleID == AcceptedCorrelationRuleID &&
+		rule.Version == 1 &&
+		rule.Provider == "data.go.kr" &&
+		rule.RegistryRevision == AcceptedDiagnosticRegistryRevision &&
+		rule.CatalogSHA256 == AcceptedHealthProbeCatalogSHA256 &&
+		rule.SHA256 == AcceptedCorrelationRuleSHA256 &&
+		rule.WindowSeconds == 900 &&
+		rule.FutureSkewSeconds == 30 &&
+		rule.NoticeMaxAgeSeconds == 86400 &&
+		rule.MinimumAffectedOperations == 2 &&
+		rule.MinimumControlOperations == 1 &&
+		exactStrings(rule.AffectedCategories, []string{"provider_failure", "timeout", "transport_failure"}) &&
+		exactStrings(rule.ControlCategories, []string{"healthy"}) &&
+		exactStrings(rule.NoticeAuthorities, []string{"provider", "provider_portal"}) &&
+		exactStrings(rule.NoticeHosts, []string{"data.go.kr", "www.data.go.kr"})
 }
 
 func DecodeCorrelationReplay(r io.Reader) (CorrelationReplay, error) {
@@ -222,14 +240,19 @@ func DecodeCorrelationReplay(r io.Reader) (CorrelationReplay, error) {
 	if err := decodeStrict(bytes.NewReader(data), &replay); err != nil {
 		return CorrelationReplay{}, errors.New("invalid correlation replay")
 	}
-	if replay.SchemaVersion != CorrelationReplaySchemaVersion || replay.AssessedAt.IsZero() || replay.Scope.Provider != "data.go.kr" || !dependencyClassPattern.MatchString(replay.Scope.DependencyClass) || !credentialScopePattern.MatchString(replay.Scope.CredentialScopeID) || len(replay.Observations) > 1000 || len(replay.ProviderNotices) > 100 {
+	if replay.SchemaVersion != CorrelationReplaySchemaVersion || replay.AssessedAt.IsZero() || replay.Scope.Provider != "data.go.kr" || !dependencyClassPattern.MatchString(replay.Scope.DependencyClass) || replay.Scope.CanaryScopeAlias != AcceptedCanaryScopeAlias || len(replay.Observations) > 1000 || len(replay.ProviderNotices) > 100 {
 		return CorrelationReplay{}, errors.New("invalid correlation replay identity")
+	}
+	for _, observation := range replay.Observations {
+		if observation.CanaryScopeAlias != AcceptedCanaryScopeAlias {
+			return CorrelationReplay{}, errors.New("invalid correlation replay canary scope")
+		}
 	}
 	return replay, nil
 }
 
 func CorrelateProviderOutage(rule CorrelationRule, canaries CanaryConfig, replay CorrelationReplay) (CorrelationReceipt, error) {
-	if rule.SHA256 == "" || rule.CatalogSHA256 != canaries.CatalogSHA256 || replay.SchemaVersion != CorrelationReplaySchemaVersion || replay.Scope.Provider != rule.Provider {
+	if !validAcceptedCorrelationRule(rule) || rule.CatalogSHA256 != canaries.CatalogSHA256 || replay.SchemaVersion != CorrelationReplaySchemaVersion || replay.Scope.Provider != rule.Provider || replay.Scope.CanaryScopeAlias != AcceptedCanaryScopeAlias {
 		return CorrelationReceipt{}, errors.New("correlation inputs are not bound to the accepted rule")
 	}
 	entries := make(map[string]CatalogEntry, len(canaries.Canaries))
@@ -255,7 +278,7 @@ func CorrelateProviderOutage(rule CorrelationRule, canaries CanaryConfig, replay
 		if !eligible {
 			continue
 		}
-		if observation.DependencyClass != replay.Scope.DependencyClass || observation.CredentialScopeID != replay.Scope.CredentialScopeID {
+		if observation.DependencyClass != replay.Scope.DependencyClass || observation.CanaryScopeAlias != replay.Scope.CanaryScopeAlias {
 			continue
 		}
 		current, exists := latest[observation.OperationID]
@@ -285,6 +308,7 @@ func CorrelateProviderOutage(rule CorrelationRule, canaries CanaryConfig, replay
 		Result:           CorrelationResult{Cause: "unknown", Determination: "unknown", State: "insufficient_evidence", AffectedCount: len(affected), ControlCount: len(controls)},
 		AffectedEvidence: observationRefs(affected), ControlEvidence: observationRefs(controls),
 		HealthObservationEvidence: []CorrelationHealthEvidence{},
+		HealthObservationBindings: []CorrelationHealthEvidenceBinding{},
 		NoticeEvidence:            NoticeEvidence{ConsideredNoticeRefs: []string{}, SupersededNoticeRefs: []string{}},
 		Boundaries:                CorrelationBoundaries{AlertPolicy: "unchanged", PublicProjection: "unchanged", RuntimeMutation: "not_performed", Redaction: "minimized_refs_only"},
 	}
@@ -298,7 +322,7 @@ func CorrelateProviderOutage(rule CorrelationRule, canaries CanaryConfig, replay
 		return receipt, nil
 	}
 	receipt.Result = CorrelationResult{Cause: "provider_outage", Determination: "inferred", State: "degraded", AffectedCount: len(affected), ControlCount: len(controls)}
-	receipt.HealthObservationEvidence = buildHealthCorrelationEvidence(rule, replay, affected, controls)
+	receipt.HealthObservationEvidence, receipt.HealthObservationBindings = buildHealthCorrelationEvidence(rule, replay, affected, controls, entries)
 	for _, notice := range active {
 		if noticeCoversIncident(notice, replay.Scope.DependencyClass, affected) {
 			receipt.Result.Determination = "observed"
@@ -311,7 +335,7 @@ func CorrelateProviderOutage(rule CorrelationRule, canaries CanaryConfig, replay
 
 func validateCorrelationObservation(observation HealthObservation, replay CorrelationReplay, rule CorrelationRule, entries map[string]CatalogEntry) (bool, error) {
 	entry, exists := entries[observation.OperationID]
-	if observation.SchemaVersion != HealthObservationSchemaVersion || !exists || !immutableObservationRefPattern.MatchString(observation.ObservationRef) || observation.ObservedAt.IsZero() || observation.DependencyClass != entry.Endpoint.DependencyClass || observation.ProbePolicyKey != entry.Policy.Key || observation.ProbePolicyVersion != entry.Policy.Version || !credentialScopePattern.MatchString(observation.CredentialScopeID) {
+	if observation.SchemaVersion != HealthObservationSchemaVersion || !exists || !immutableObservationRefPattern.MatchString(observation.ObservationRef) || observation.ObservedAt.IsZero() || observation.DependencyClass != entry.Endpoint.DependencyClass || observation.ProbePolicyKey != entry.Policy.Key || observation.ProbePolicyVersion != entry.Policy.Version || observation.CanaryScopeAlias != AcceptedCanaryScopeAlias {
 		return false, errors.New("health observation is not bound to an exact accepted operation")
 	}
 	age := replay.AssessedAt.Sub(observation.ObservedAt)
@@ -440,8 +464,9 @@ func providerNoticeRef(notice ProviderNotice) string {
 	return fmt.Sprintf("provider-notice:%s:v%d:sha256:%s", notice.NoticeID, notice.Version, notice.ContentSHA256)
 }
 
-func buildHealthCorrelationEvidence(rule CorrelationRule, replay CorrelationReplay, affected, controls []HealthObservation) []CorrelationHealthEvidence {
+func buildHealthCorrelationEvidence(rule CorrelationRule, replay CorrelationReplay, affected, controls []HealthObservation, entries map[string]CatalogEntry) ([]CorrelationHealthEvidence, []CorrelationHealthEvidenceBinding) {
 	evidence := make([]CorrelationHealthEvidence, 0, len(affected))
+	bindings := make([]CorrelationHealthEvidenceBinding, 0, len(affected))
 	affectedRefs, controlRefs := observationRefs(affected), observationRefs(controls)
 	for _, observation := range affected {
 		identity, _ := json.Marshal(struct {
@@ -451,25 +476,30 @@ func buildHealthCorrelationEvidence(rule CorrelationRule, replay CorrelationRepl
 			OperationID string                      `json:"operation_id"`
 			Affected    []CorrelationObservationRef `json:"affected"`
 			Controls    []CorrelationObservationRef `json:"controls"`
-		}{rule.SHA256, replay.AssessedAt.UTC(), replay.Scope, observation.OperationID, affectedRefs, controlRefs})
+		}{RuleSHA256: rule.SHA256, AssessedAt: replay.AssessedAt.UTC(), Scope: replay.Scope, OperationID: observation.OperationID, Affected: affectedRefs, Controls: controlRefs})
 		age := int(replay.AssessedAt.Sub(observation.ObservedAt) / time.Second)
+		if age < 0 {
+			age = 0
+		}
 		remaining := rule.WindowSeconds - age
-		if remaining < 0 {
-			remaining = 0
+		if remaining < 1 {
+			remaining = 1
 		} else if remaining > rule.WindowSeconds {
 			remaining = rule.WindowSeconds
 		}
+		refID := "health:correlation:" + digest(identity)
+		version := fmt.Sprintf("%s.v%d", observation.ProbePolicyKey, observation.ProbePolicyVersion)
 		evidence = append(evidence, CorrelationHealthEvidence{
-			Kind: "health_observation", RefID: "health-correlation:sha256:" + digest(identity), Authority: "datapan_health",
-			Version:                 fmt.Sprintf("%s@v%d", rule.RuleID, rule.Version),
-			Scope:                   CorrelationEvidenceScope{Level: "operation", OperationID: observation.OperationID, DependencyClass: observation.DependencyClass},
-			HealthCorrelation:       HealthCorrelationEvidence{State: "degraded", RuleID: rule.RuleID, RuleVersion: rule.Version, ProbePolicyKey: observation.ProbePolicyKey, ProbePolicyVersion: observation.ProbePolicyVersion, AffectedCount: len(affected), ControlCount: len(controls)},
-			ImmutableObservationRef: observation.ObservationRef,
-			Supports:                []string{"cause", "determination", "ownership", "action"},
-			Timing:                  CorrelationEvidenceTiming{ObservedAt: observation.ObservedAt.UTC(), AssessedAt: replay.AssessedAt.UTC(), WindowSeconds: rule.WindowSeconds, RemainingValiditySeconds: remaining},
+			Kind: "health_observation", RefID: refID, Authority: "datapan_health", Version: rule.RuleID,
+			Scope:             CorrelationEvidenceScope{Level: "operation", SubjectRef: "envelope_subject", DetailID: "dependency:" + observation.DependencyClass},
+			HealthCorrelation: HealthCorrelationEvidence{State: "degraded", ProbePolicyVersion: version},
+			Supports:          []string{"cause", "determination", "ownership", "action"},
+			Timing:            CorrelationEvidenceTiming{Basis: "relative_to_assessed_at", ObservedAgeSeconds: age, Validity: "current_at_assessment", ValidityPolicyVersion: rule.RuleID, RemainingValiditySeconds: remaining},
 		})
+		entry := entries[observation.OperationID]
+		bindings = append(bindings, CorrelationHealthEvidenceBinding{OperationID: observation.OperationID, DatasetID: entry.Aliases.DatasetID, DependencyClass: observation.DependencyClass, ImmutableObservationRef: observation.ObservationRef, EvidenceRefID: refID})
 	}
-	return evidence
+	return evidence, bindings
 }
 
 func observationRefs(observations []HealthObservation) []CorrelationObservationRef {
