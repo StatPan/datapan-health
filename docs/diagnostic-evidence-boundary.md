@@ -55,7 +55,10 @@ The implementation evidence is in:
 - `internal/health/receipt.go`, `canary.go`, `gatus.go`, and `sink.go`;
 - `internal/health/health_test.go` redaction and public-projection tests;
 - `internal/archive/archive.go` and `archive_test.go`;
-- `config/canaries.json` and `config/gatus.yaml`.
+- `config/canaries.json` and `config/gatus.yaml`;
+- Registry commit `2ada3ddea5a497bf315999ea5e30e3474fc86a9b` paths
+  `drafts/diagnostic-envelope/datapan.diagnostic-envelope.v1.schema.json` and
+  `drafts/diagnostic-envelope/consumer-contract.v1.json`.
 
 The receipt is pinned to Datapan CLI PR #150 at commit
 `2fc8343993b7704b50f7d50fcba2642fca439c7f`. Updating it requires a reviewed
