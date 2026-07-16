@@ -18,6 +18,13 @@ scheduler health surface on `:8081` (`/live`, `/ready`, `/metrics`). The local
 profile deliberately has no Datapan CLI credential or provider executable, so
 it cannot call a real provider.
 
+`health-public` provides the separate versioned, browser-consumable JSON
+contract defined in [docs/public-status-api.md](docs/public-status-api.md).
+It maps the exact Registry operation identity to current Gatus availability,
+fails stale or unsupported evidence closed, and uses an explicit
+non-credentialed CORS allowlist. It is not routed or deployed by this
+repository.
+
 `make smoke`는 Gatus, ephemeral PostgreSQL, runner 이미지를 빌드하고 CLI 계약과 같은 형태의 합성 receipt 두 개를 push합니다. Gatus가 PostgreSQL table을 생성하고 healthy/unhealthy 상태를 기록했는지도 확인한 뒤 컨테이너를 정리합니다. 로컬 DB user/password는 개발 전용 비밀값이 아닌 `datapan_health` / `local-dev-only`입니다. 수동으로 화면을 유지하려면 다음을 실행합니다.
 
 ```sh
@@ -28,7 +35,7 @@ docker compose --profile fixtures run --rm runner-unhealthy
 
 ## Runtime images
 
-`runtime` is the minimal runner/scheduler image. `archive` is a separate
+`runtime` is the minimal runner/scheduler/public-status image. `archive` is a separate
 batch-only image containing `/health-archive` and the pinned `hf` CLI; it is
 the only image that may receive `HF_TOKEN` at runtime. Neither image contains
 a credential. `make image-smoke` builds both images and performs an offline

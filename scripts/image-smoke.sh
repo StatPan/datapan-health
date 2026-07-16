@@ -18,6 +18,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 docker run --rm --entrypoint /health-runner "$runtime_image" -h >/dev/null
+docker run --rm --entrypoint /health-public "$runtime_image" -h >/dev/null
 docker run --rm --entrypoint /health-archive "$archive_image" -h >/dev/null
 docker run --rm --entrypoint hf "$archive_image" --help >/dev/null
 
@@ -27,6 +28,7 @@ docker export "$runtime_container" > "$work/runtime.tar"
 docker rm "$runtime_container" >/dev/null
 tar -tf "$work/runtime.tar" | grep -qx 'health-runner'
 tar -tf "$work/runtime.tar" | grep -qx 'health-scheduler'
+tar -tf "$work/runtime.tar" | grep -qx 'health-public'
 if tar -tf "$work/runtime.tar" | grep -Eq '(^|/)health-archive$|(^|/)hf$'; then
   echo "archive publication tooling leaked into the live image" >&2
   exit 1

@@ -9,3 +9,10 @@
 - Local pinned copy SHA-256: `0ea4dc0cbcbd2387a47e098a362fcdd136591d45d6a4f8e51b52b1acb2cedf2b`
 
 Compatibility tests validate every accepted fixture with this copy and assert its digest. Update the copy and provenance together only after a reviewed CLI schema change.
+
+`datapan.health-public-status.v1.schema.json` is Health-owned. Issue #20 adds
+it as the default-deny public projection of the exact Registry/Health identity
+proof merged by PR #23. It is not copied from Gatus and intentionally excludes
+Gatus endpoint keys, dataset/provider/request detail, receipts, and diagnostic
+evidence payloads. Changes require browser/CORS/leak compatibility review and
+an explicit consumer upgrade; a new unknown version is not accepted as v1.
