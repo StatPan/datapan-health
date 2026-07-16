@@ -212,6 +212,13 @@ func TestDiagnosticCompatibilityReceiptBindsHeadContractsFixturesAndServices(t *
 	if len(receipt.Fixtures) != 11 || len(receipt.Bindings) != len(canaries.Canaries) || receipt.TestProof.Count != len(receipt.TestProof.Tests) || receipt.TestProof.Count < 10 || len(receipt.TestProof.Sources) != 2 || receipt.TestProof.Manifest.SHA256 != AcceptedDiagnosticTestManifestSHA256 {
 		t.Fatalf("receipt proof coverage is incomplete: fixtures=%d bindings=%d tests=%d sources=%d", len(receipt.Fixtures), len(receipt.Bindings), receipt.TestProof.Count, len(receipt.TestProof.Sources))
 	}
+	bindingBytes, err := json.Marshal(receipt.Bindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.BindingsSHA256 != digest(bindingBytes) {
+		t.Fatal("receipt does not bind the exact sorted operation/service mapping")
+	}
 	if receipt.Boundaries.ExistingHealthProbeV1 != "preserved" || receipt.Boundaries.GatusProjection != "unchanged_enum_only" || receipt.Boundaries.PublicAPI != "not_implemented" || receipt.Boundaries.Deployment != "not_performed" {
 		t.Fatalf("receipt crossed issue #19 boundaries: %#v", receipt.Boundaries)
 	}

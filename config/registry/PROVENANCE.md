@@ -32,7 +32,7 @@ schema, mapping, and consumer-packet SHA-256 values are respectively:
 
 `diagnostic-test-manifest.json` is a Health-owned, non-self-referential proof
 input with SHA-256
-`015a3160727a7bfdaa4cddc552c4dc377063e07e542fca15f47cb4acaee90dfa`.
+`274d394133eb90fe5553bb47947644d45f338ad2e193345e13759f7bb9e2619b`.
 It pins the exact compatibility test names and the source digests for
 `internal/health/diagnostic_test.go` and the preserved v1 compatibility test in
 `internal/health/health_test.go`. The receipt generator validates those bytes

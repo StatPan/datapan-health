@@ -3,7 +3,7 @@
   "sources": [
     {
       "path": "internal/health/diagnostic_test.go",
-      "sha256": "cde7ad9239aa47f7c8260afdb7ea982181df3ab85cc206931758e8d59bd0a826"
+      "sha256": "328612400e99fb8cf1989738eb073c809ae1f7b425a002ad7ddf75e4bead499f"
     },
     {
       "path": "internal/health/health_test.go",

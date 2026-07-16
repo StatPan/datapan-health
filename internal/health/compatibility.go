@@ -2,6 +2,7 @@ package health
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"sort"
 )
@@ -17,6 +18,7 @@ type DiagnosticCompatibilityReceipt struct {
 	Contracts        DiagnosticCompatibilityPins       `json:"contracts"`
 	Fixtures         []DiagnosticFixtureProof          `json:"fixtures"`
 	Bindings         []DiagnosticServiceBindingProof   `json:"bindings"`
+	BindingsSHA256   string                            `json:"bindings_sha256"`
 	TestProof        DiagnosticTestProof               `json:"test_proof"`
 	Boundaries       DiagnosticCompatibilityBoundaries `json:"boundaries"`
 }
@@ -108,6 +110,10 @@ func BuildDiagnosticCompatibilityReceipt(healthHead, testedRevision, repoRoot st
 		return DiagnosticCompatibilityReceipt{}, err
 	}
 	sort.Slice(bindings, func(i, j int) bool { return bindings[i].OperationID < bindings[j].OperationID })
+	bindingBytes, err := json.Marshal(bindings)
+	if err != nil {
+		return DiagnosticCompatibilityReceipt{}, errors.New("diagnostic service bindings cannot be encoded")
+	}
 
 	return DiagnosticCompatibilityReceipt{
 		SchemaVersion:    DiagnosticCompatibilityReceiptVersion,
@@ -118,6 +124,7 @@ func BuildDiagnosticCompatibilityReceipt(healthHead, testedRevision, repoRoot st
 		Contracts:        DiagnosticCompatibilityPins{Schema: contract.Schema, Mapping: contract.Mapping, Consumer: contract.Consumer},
 		Fixtures:         fixtures,
 		Bindings:         bindings,
+		BindingsSHA256:   digest(bindingBytes),
 		TestProof:        testProof,
 		Boundaries: DiagnosticCompatibilityBoundaries{
 			ExistingHealthProbeV1: "preserved",
