@@ -1,0 +1,106 @@
+{
+  "schema_version": "datapan.diagnostic-envelope.v1",
+  "assessed_at": "2026-07-16T00:35:00Z",
+  "fixture": {
+    "status": "deterministic_example",
+    "scenario_id": "semantic-quality",
+    "snapshot_at": "2026-07-16T00:35:00Z"
+  },
+  "subject": {
+    "source_id": "data_go_kr",
+    "dataset_id": "fixture-dataset-quality",
+    "operation_id": "fixture-operation-quality",
+    "provider_id": "data_go_kr"
+  },
+  "cause": {
+    "code": "semantic_quality",
+    "determination": "inferred",
+    "layer": "data_quality",
+    "explanation_id": "diagnosis.semantic_quality"
+  },
+  "ownership": {
+    "accountable_party": "provider"
+  },
+  "actions": {
+    "recommended": [
+      {
+        "action_id": "inspect_data_quality",
+        "actor": "user",
+        "rationale_id": "action.inspect_zero_or_missing_data"
+      }
+    ],
+    "avoid": [
+      {
+        "action_id": "treat_transport_success_as_data_success",
+        "actor": "user",
+        "rationale_id": "avoid.http-200_does_not_prove_semantic_quality"
+      }
+    ]
+  },
+  "evidence_refs": [
+    {
+      "kind": "provider_response",
+      "ref_id": "provider-response:http-200-empty",
+      "authority": "provider",
+      "scope": {
+        "level": "operation",
+        "subject_ref": "envelope_subject"
+      },
+      "version": "response-envelope-v1",
+      "response": {
+        "http_status": 200,
+        "provider_class": "success",
+        "policy_version": "response-envelope-v1"
+      },
+      "supports": [
+        "scope"
+      ],
+      "timing": {
+        "basis": "relative_to_assessed_at",
+        "observed_age_seconds": 0,
+        "validity": "current_at_assessment",
+        "validity_policy_version": "response-envelope-v1",
+        "remaining_validity_seconds": 300
+      }
+    },
+    {
+      "kind": "data_quality_assertion",
+      "ref_id": "quality:expected-entity-missing",
+      "authority": "consumer_validation",
+      "scope": {
+        "level": "data_quality",
+        "subject_ref": "envelope_subject",
+        "detail_id": "fixture-operation-quality:expected-entity"
+      },
+      "version": "quality-policy-v1",
+      "quality_assertion": {
+        "kind": "missing_expected_entity",
+        "result": "failed",
+        "policy_version": "quality-policy-v1"
+      },
+      "supports": [
+        "cause",
+        "determination",
+        "ownership",
+        "action"
+      ],
+      "timing": {
+        "basis": "relative_to_assessed_at",
+        "observed_age_seconds": 0,
+        "validity": "current_at_assessment",
+        "validity_policy_version": "quality-policy-v1",
+        "remaining_validity_seconds": 3600
+      }
+    }
+  ],
+  "redaction": {
+    "secret_values_present": false,
+    "secret_hashes_present": false,
+    "authorization_headers_present": false,
+    "credential_bearing_urls_present": false,
+    "raw_provider_text_present": false,
+    "raw_provider_urls_present": false,
+    "response_bodies_present": false,
+    "user_identity_present": false
+  }
+}

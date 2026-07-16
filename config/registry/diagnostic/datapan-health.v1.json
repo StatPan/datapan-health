@@ -1,0 +1,14 @@
+{
+  "schema_version": "datapan.diagnostic-consumer-compatibility.v1",
+  "status": "draft",
+  "consumer": "datapan-health",
+  "schema_contract": {"path": "drafts/diagnostic-envelope/datapan.diagnostic-envelope.v1.schema.json", "sha256": "da254b40947462347fcda90fdd7686b6632c76943b438f2046a28f079f33e403"},
+  "mapping_contract": {"path": "drafts/diagnostic-envelope/data-go-kr-evidence-mapping.v1.json", "sha256": "da55d52d2ee1f197969ac63a1d5ab5b98e3b88fd65f90d6a48800d2e3c522d33"},
+  "production_status": {"currently_proven": [], "required_after_dependencies": ["StatPan/datapan-health#19", "StatPan/datapan-health#20", "StatPan/datapan-health#21", "StatPan/datapan-health#22"]},
+  "producer_evidence": ["health_observation", "validation_result", "data_quality_assertion"],
+  "accepted_causes": ["approval_required", "approval_propagating", "credential_invalid", "invalid_input", "rate_limited", "provider_outage", "contract_drift", "semantic_quality", "stale_data", "ready", "unknown"],
+  "accepted_action_variants": ["approval_propagating:wait_for_approval_sync:avoid_reissue_credential", "provider_outage:health_or_notice:avoid_reissue_credential", "provider_outage:response_only:no_avoid_reissue_credential", "unknown:gather_more_evidence"],
+  "fixture_contracts": ["approval-required.json", "approval-propagating.json", "credential-invalid.json", "invalid-input.json", "rate-limited.json", "provider-outage.json", "contract-drift.json", "semantic-quality.json", "stale-data.json", "ready.json", "unknown.json"],
+  "operation_application_path": {"status": "dataset_application_entry_available", "route_kind": "dataset_application_entry", "direct_submission_url": false, "template": "https://www.data.go.kr/data/{dataset_id}/openapi.do", "subject_requirements": "data_go_kr_exact_numeric_registry_dataset", "generic_reference_rejected": "sources/data_go_kr.json#/references/key_request_url", "on_invalid_subject": "unknown_gather_more_evidence"},
+  "obligations": {"action": "exact_mapping_result", "scope": "exact_bound_subject", "timing": "current_positive_validity", "redaction": "envelope_redaction_contract", "unknown_fallback": "unknown_gather_more_evidence"}
+}

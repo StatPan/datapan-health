@@ -1,0 +1,27 @@
+{
+  "schema_version": "datapan.health-diagnostic-test-manifest.v1",
+  "sources": [
+    {
+      "path": "internal/health/diagnostic_test.go",
+      "sha256": "328612400e99fb8cf1989738eb073c809ae1f7b425a002ad7ddf75e4bead499f"
+    },
+    {
+      "path": "internal/health/health_test.go",
+      "sha256": "895fb5c3dd531dca8288d047e9029b26c01d7c1dba1027df5ce813dfa3c2a387"
+    }
+  ],
+  "tests": [
+    {"name": "TestAcceptedDiagnosticFixturesMatchExactRegistryContract", "source_path": "internal/health/diagnostic_test.go"},
+    {"name": "TestDiagnosticCauseCannotChangeGatusProjection", "source_path": "internal/health/diagnostic_test.go"},
+    {"name": "TestDiagnosticCompatibilityCLIRejectsNonBijectiveCanaryFiles", "source_path": "internal/health/diagnostic_test.go"},
+    {"name": "TestDiagnosticCompatibilityReceiptBindsHeadContractsFixturesAndServices", "source_path": "internal/health/diagnostic_test.go"},
+    {"name": "TestDiagnosticCompatibilityRejectsNonBijectiveOrIncompleteServiceMap", "source_path": "internal/health/diagnostic_test.go"},
+    {"name": "TestDiagnosticDecoderFailsClosedForUnknownVersionEnumAndExtraField", "source_path": "internal/health/diagnostic_test.go"},
+    {"name": "TestDiagnosticPinRejectsRevisionAndArtifactDrift", "source_path": "internal/health/diagnostic_test.go"},
+    {"name": "TestDiagnosticProducerBoundaryRejectsEveryRedactionLeakClass", "source_path": "internal/health/diagnostic_test.go"},
+    {"name": "TestDiagnosticSubjectBindsExactlyOnceToConfiguredService", "source_path": "internal/health/diagnostic_test.go"},
+    {"name": "TestDiagnosticSubjectRejectsUnknownCrossOperationDuplicateAndStaleRevision", "source_path": "internal/health/diagnostic_test.go"},
+    {"name": "TestDiagnosticTestManifestRejectsSourceDriftAndReceiptIsReproducible", "source_path": "internal/health/diagnostic_test.go"},
+    {"name": "TestPinnedSchemaAndCLIStyleFixturesAreCompatible", "source_path": "internal/health/health_test.go"}
+  ]
+}

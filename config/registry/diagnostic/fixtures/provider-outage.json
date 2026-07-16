@@ -1,0 +1,131 @@
+{
+  "schema_version": "datapan.diagnostic-envelope.v1",
+  "assessed_at": "2026-07-16T00:25:00Z",
+  "fixture": {
+    "status": "deterministic_example",
+    "scenario_id": "provider-outage",
+    "snapshot_at": "2026-07-16T00:25:00Z"
+  },
+  "subject": {
+    "source_id": "data_go_kr",
+    "dataset_id": "fixture-dataset-outage",
+    "operation_id": "fixture-operation-outage",
+    "provider_id": "data_go_kr"
+  },
+  "cause": {
+    "code": "provider_outage",
+    "determination": "inferred",
+    "layer": "provider",
+    "explanation_id": "diagnosis.provider_outage"
+  },
+  "ownership": {
+    "accountable_party": "provider",
+    "support_reference_id": "provider:service-operator"
+  },
+  "actions": {
+    "recommended": [
+      {
+        "action_id": "check_provider_status",
+        "actor": "user",
+        "rationale_id": "action.check_provider_status"
+      }
+    ],
+    "avoid": [
+      {
+        "action_id": "reissue_credential",
+        "actor": "user",
+        "rationale_id": "avoid.outage_not_fixed_by_key"
+      }
+    ]
+  },
+  "evidence_refs": [
+    {
+      "kind": "provider_response",
+      "ref_id": "provider-response:http-401",
+      "authority": "provider",
+      "scope": {
+        "level": "operation",
+        "subject_ref": "envelope_subject"
+      },
+      "version": "error-taxonomy-v1",
+      "response": {
+        "http_status": 401,
+        "provider_class": "unclassified",
+        "policy_version": "error-taxonomy-v1"
+      },
+      "supports": [
+        "scope"
+      ],
+      "timing": {
+        "basis": "relative_to_assessed_at",
+        "observed_age_seconds": 0,
+        "validity": "current_at_assessment",
+        "validity_policy_version": "error-taxonomy-v1",
+        "remaining_validity_seconds": 300
+      }
+    },
+    {
+      "kind": "health_observation",
+      "ref_id": "health:fixture-operation-outage:unavailable",
+      "authority": "datapan_health",
+      "scope": {
+        "level": "operation",
+        "subject_ref": "envelope_subject"
+      },
+      "version": "health-probe-v1",
+      "health_correlation": {
+        "state": "unavailable",
+        "probe_policy_version": "health-probe-v1"
+      },
+      "supports": [
+        "cause",
+        "determination",
+        "ownership",
+        "action"
+      ],
+      "timing": {
+        "basis": "relative_to_assessed_at",
+        "observed_age_seconds": 60,
+        "validity": "current_at_assessment",
+        "validity_policy_version": "health-probe-v1",
+        "remaining_validity_seconds": 900
+      }
+    },
+    {
+      "kind": "provider_notice",
+      "ref_id": "provider-notice:fixture-service-suspension",
+      "authority": "provider",
+      "scope": {
+        "level": "operation",
+        "subject_ref": "envelope_subject"
+      },
+      "version": "notice-snapshot-v1",
+      "notice": {
+        "state": "service_suspended",
+        "notice_version": "notice-snapshot-v1"
+      },
+      "supports": [
+        "cause",
+        "determination",
+        "ownership"
+      ],
+      "timing": {
+        "basis": "relative_to_assessed_at",
+        "observed_age_seconds": 120,
+        "validity": "current_at_assessment",
+        "validity_policy_version": "notice-snapshot-v1",
+        "remaining_validity_seconds": 86400
+      }
+    }
+  ],
+  "redaction": {
+    "secret_values_present": false,
+    "secret_hashes_present": false,
+    "authorization_headers_present": false,
+    "credential_bearing_urls_present": false,
+    "raw_provider_text_present": false,
+    "raw_provider_urls_present": false,
+    "response_bodies_present": false,
+    "user_identity_present": false
+  }
+}

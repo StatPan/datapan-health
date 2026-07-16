@@ -1,0 +1,75 @@
+{
+  "schema_version": "datapan.diagnostic-envelope.v1",
+  "assessed_at": "2026-07-16T00:45:00Z",
+  "fixture": {
+    "status": "deterministic_example",
+    "scenario_id": "ready",
+    "snapshot_at": "2026-07-16T00:45:00Z"
+  },
+  "subject": {
+    "source_id": "data_go_kr",
+    "dataset_id": "fixture-dataset-ready",
+    "operation_id": "fixture-operation-ready",
+    "provider_id": "data_go_kr"
+  },
+  "cause": {
+    "code": "ready",
+    "determination": "observed",
+    "layer": "validation",
+    "explanation_id": "diagnosis.ready"
+  },
+  "ownership": {
+    "accountable_party": "shared"
+  },
+  "actions": {
+    "recommended": [
+      {
+        "action_id": "continue_to_reuse",
+        "actor": "user",
+        "rationale_id": "action.continue_to_reuse"
+      }
+    ],
+    "avoid": []
+  },
+  "evidence_refs": [
+    {
+      "kind": "validation_result",
+      "ref_id": "validation:fixture-operation-ready:l3-passed",
+      "authority": "datapan_cli",
+      "scope": {
+        "level": "operation",
+        "subject_ref": "envelope_subject"
+      },
+      "version": "health-probe-v1",
+      "validation": {
+        "required_level": "L3",
+        "achieved_level": "L3",
+        "policy_version": "registry-operation-policy-v1",
+        "result": "passed"
+      },
+      "supports": [
+        "cause",
+        "scope",
+        "determination",
+        "action"
+      ],
+      "timing": {
+        "basis": "relative_to_assessed_at",
+        "observed_age_seconds": 0,
+        "validity": "current_at_assessment",
+        "validity_policy_version": "health-probe-v1",
+        "remaining_validity_seconds": 3600
+      }
+    }
+  ],
+  "redaction": {
+    "secret_values_present": false,
+    "secret_hashes_present": false,
+    "authorization_headers_present": false,
+    "credential_bearing_urls_present": false,
+    "raw_provider_text_present": false,
+    "raw_provider_urls_present": false,
+    "response_bodies_present": false,
+    "user_identity_present": false
+  }
+}
