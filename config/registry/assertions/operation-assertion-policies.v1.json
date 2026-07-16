@@ -1,0 +1,600 @@
+{
+  "schema_version": "datapan.operation-assertion-policies.v1",
+  "policy_set": {
+    "id": "datapan-health-canary-assertions",
+    "version": 1,
+    "supersedes": null
+  },
+  "generated_at": "2026-07-14T10:05:00Z",
+  "authority": "datapan-registry",
+  "diagnostic_vocabulary": {
+    "schema_version": "datapan.diagnostic-cause-action-vocabulary.v1",
+    "path": "policy/diagnostic-cause-action-vocabulary.v1.json",
+    "sha256": "aa03c42960a59725b829b934ad07548dacb8f149c7a920a35a9e32c0459b49fc"
+  },
+  "bindings": {
+    "registry": {
+      "path": "data/data-go-kr.registry.json",
+      "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644"
+    },
+    "health_probe_catalog": {
+      "path": "reports/health-probe-catalog.json",
+      "sha256": "e84f0da2f532a32833def1118a4610bf2322f370783d120b84cf85306d244840"
+    }
+  },
+  "artifact_sha256": "d9b39f40e2068180cf46ebf8eca2037aeff19523b76f648bb06666758ed8c1d3",
+  "operations": [
+    {
+      "operation_id": "dpr-op-00000001",
+      "operation_revision_sha256": "3ef6296cd2e2c0d568523f0474f8806cd607b8b6e4fd605ef491af78700793a4",
+      "dimensions": {
+        "transport": {
+          "state": "not_asserted",
+          "reason_code": "provider_transport_expectation_not_reviewed",
+          "evidence": null
+        },
+        "contract": {
+          "state": "asserted",
+          "assertion_type": "declared_response_field_vocabulary",
+          "projection_input": "normalized_leaf_field_names",
+          "declared_response_fields": [
+            "dutyAddr",
+            "dutyDay1",
+            "dutyDay10",
+            "dutyDay2",
+            "dutyDay3",
+            "dutyDay4",
+            "dutyDay5",
+            "dutyDay6",
+            "dutyDay7",
+            "dutyDay8",
+            "dutyDay9",
+            "dutyDayEtc",
+            "dutyDaytime1",
+            "dutyDaytime10",
+            "dutyDaytime2",
+            "dutyDaytime3",
+            "dutyDaytime4",
+            "dutyDaytime5",
+            "dutyDaytime6",
+            "dutyDaytime7",
+            "dutyDaytime8",
+            "dutyDaytime9",
+            "dutyDiv",
+            "dutyDivNam",
+            "dutyName",
+            "dutyTel1",
+            "hpid",
+            "numOfRows",
+            "pageNo",
+            "resultCode",
+            "resultMsg",
+            "rnum",
+            "totalCount"
+          ],
+          "unknown_field_policy": "fail",
+          "empty_payload_policy": "not_observed",
+          "evidence": {
+            "kind": "registry_operation_contract",
+            "rationale_code": "registry_declares_normalized_response_field_vocabulary",
+            "path": "data/data-go-kr.registry.json",
+            "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+            "selector": {
+              "dataset_id": "15000480",
+              "operation_name": "명절 비상진료기관 FullData 내려받기목록정보 조회",
+              "upstream_operation_seq": "17442"
+            }
+          }
+        },
+        "presence": {
+          "state": "not_asserted",
+          "reason_code": "record_presence_expectation_not_reviewed",
+          "evidence": null
+        },
+        "semantic": {
+          "state": "not_asserted",
+          "reason_code": "domain_semantics_not_reviewed",
+          "evidence": null
+        },
+        "freshness": {
+          "state": "not_asserted",
+          "reason_code": "upstream_timestamp_contract_not_reviewed",
+          "evidence": null
+        }
+      }
+    },
+    {
+      "operation_id": "dpr-op-00000002",
+      "operation_revision_sha256": "d29c2d35cc18133ff57b038e9b884ea937b70e4728abab6b60a0aa08843cc64e",
+      "dimensions": {
+        "transport": {
+          "state": "not_asserted",
+          "reason_code": "provider_transport_expectation_not_reviewed",
+          "evidence": null
+        },
+        "contract": {
+          "state": "asserted",
+          "assertion_type": "declared_response_field_vocabulary",
+          "projection_input": "normalized_leaf_field_names",
+          "declared_response_fields": [
+            "num",
+            "numOfRows",
+            "pageNo",
+            "resultCode",
+            "resultMsg",
+            "sgId",
+            "sgName",
+            "sgTypecode",
+            "sgVotedate",
+            "totalCount"
+          ],
+          "unknown_field_policy": "fail",
+          "empty_payload_policy": "not_observed",
+          "evidence": {
+            "kind": "registry_operation_contract",
+            "rationale_code": "registry_declares_normalized_response_field_vocabulary",
+            "path": "data/data-go-kr.registry.json",
+            "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+            "selector": {
+              "dataset_id": "15000897",
+              "operation_name": "선거코드",
+              "upstream_operation_seq": "20139"
+            }
+          }
+        },
+        "presence": {
+          "state": "not_asserted",
+          "reason_code": "record_presence_expectation_not_reviewed",
+          "evidence": null
+        },
+        "semantic": {
+          "state": "not_asserted",
+          "reason_code": "domain_semantics_not_reviewed",
+          "evidence": null
+        },
+        "freshness": {
+          "state": "not_asserted",
+          "reason_code": "upstream_timestamp_contract_not_reviewed",
+          "evidence": null
+        }
+      }
+    },
+    {
+      "operation_id": "dpr-op-00000003",
+      "operation_revision_sha256": "52bd065f6864415ffd3285047f228e28535d50cf2ece3b4a0ed7ee4793979856",
+      "dimensions": {
+        "transport": {
+          "state": "not_asserted",
+          "reason_code": "provider_transport_expectation_not_reviewed",
+          "evidence": null
+        },
+        "contract": {
+          "state": "asserted",
+          "assertion_type": "declared_response_field_vocabulary",
+          "projection_input": "normalized_leaf_field_names",
+          "declared_response_fields": [
+            "clCd",
+            "clCdNm",
+            "numOfRows",
+            "pageNo",
+            "resultCode",
+            "resultMsg",
+            "totalCount"
+          ],
+          "unknown_field_policy": "fail",
+          "empty_payload_policy": "not_observed",
+          "evidence": {
+            "kind": "registry_operation_contract",
+            "rationale_code": "registry_declares_normalized_response_field_vocabulary",
+            "path": "data/data-go-kr.registry.json",
+            "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+            "selector": {
+              "dataset_id": "15001697",
+              "operation_name": "의료기관종별코드조회",
+              "upstream_operation_seq": "24807"
+            }
+          }
+        },
+        "presence": {
+          "state": "not_asserted",
+          "reason_code": "record_presence_expectation_not_reviewed",
+          "evidence": null
+        },
+        "semantic": {
+          "state": "not_asserted",
+          "reason_code": "domain_semantics_not_reviewed",
+          "evidence": null
+        },
+        "freshness": {
+          "state": "not_asserted",
+          "reason_code": "upstream_timestamp_contract_not_reviewed",
+          "evidence": null
+        }
+      }
+    },
+    {
+      "operation_id": "dpr-op-00000004",
+      "operation_revision_sha256": "94cce505893000df96770be74f71b7f20738641aa83a845340f00daa3c811a47",
+      "dimensions": {
+        "transport": {
+          "state": "not_asserted",
+          "reason_code": "provider_transport_expectation_not_reviewed",
+          "evidence": null
+        },
+        "contract": {
+          "state": "asserted",
+          "assertion_type": "declared_response_field_vocabulary",
+          "projection_input": "normalized_leaf_field_names",
+          "declared_response_fields": [
+            "estbDe",
+            "fcltNm",
+            "homepageAddr",
+            "numOfRows",
+            "pageNo",
+            "resultCode",
+            "resultMsg",
+            "rprsNm",
+            "sggNm",
+            "sidoNm",
+            "svcCd",
+            "svcNm",
+            "totalCount"
+          ],
+          "unknown_field_policy": "fail",
+          "empty_payload_policy": "not_observed",
+          "evidence": {
+            "kind": "registry_operation_contract",
+            "rationale_code": "registry_declares_normalized_response_field_vocabulary",
+            "path": "data/data-go-kr.registry.json",
+            "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+            "selector": {
+              "dataset_id": "15001839",
+              "operation_name": "민간 자원별 제공서비스 정보 조회",
+              "upstream_operation_seq": "26193"
+            }
+          }
+        },
+        "presence": {
+          "state": "not_asserted",
+          "reason_code": "record_presence_expectation_not_reviewed",
+          "evidence": null
+        },
+        "semantic": {
+          "state": "not_asserted",
+          "reason_code": "domain_semantics_not_reviewed",
+          "evidence": null
+        },
+        "freshness": {
+          "state": "not_asserted",
+          "reason_code": "upstream_timestamp_contract_not_reviewed",
+          "evidence": null
+        }
+      }
+    },
+    {
+      "operation_id": "dpr-op-00000005",
+      "operation_revision_sha256": "358c3262914382daa5a9757c58e16b1cf710590c33187058e903216b874984d1",
+      "dimensions": {
+        "transport": {
+          "state": "not_asserted",
+          "reason_code": "provider_transport_expectation_not_reviewed",
+          "evidence": null
+        },
+        "contract": {
+          "state": "asserted",
+          "assertion_type": "declared_response_field_vocabulary",
+          "projection_input": "normalized_leaf_field_names",
+          "declared_response_fields": [
+            "body",
+            "header"
+          ],
+          "unknown_field_policy": "fail",
+          "empty_payload_policy": "not_observed",
+          "evidence": {
+            "kind": "registry_operation_contract",
+            "rationale_code": "registry_declares_normalized_response_field_vocabulary",
+            "path": "data/data-go-kr.registry.json",
+            "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+            "selector": {
+              "dataset_id": "15000863",
+              "operation_name": "문화시설 식당 상세 정보를 조회",
+              "upstream_operation_seq": "51077"
+            }
+          }
+        },
+        "presence": {
+          "state": "not_asserted",
+          "reason_code": "record_presence_expectation_not_reviewed",
+          "evidence": null
+        },
+        "semantic": {
+          "state": "not_asserted",
+          "reason_code": "domain_semantics_not_reviewed",
+          "evidence": null
+        },
+        "freshness": {
+          "state": "not_asserted",
+          "reason_code": "upstream_timestamp_contract_not_reviewed",
+          "evidence": null
+        }
+      }
+    },
+    {
+      "operation_id": "dpr-op-00000006",
+      "operation_revision_sha256": "26700302f8fa3482158b9bbcc93c00e34170df46f8bc4b77d3167df4d77ee337",
+      "dimensions": {
+        "transport": {
+          "state": "not_asserted",
+          "reason_code": "provider_transport_expectation_not_reviewed",
+          "evidence": null
+        },
+        "contract": {
+          "state": "asserted",
+          "assertion_type": "declared_response_field_vocabulary",
+          "projection_input": "normalized_leaf_field_names",
+          "declared_response_fields": [
+            "gradename",
+            "statisyy1",
+            "statisyy2",
+            "statisyy3",
+            "statisyy4",
+            "statisyy5",
+            "statisyy6"
+          ],
+          "unknown_field_policy": "fail",
+          "empty_payload_policy": "not_observed",
+          "evidence": {
+            "kind": "registry_operation_contract",
+            "rationale_code": "registry_declares_normalized_response_field_vocabulary",
+            "path": "data/data-go-kr.registry.json",
+            "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+            "selector": {
+              "dataset_id": "15025329",
+              "operation_name": "연도별 등급별 실기 합격률 조회",
+              "upstream_operation_seq": "18467"
+            }
+          }
+        },
+        "presence": {
+          "state": "not_asserted",
+          "reason_code": "record_presence_expectation_not_reviewed",
+          "evidence": null
+        },
+        "semantic": {
+          "state": "not_asserted",
+          "reason_code": "domain_semantics_not_reviewed",
+          "evidence": null
+        },
+        "freshness": {
+          "state": "not_asserted",
+          "reason_code": "upstream_timestamp_contract_not_reviewed",
+          "evidence": null
+        }
+      }
+    },
+    {
+      "operation_id": "dpr-op-00000007",
+      "operation_revision_sha256": "eebc2983a8b238e2550831c26fcd3f42817380bab1dde2ecec6783ddfc1c9e21",
+      "dimensions": {
+        "transport": {
+          "state": "not_asserted",
+          "reason_code": "provider_transport_expectation_not_reviewed",
+          "evidence": null
+        },
+        "contract": {
+          "state": "asserted",
+          "assertion_type": "declared_response_field_vocabulary",
+          "projection_input": "normalized_leaf_field_names",
+          "declared_response_fields": [
+            "envRadDate",
+            "envRadHumi",
+            "envRadRain",
+            "envRadTemp",
+            "envRadVan",
+            "envRadWind",
+            "items",
+            "resultCode",
+            "resultMsg"
+          ],
+          "unknown_field_policy": "fail",
+          "empty_payload_policy": "not_observed",
+          "evidence": {
+            "kind": "registry_operation_contract",
+            "rationale_code": "registry_declares_normalized_response_field_vocabulary",
+            "path": "data/data-go-kr.registry.json",
+            "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+            "selector": {
+              "dataset_id": "15004206",
+              "operation_name": "주변지역 기상정보 실시간 데이터 조회",
+              "upstream_operation_seq": "6836"
+            }
+          }
+        },
+        "presence": {
+          "state": "not_asserted",
+          "reason_code": "record_presence_expectation_not_reviewed",
+          "evidence": null
+        },
+        "semantic": {
+          "state": "not_asserted",
+          "reason_code": "domain_semantics_not_reviewed",
+          "evidence": null
+        },
+        "freshness": {
+          "state": "not_asserted",
+          "reason_code": "upstream_timestamp_contract_not_reviewed",
+          "evidence": null
+        }
+      }
+    },
+    {
+      "operation_id": "dpr-op-00000008",
+      "operation_revision_sha256": "17705e953c7f29dbde15221fdb4ef5f0d7f4ec73f3c749b770894421345380c7",
+      "dimensions": {
+        "transport": {
+          "state": "not_asserted",
+          "reason_code": "provider_transport_expectation_not_reviewed",
+          "evidence": null
+        },
+        "contract": {
+          "state": "asserted",
+          "assertion_type": "declared_response_field_vocabulary",
+          "projection_input": "normalized_leaf_field_names",
+          "declared_response_fields": [
+            "ADDRESS",
+            "CARDX",
+            "CARDY",
+            "NAME",
+            "RNUM",
+            "STORETYPE",
+            "list",
+            "numOfRows",
+            "pageNo",
+            "row",
+            "totalCnt"
+          ],
+          "unknown_field_policy": "fail",
+          "empty_payload_policy": "not_observed",
+          "evidence": {
+            "kind": "registry_operation_contract",
+            "rationale_code": "registry_declares_normalized_response_field_vocabulary",
+            "path": "data/data-go-kr.registry.json",
+            "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+            "selector": {
+              "dataset_id": "15052669",
+              "operation_name": "교통카드충전소정보 조회",
+              "upstream_operation_seq": "12894"
+            }
+          }
+        },
+        "presence": {
+          "state": "not_asserted",
+          "reason_code": "record_presence_expectation_not_reviewed",
+          "evidence": null
+        },
+        "semantic": {
+          "state": "not_asserted",
+          "reason_code": "domain_semantics_not_reviewed",
+          "evidence": null
+        },
+        "freshness": {
+          "state": "not_asserted",
+          "reason_code": "upstream_timestamp_contract_not_reviewed",
+          "evidence": null
+        }
+      }
+    },
+    {
+      "operation_id": "dpr-op-00000009",
+      "operation_revision_sha256": "afa85cdf55050d4a8aa9e662f4f46a689574ceac261d899136bd16370f377bf2",
+      "dimensions": {
+        "transport": {
+          "state": "not_asserted",
+          "reason_code": "provider_transport_expectation_not_reviewed",
+          "evidence": null
+        },
+        "contract": {
+          "state": "asserted",
+          "assertion_type": "declared_response_field_vocabulary",
+          "projection_input": "normalized_leaf_field_names",
+          "declared_response_fields": [
+            "building",
+            "cng",
+            "cnt",
+            "green",
+            "location",
+            "name",
+            "num",
+            "numOfRows",
+            "pageNo",
+            "parking",
+            "resultCode",
+            "resultMsg",
+            "tel",
+            "totalCount"
+          ],
+          "unknown_field_policy": "fail",
+          "empty_payload_policy": "not_observed",
+          "evidence": {
+            "kind": "registry_operation_contract",
+            "rationale_code": "registry_declares_normalized_response_field_vocabulary",
+            "path": "data/data-go-kr.registry.json",
+            "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+            "selector": {
+              "dataset_id": "15109030",
+              "operation_name": "버스 차고지 현황 정보",
+              "upstream_operation_seq": "47278"
+            }
+          }
+        },
+        "presence": {
+          "state": "not_asserted",
+          "reason_code": "record_presence_expectation_not_reviewed",
+          "evidence": null
+        },
+        "semantic": {
+          "state": "not_asserted",
+          "reason_code": "domain_semantics_not_reviewed",
+          "evidence": null
+        },
+        "freshness": {
+          "state": "not_asserted",
+          "reason_code": "upstream_timestamp_contract_not_reviewed",
+          "evidence": null
+        }
+      }
+    },
+    {
+      "operation_id": "dpr-op-00000010",
+      "operation_revision_sha256": "36f6e3980fcb02ad91cbc37f79b876a8b356bee3d942e29c75df8c98d85dac22",
+      "dimensions": {
+        "transport": {
+          "state": "not_asserted",
+          "reason_code": "provider_transport_expectation_not_reviewed",
+          "evidence": null
+        },
+        "contract": {
+          "state": "asserted",
+          "assertion_type": "declared_response_field_vocabulary",
+          "projection_input": "normalized_leaf_field_names",
+          "declared_response_fields": [
+            "numOfRows",
+            "pageNo",
+            "udeptcd",
+            "udeptnm",
+            "univcd",
+            "univnm"
+          ],
+          "unknown_field_policy": "fail",
+          "empty_payload_policy": "not_observed",
+          "evidence": {
+            "kind": "registry_operation_contract",
+            "rationale_code": "registry_declares_normalized_response_field_vocabulary",
+            "path": "data/data-go-kr.registry.json",
+            "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+            "selector": {
+              "dataset_id": "15029006",
+              "operation_name": "대학별 학과정보 조회",
+              "upstream_operation_seq": "22510"
+            }
+          }
+        },
+        "presence": {
+          "state": "not_asserted",
+          "reason_code": "record_presence_expectation_not_reviewed",
+          "evidence": null
+        },
+        "semantic": {
+          "state": "not_asserted",
+          "reason_code": "domain_semantics_not_reviewed",
+          "evidence": null
+        },
+        "freshness": {
+          "state": "not_asserted",
+          "reason_code": "upstream_timestamp_contract_not_reviewed",
+          "evidence": null
+        }
+      }
+    }
+  ]
+}
