@@ -1,0 +1,400 @@
+package health
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/StatPan/datapan-health/schemas"
+)
+
+func TestDiagnosisSnapshotCrossContractProviderOutageInferredAndObserved(t *testing.T) {
+	inputs := mustDiagnosisInputs(t)
+	for _, test := range []struct{ name, fixture, determination string }{{"inferred", "inferred.json", "inferred"}, {"observed", "observed-notice.json", "observed"}} {
+		t.Run(test.name, func(t *testing.T) {
+			replay := mustCorrelationReplay(t, test.fixture)
+			receipt, err := CorrelateProviderOutage(inputs.rule, inputs.canaries, replay)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot, proof, err := ProjectDiagnosisSnapshot(replay.AssessedAt, []CorrelationReceipt{receipt}, nil, inputs.canaries, inputs.diagnostic, inputs.assertion)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if proof.Counts.Accepted != 2 || proof.Boundaries.AvailabilityV1 != "unchanged" || proof.Boundaries.ArchiveV1 != "unchanged" {
+				t.Fatalf("proof=%#v", proof)
+			}
+			for _, id := range []string{"dpr-op-00000001", "dpr-op-00000002"} {
+				entry := diagnosisEntryByID(t, snapshot, id)
+				if entry.Diagnosis.Code != "provider_outage" || entry.Diagnosis.Determination != test.determination || entry.Diagnosis.AccountableParty != "provider" || entry.Correlation == nil || entry.Correlation.NoticeLinked != (test.determination == "observed") || entry.Source == nil || entry.Source.SHA256 == "" {
+					t.Fatalf("entry=%#v", entry)
+				}
+			}
+			encoded, _ := json.Marshal(snapshot)
+			for _, forbidden := range []string{"observation_ref", "dataset_id", "provider-notice:", "source_ref", "http_status", "response_body", "credential_hash", "credential_fingerprint"} {
+				if strings.Contains(string(encoded), forbidden) {
+					t.Fatalf("snapshot leaked %q", forbidden)
+				}
+			}
+		})
+	}
+}
+
+func TestDiagnosisSnapshotCrossContractAssertionFailPassAndNotObserved(t *testing.T) {
+	inputs := mustDiagnosisInputs(t)
+	now := time.Date(2026, 7, 17, 0, 15, 0, 0, time.UTC)
+	fail := assertionEvaluationFor(t, inputs.assertion, "dpr-op-00000001", "contract", []string{"__undeclared_field__"})
+	pass := assertionEvaluationFor(t, inputs.assertion, "dpr-op-00000002", "contract", []string{inputs.assertion.policyByOperation["dpr-op-00000002"].Dimensions.Contract.DeclaredResponseFields[0]})
+	notObserved := assertionEvaluationFor(t, inputs.assertion, "dpr-op-00000003", "semantic", nil)
+	snapshot, proof, err := ProjectDiagnosisSnapshot(now, []CorrelationReceipt{}, []AssessedAssertionEvaluation{{AssessedAt: now, Evaluation: fail}, {AssessedAt: now, Evaluation: pass}, {AssessedAt: now, Evaluation: notObserved}}, inputs.canaries, inputs.diagnostic, inputs.assertion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := diagnosisEntryByID(t, snapshot, "dpr-op-00000001")
+	if failed.Diagnosis.Code != "contract_drift" || failed.Diagnosis.Determination != "inferred" || failed.Assertion == nil || failed.Assertion.Outcome != "fail" {
+		t.Fatalf("fail=%#v", failed)
+	}
+	passed := diagnosisEntryByID(t, snapshot, "dpr-op-00000002")
+	if passed.EvidenceState != "accepted" || passed.Diagnosis.Code != "unknown" || passed.Assertion.Outcome != "pass" {
+		t.Fatalf("pass=%#v", passed)
+	}
+	semantic := diagnosisEntryByID(t, snapshot, "dpr-op-00000003")
+	if semantic.EvidenceState != "not_observed" || semantic.Diagnosis.Code != "unknown" || semantic.Assertion.Outcome != "not_observed" {
+		t.Fatalf("semantic=%#v", semantic)
+	}
+	if proof.Counts.Accepted != 2 || proof.Counts.NotObserved != 1 || proof.Counts.Unknown != 7 {
+		t.Fatalf("counts=%#v", proof.Counts)
+	}
+}
+
+func TestDiagnosisSnapshotHTTPOnlyEvidenceRemainsUnknown(t *testing.T) {
+	inputs := mustDiagnosisInputs(t)
+	replay := mustCorrelationReplay(t, "single-timeout.json")
+	receipt, err := CorrelateProviderOutage(inputs.rule, inputs.canaries, replay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, proof, err := ProjectDiagnosisSnapshot(replay.AssessedAt, []CorrelationReceipt{receipt}, nil, inputs.canaries, inputs.diagnostic, inputs.assertion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := diagnosisEntryByID(t, snapshot, replay.Observations[0].OperationID)
+	if entry.EvidenceState != "unknown" || entry.Diagnosis.Code != "unknown" || proof.Counts.Accepted != 0 || proof.Counts.Rejected != 0 {
+		t.Fatalf("HTTP-only evidence was promoted: %#v %#v", entry, proof.Counts)
+	}
+}
+
+func TestDiagnosisSnapshotProjectorRejectsRuleNoticePolicyIdentityAndConflicts(t *testing.T) {
+	inputs := mustDiagnosisInputs(t)
+	replay := mustCorrelationReplay(t, "observed-notice.json")
+	base, err := CorrelateProviderOutage(inputs.rule, inputs.canaries, replay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	correlationCases := map[string]func(*CorrelationReceipt){
+		"rule digest":           func(receipt *CorrelationReceipt) { receipt.Rule.SHA256 = strings.Repeat("f", 64) },
+		"notice not considered": func(receipt *CorrelationReceipt) { receipt.NoticeEvidence.ConsideredNoticeRefs = []string{} },
+		"binding operation": func(receipt *CorrelationReceipt) {
+			receipt.HealthObservationBindings[0].OperationID = "dpr-op-00000003"
+		},
+	}
+	for name, mutate := range correlationCases {
+		t.Run(name, func(t *testing.T) {
+			raw, _ := json.Marshal(base)
+			var receipt CorrelationReceipt
+			_ = json.Unmarshal(raw, &receipt)
+			mutate(&receipt)
+			snapshot, _, err := ProjectDiagnosisSnapshot(replay.AssessedAt, []CorrelationReceipt{receipt}, nil, inputs.canaries, inputs.diagnostic, inputs.assertion)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if entry := diagnosisEntryByID(t, snapshot, "dpr-op-00000001"); entry.EvidenceState != "rejected" || entry.Diagnosis.Code != "unknown" {
+				t.Fatalf("drifted correlation was promoted: %#v", entry)
+			}
+		})
+	}
+
+	fail := assertionEvaluationFor(t, inputs.assertion, "dpr-op-00000001", "contract", []string{"__undeclared_field__"})
+	drifted := fail
+	drifted.PolicySetVersion = 2
+	snapshot, _, err := ProjectDiagnosisSnapshot(replay.AssessedAt, nil, []AssessedAssertionEvaluation{{AssessedAt: replay.AssessedAt, Evaluation: drifted}}, inputs.canaries, inputs.diagnostic, inputs.assertion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry := diagnosisEntryByID(t, snapshot, "dpr-op-00000001"); entry.EvidenceState != "rejected" {
+		t.Fatalf("superseded assertion was accepted: %#v", entry)
+	}
+
+	snapshot, _, err = ProjectDiagnosisSnapshot(replay.AssessedAt, []CorrelationReceipt{base}, []AssessedAssertionEvaluation{{AssessedAt: replay.AssessedAt, Evaluation: fail}}, inputs.canaries, inputs.diagnostic, inputs.assertion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry := diagnosisEntryByID(t, snapshot, "dpr-op-00000001"); entry.EvidenceState != "rejected" || entry.Diagnosis.Code != "unknown" {
+		t.Fatalf("conflicting diagnoses were arbitrarily selected: %#v", entry)
+	}
+}
+
+func TestDiagnosisSnapshotReadFailsClosedPerOperationForLeakDigestDuplicateAndTime(t *testing.T) {
+	inputs := mustDiagnosisInputs(t)
+	now := time.Date(2026, 7, 17, 0, 15, 0, 0, time.UTC)
+	fail := assertionEvaluationFor(t, inputs.assertion, "dpr-op-00000001", "contract", []string{"__undeclared_field__"})
+	notObserved := assertionEvaluationFor(t, inputs.assertion, "dpr-op-00000002", "semantic", nil)
+	base, _, err := ProjectDiagnosisSnapshot(now, nil, []AssessedAssertionEvaluation{{AssessedAt: now, Evaluation: fail}, {AssessedAt: now, Evaluation: notObserved}}, inputs.canaries, inputs.diagnostic, inputs.assertion)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := map[string]struct {
+		mutate func(map[string]any)
+		want   string
+	}{
+		"malicious leak": {mutate: func(value map[string]any) {
+			value["operations"].([]any)[0].(map[string]any)["provider_url"] = "https://data.go.kr/?serviceKey=secret"
+		}, want: "rejected"},
+		"digest mismatch": {mutate: func(value map[string]any) {
+			value["operations"].([]any)[0].(map[string]any)["projection_sha256"] = strings.Repeat("f", 64)
+		}, want: "rejected"},
+		"duplicate": {mutate: func(value map[string]any) {
+			operations := value["operations"].([]any)
+			value["operations"] = append(operations, operations[0])
+		}, want: "rejected"},
+		"future": {mutate: func(value map[string]any) {
+			mutateSnapshotTime(t, value["operations"].([]any)[0].(map[string]any), now.Add(time.Minute), now.Add(2*time.Minute))
+		}, want: "rejected"},
+		"stale": {mutate: func(value map[string]any) {
+			mutateSnapshotTime(t, value["operations"].([]any)[0].(map[string]any), now.Add(-16*time.Minute), now.Add(-time.Minute))
+		}, want: "rejected"},
+		"missing": {mutate: func(value map[string]any) {
+			value["operations"] = value["operations"].([]any)[1:]
+		}, want: "unknown"},
+		"operation revision mismatch": {mutate: func(value map[string]any) {
+			value["operations"].([]any)[0].(map[string]any)["operation_revision_sha256"] = strings.Repeat("c", 64)
+		}, want: "rejected"},
+		"unsupported state": {mutate: func(value map[string]any) {
+			value["operations"].([]any)[0].(map[string]any)["evidence_state"] = "future_state"
+		}, want: "rejected"},
+		"out of operation": {mutate: func(value map[string]any) {
+			operations := value["operations"].([]any)
+			clone := map[string]any{}
+			for key, item := range operations[0].(map[string]any) {
+				clone[key] = item
+			}
+			clone["operation_id"] = "dpr-op-99999999"
+			value["operations"] = append(operations, clone)
+		}, want: "accepted"},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			raw, _ := json.Marshal(base)
+			var value map[string]any
+			_ = json.Unmarshal(raw, &value)
+			test.mutate(value)
+			tampered, _ := json.Marshal(value)
+			path := filepath.Join(t.TempDir(), "snapshot.json")
+			if err := os.WriteFile(path, tampered, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, counts, err := ReadDiagnosisSnapshot(path, now, inputs.assertion)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if entry := diagnosisEntryByID(t, got, "dpr-op-00000001"); (test.want != "accepted" && entry.Diagnosis.Code != "unknown") || entry.EvidenceState != test.want {
+				t.Fatalf("tampered operation did not fail closed: got=%#v want_state=%s", entry, test.want)
+			}
+			if entry := diagnosisEntryByID(t, got, "dpr-op-00000002"); entry.EvidenceState != "not_observed" {
+				t.Fatalf("unaffected operation disappeared: %#v", entry)
+			}
+			if test.want != "unknown" && counts.Rejected < 1 {
+				t.Fatalf("doctor did not count rejection: %#v", counts)
+			}
+		})
+	}
+}
+
+func TestDiagnosisSnapshotReadRejectsGlobalVersionPolicyAndOversize(t *testing.T) {
+	inputs := mustDiagnosisInputs(t)
+	now := time.Date(2026, 7, 17, 0, 15, 0, 0, time.UTC)
+	snapshot, _, err := ProjectDiagnosisSnapshot(now, nil, nil, inputs.canaries, inputs.diagnostic, inputs.assertion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(snapshot)
+	cases := map[string][]byte{
+		"version":        []byte(strings.Replace(string(raw), DiagnosisSnapshotSchemaVersion, "datapan.health-public-diagnosis-snapshot.v2", 1)),
+		"policy version": []byte(strings.Replace(string(raw), `"policy_set_version":1`, `"policy_set_version":2`, 1)),
+		"oversize":       append(raw, make([]byte, maxDiagnosisSnapshotBytes)...),
+	}
+	for name, data := range cases {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "snapshot.json")
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := ReadDiagnosisSnapshot(path, now, inputs.assertion); err == nil {
+				t.Fatal("unsafe global snapshot was accepted")
+			}
+		})
+	}
+}
+
+func TestDiagnosisSnapshotAtomicUpdateNeverExposesPartialJSON(t *testing.T) {
+	inputs := mustDiagnosisInputs(t)
+	now := time.Date(2026, 7, 17, 0, 15, 0, 0, time.UTC)
+	unknown, _, _ := ProjectDiagnosisSnapshot(now, nil, nil, inputs.canaries, inputs.diagnostic, inputs.assertion)
+	fail := assertionEvaluationFor(t, inputs.assertion, "dpr-op-00000001", "contract", []string{"__undeclared_field__"})
+	diagnosed, _, _ := ProjectDiagnosisSnapshot(now, nil, []AssessedAssertionEvaluation{{AssessedAt: now, Evaluation: fail}}, inputs.canaries, inputs.diagnostic, inputs.assertion)
+	path := filepath.Join(t.TempDir(), "snapshot.json")
+	if err := WriteDiagnosisSnapshotAtomic(path, unknown, inputs.assertion); err != nil {
+		t.Fatal(err)
+	}
+	var wait sync.WaitGroup
+	errorsSeen := make(chan error, 1)
+	wait.Add(2)
+	go func() {
+		defer wait.Done()
+		for index := 0; index < 50; index++ {
+			candidate := unknown
+			if index%2 == 0 {
+				candidate = diagnosed
+			}
+			if err := WriteDiagnosisSnapshotAtomic(path, candidate, inputs.assertion); err != nil {
+				errorsSeen <- err
+				return
+			}
+		}
+	}()
+	go func() {
+		defer wait.Done()
+		for index := 0; index < 100; index++ {
+			if _, _, err := ReadDiagnosisSnapshot(path, now, inputs.assertion); err != nil {
+				errorsSeen <- err
+				return
+			}
+		}
+	}()
+	wait.Wait()
+	select {
+	case err := <-errorsSeen:
+		t.Fatal(err)
+	default:
+	}
+}
+
+func TestDiagnosisOverlayPreservesAvailabilityAndPublicContract(t *testing.T) {
+	inputs := mustDiagnosisInputs(t)
+	now := publicNow
+	fail := assertionEvaluationFor(t, inputs.assertion, "dpr-op-00000001", "contract", []string{"__undeclared_field__"})
+	snapshot, _, err := ProjectDiagnosisSnapshot(now, nil, []AssessedAssertionEvaluation{{AssessedAt: now, Evaluation: fail}}, inputs.canaries, inputs.diagnostic, inputs.assertion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "snapshot.json")
+	if err := WriteDiagnosisSnapshotAtomic(path, snapshot, inputs.assertion); err != nil {
+		t.Fatal(err)
+	}
+	document := testPublicDocument(t)
+	observed := now
+	document.Operations[0].ObservedAt = &observed
+	document.Operations[0].ObservationState = "current"
+	document.Operations[0].Availability = "operational"
+	source, err := NewDiagnosisOverlaySource(staticPublicSource{document: document}, path, inputs.assertion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.now = func() time.Time { return now }
+	got, err := source.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Operations[0].Availability != "operational" || got.Operations[0].ObservationState != "current" || got.Operations[0].Diagnosis.Code != "contract_drift" {
+		t.Fatalf("overlay changed availability or lost diagnosis: %#v", got.Operations[0])
+	}
+	encoded, _ := json.Marshal(got)
+	if err := schemas.ValidateHealthPublicStatusV1(encoded); err != nil {
+		t.Fatalf("%v: %s", err, encoded)
+	}
+	if err := os.WriteFile(path, []byte(`{"schema_version":"evil","credential":"secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err = source.Snapshot(context.Background())
+	if err != nil || got.Operations[0].Availability != "operational" || got.Operations[0].Diagnosis.Code != "unknown" {
+		t.Fatalf("invalid diagnosis altered availability: %#v err=%v", got.Operations[0], err)
+	}
+}
+
+func TestDiagnosisSnapshotSchemaAndDoctorRemainValueFree(t *testing.T) {
+	inputs := mustDiagnosisInputs(t)
+	now := time.Date(2026, 7, 17, 0, 15, 0, 0, time.UTC)
+	snapshot, proof, err := ProjectDiagnosisSnapshot(now, nil, nil, inputs.canaries, inputs.diagnostic, inputs.assertion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(snapshot)
+	if err := schemas.ValidateHealthPublicDiagnosisSnapshotV1(raw); err != nil {
+		t.Fatal(err)
+	}
+	if proof.Counts.String() != "accepted=0 not_observed=0 unknown=10 rejected=0" {
+		t.Fatalf("doctor counts=%s", proof.Counts.String())
+	}
+	for _, forbidden := range []string{"dataset_id", "operation_name", "endpoint", "servicekey", "provider_url", "response_body", "observation_ref"} {
+		if strings.Contains(strings.ToLower(string(raw)), forbidden) {
+			t.Fatalf("schema output leaked %q", forbidden)
+		}
+	}
+}
+
+type diagnosisInputs struct {
+	rule       CorrelationRule
+	canaries   CanaryConfig
+	diagnostic DiagnosticContract
+	assertion  AssertionPolicyContract
+}
+
+func mustDiagnosisInputs(t *testing.T) diagnosisInputs {
+	t.Helper()
+	rule, canaries := mustCorrelationInputs(t)
+	diagnostic, err := LoadDiagnosticContract("../../config/registry/diagnostic-contract-pin.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertion, err := LoadAssertionPolicyContract("../../config/registry/assertion-policy-contract-pin.json", canaries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return diagnosisInputs{rule, canaries, diagnostic, assertion}
+}
+
+func assertionEvaluationFor(t *testing.T, contract AssertionPolicyContract, operationID, dimension string, fields []string) AssertionEvaluation {
+	t.Helper()
+	policy := contract.policyByOperation[operationID]
+	binding := acceptedDiagnosisAssertionBinding()
+	return contract.Evaluate(AssertionEvaluationRequest{SchemaVersion: AssertionEvaluationSchemaVersion, OperationID: operationID, OperationRevisionSHA256: policy.OperationRevisionSHA256, Dimension: dimension, PolicyBinding: &binding, Observation: AssertionObservation{ResponseFields: fields}})
+}
+
+func diagnosisEntryByID(t *testing.T, snapshot DiagnosisSnapshot, id string) DiagnosisSnapshotEntry {
+	t.Helper()
+	for _, entry := range snapshot.Operations {
+		if entry.OperationID == id {
+			return entry
+		}
+	}
+	t.Fatalf("missing operation %s", id)
+	return DiagnosisSnapshotEntry{}
+}
+
+func mutateSnapshotTime(t *testing.T, entry map[string]any, assessed, valid time.Time) {
+	t.Helper()
+	entry["assessed_at"], entry["valid_until"] = assessed.Format(time.RFC3339), valid.Format(time.RFC3339)
+	entry["projection_sha256"] = ""
+	raw, _ := json.Marshal(entry)
+	var typed DiagnosisSnapshotEntry
+	if err := json.Unmarshal(raw, &typed); err != nil {
+		t.Fatal(err)
+	}
+	entry["projection_sha256"] = diagnosisEntryDigest(typed)
+}
