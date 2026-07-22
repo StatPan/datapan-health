@@ -17,7 +17,8 @@ COPY schemas ./schemas
 # graph into their final image.
 RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-runner ./cmd/health-runner \
  && CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-scheduler ./cmd/health-scheduler \
- && CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-public ./cmd/health-public
+ && CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-public ./cmd/health-public \
+ && CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w' -o /datapan-health-data-go-kr-observer ./cmd/data-go-kr-observer
 
 FROM ${ARCHIVE_GO_IMAGE} AS archive-build
 WORKDIR /src
@@ -39,6 +40,10 @@ LABEL org.opencontainers.image.title="Datapan Health runtime" \
 COPY --from=live-build /health-runner /health-runner
 COPY --from=live-build /health-scheduler /health-scheduler
 COPY --from=live-build /health-public /health-public
+# This is a fixed, Health-owned observer binary. Shipping it does not enable a
+# provider call: a later #33 deployment binding still must attest its digest,
+# build revision, credential allowlist, and retention authority.
+COPY --from=live-build /datapan-health-data-go-kr-observer /datapan-health-data-go-kr-observer
 # The mounted static datapan CLI performs HTTPS provider probes. A scratch
 # runtime has no trust store unless it is copied explicitly.
 COPY --from=live-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt

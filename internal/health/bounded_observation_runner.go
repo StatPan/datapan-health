@@ -29,11 +29,11 @@ type ObservationShardPlan struct {
 	OperationCount int
 }
 
-// ObservationCommandSpec is immutable execution configuration. The runner,
+// observationCommandSpec is the internal execution primitive. The runner,
 // not a callback factory, creates the child after validating this direct
 // executable boundary. Shell interpreters are forbidden. Environment entries
 // cannot use the reserved typed shard-binding prefix.
-type ObservationCommandSpec struct {
+type observationCommandSpec struct {
 	Path        string
 	Args        []string
 	Environment []string
@@ -49,19 +49,24 @@ type ObservationBindingGuard struct {
 	MaxAge            time.Duration
 }
 
-type BoundedObservationRunner struct {
+// boundedObservationRunner owns the low-level process, timeout, and artifact
+// mechanics. It is deliberately not an operational entry point: callers must
+// use DataGoKRObservationWorker, which binds this primitive to the fixed
+// Health-owned data.go.kr observer contract.
+type boundedObservationRunner struct {
 	Producer    ObservationRunProducer
 	Registry    ObservationRunRegistry
 	BatchSize   int
 	MaxParallel int
 	Timeout     time.Duration
 	OutputRoot  string
-	Command     ObservationCommandSpec
+	command     observationCommandSpec
 	Binding     ObservationBindingGuard
+	Cleanup     *BoundedObservationCleanupReceipt
 	Now         func() time.Time
 }
 
-func (r BoundedObservationRunner) Run(ctx context.Context, runID string, plans []ObservationShardPlan) (BoundedObservationRun, error) {
+func (r boundedObservationRunner) Run(ctx context.Context, runID string, plans []ObservationShardPlan) (BoundedObservationRun, error) {
 	if err := r.validate(runID, plans); err != nil {
 		return BoundedObservationRun{}, err
 	}
@@ -110,6 +115,7 @@ func (r BoundedObservationRunner) Run(ctx context.Context, runID string, plans [
 		Run:           ObservationRunScope{RunID: runID, StartedAt: started, CompletedAt: completed, ShardCount: 8, BatchSize: r.BatchSize, MaxParallel: r.MaxParallel, TimeoutMS: r.Timeout.Milliseconds()},
 		Shards:        shards,
 		Redaction:     completeObservationRunRedaction(),
+		Cleanup:       r.Cleanup,
 	}
 	states := make([]string, 0, len(shards))
 	partial, timedOut := false, false
@@ -135,13 +141,13 @@ func (r BoundedObservationRunner) Run(ctx context.Context, runID string, plans [
 	return run, nil
 }
 
-func (r BoundedObservationRunner) observe(parent context.Context, root string, plan ObservationShardPlan, now func() time.Time) ObservationRunShard {
+func (r boundedObservationRunner) observe(parent context.Context, root string, plan ObservationShardPlan, now func() time.Time) ObservationRunShard {
 	shard := ObservationRunShard{Index: plan.Index, ShardDigest: plan.ShardDigest, Scope: ObservationRunShardScope{Provider: "data_go_kr", Subject: "runtime_freshness_rotating_shard"}, ManifestSHA256: r.Registry.ManifestSHA256, PolicySHA256: r.Registry.PolicySHA256, TerminalState: "unknown", Redaction: completeObservationRunRedaction()}
 	if parent.Err() != nil {
 		return shard
 	}
-	command := exec.Command(r.Command.Path, r.Command.Args...)
-	command.Env = append(append([]string(nil), r.Command.Environment...), typedObservationPlanEnvironment(plan)...)
+	command := exec.Command(r.command.Path, r.command.Args...)
+	command.Env = append(append([]string(nil), r.command.Environment...), typedObservationPlanEnvironment(plan)...)
 	if err := configureBoundedObservationProcess(command); err != nil {
 		shard.TerminalState = "failed"
 		return shard
@@ -168,9 +174,14 @@ func (r BoundedObservationRunner) observe(parent context.Context, root string, p
 	}
 	state := "verified"
 	if waitErr != nil {
-		if command.ProcessState != nil && command.ProcessState.ExitCode() == 75 {
+		switch {
+		case command.ProcessState != nil && command.ProcessState.ExitCode() == 75:
 			state = "skipped"
-		} else {
+		case command.ProcessState != nil && command.ProcessState.ExitCode() == 76:
+			// Unknown is deliberately non-admittable: a Health-owned observer
+			// could not establish a typed outcome, so no shard receipt exists.
+			return shard
+		default:
 			shard.TerminalState = "failed"
 			return shard
 		}
@@ -189,8 +200,8 @@ func (r BoundedObservationRunner) observe(parent context.Context, root string, p
 	return shard
 }
 
-func (r BoundedObservationRunner) validate(runID string, plans []ObservationShardPlan) error {
-	if r.OutputRoot == "" || !boundedObservationRunIDPattern.MatchString(runID) || !commitPattern.MatchString(r.Producer.Revision) || r.Producer.Repository != "StatPan/datapan-health" || !validObservationRunRegistry(r.Registry) || !validObservationBindingGuard(r.Registry, r.Binding) || !supportsBoundedObservationProcess() || r.BatchSize < 1 || r.BatchSize > 100 || r.MaxParallel < 1 || r.MaxParallel > 2 || r.Timeout < time.Second || r.Timeout > 20*time.Second || len(plans) != 8 || !validObservationCommand(r.Command) {
+func (r boundedObservationRunner) validate(runID string, plans []ObservationShardPlan) error {
+	if r.OutputRoot == "" || !boundedObservationRunIDPattern.MatchString(runID) || !commitPattern.MatchString(r.Producer.Revision) || r.Producer.Repository != "StatPan/datapan-health" || !validObservationRunRegistry(r.Registry) || !validObservationBindingGuard(r.Registry, r.Binding) || !supportsBoundedObservationProcess() || r.BatchSize < 1 || r.BatchSize > 100 || r.MaxParallel < 1 || r.MaxParallel > 2 || r.Timeout < time.Second || r.Timeout > 20*time.Second || len(plans) != 8 || !validBoundedObservationCommand(r.command) {
 		return errors.New("bounded observation runner input is invalid")
 	}
 	seen := map[int]bool{}
@@ -215,7 +226,7 @@ func validObservationBindingGuard(actual ObservationRunRegistry, guard Observati
 	return !verified.After(reference) && reference.Sub(verified) <= guard.MaxAge
 }
 
-func validObservationCommand(command ObservationCommandSpec) bool {
+func validBoundedObservationCommand(command observationCommandSpec) bool {
 	if !filepath.IsAbs(command.Path) {
 		return false
 	}

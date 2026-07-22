@@ -27,6 +27,13 @@ func TestBoundedObservationRunnerProducesEightRedactedArtifactsWithinConcurrency
 	if receipt.Aggregate.TerminalState != "verified" || receipt.Aggregate.Completeness != "complete" || receipt.Run.MaxParallel != 2 {
 		t.Fatalf("unexpected bounded result: %#v", receipt.Aggregate)
 	}
+	info, err := os.Stat(filepath.Join(runner.OutputRoot, receipt.Run.RunID))
+	if err != nil {
+		t.Fatalf("read run root: %v", err)
+	}
+	if info.Mode().Perm() != 0o700 {
+		t.Fatalf("run root is not mode 0700: %#o", info.Mode().Perm())
+	}
 	aggregate, err := os.ReadFile(filepath.Join(runner.OutputRoot, receipt.Run.RunID, "receipt.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -74,7 +81,7 @@ func TestBoundedObservationRunnerBindsEveryValidatedPlanToTheChild(t *testing.T)
 }
 
 func TestBoundedObservationRunnerTimeoutAndCancellationAreUnavailablePartial(t *testing.T) {
-	runner := testBoundedObservationRunner(t, ObservationCommandSpec{Path: commandPath(t, "sleep"), Args: []string{"5"}})
+	runner := testBoundedObservationRunner(t, observationCommandSpec{Path: commandPath(t, "sleep"), Args: []string{"5"}})
 	startedAt := time.Now()
 	receipt, err := runner.Run(context.Background(), "health-run-fixture-0002", testObservationPlans())
 	if err != nil {
@@ -191,24 +198,24 @@ func TestBoundedObservationRunnerFailsClosedBeforeExecutionAndForUnsafeOutput(t 
 func TestBoundedObservationRunnerRejectsStaleFutureAndMismatchedBindingBeforeCommandStart(t *testing.T) {
 	for _, test := range []struct {
 		name   string
-		mutate func(*BoundedObservationRunner)
+		mutate func(*boundedObservationRunner)
 	}{
 		{
 			name: "stale binding",
-			mutate: func(r *BoundedObservationRunner) {
+			mutate: func(r *boundedObservationRunner) {
 				r.Binding.ReferenceAt = r.Binding.BindingVerifiedAt.Add(2 * time.Minute)
 				r.Binding.MaxAge = time.Minute
 			},
 		},
 		{
 			name: "future binding",
-			mutate: func(r *BoundedObservationRunner) {
+			mutate: func(r *boundedObservationRunner) {
 				r.Binding.ReferenceAt = r.Binding.BindingVerifiedAt.Add(-time.Second)
 			},
 		},
 		{
 			name: "mismatched policy digest",
-			mutate: func(r *BoundedObservationRunner) {
+			mutate: func(r *boundedObservationRunner) {
 				r.Binding.Expected.PolicySHA256 = strings.Repeat("f", 64)
 			},
 		},
@@ -234,7 +241,7 @@ func TestBoundedObservationRunnerRejectsStaleFutureAndMismatchedBindingBeforeCom
 func TestBoundedObservationRunnerRejectsReservedEnvironmentOverrideBeforeCommandStart(t *testing.T) {
 	started := filepath.Join(t.TempDir(), "started")
 	runner := testBoundedObservationRunner(t, helperCommand(started, "", "block"))
-	runner.Command.Environment = append(runner.Command.Environment, "DATAPAN_HEALTH_OBSERVATION_SHARD_INDEX=forged")
+	runner.command.Environment = append(runner.command.Environment, "DATAPAN_HEALTH_OBSERVATION_SHARD_INDEX=forged")
 	if _, err := runner.Run(context.Background(), "health-run-fixture-0011", testObservationPlans()); err == nil {
 		t.Fatal("reserved plan binding override was accepted")
 	}
@@ -247,12 +254,12 @@ func TestBoundedObservationRunnerRejectsReservedEnvironmentOverrideBeforeCommand
 func TestBoundedObservationRunnerRejectsBoundsOutsideTheEightByHundredByTwoContract(t *testing.T) {
 	for _, test := range []struct {
 		name   string
-		mutate func(*BoundedObservationRunner, []ObservationShardPlan)
+		mutate func(*boundedObservationRunner, []ObservationShardPlan)
 	}{
-		{name: "batch above 100", mutate: func(r *BoundedObservationRunner, _ []ObservationShardPlan) { r.BatchSize = 101 }},
-		{name: "parallel above 2", mutate: func(r *BoundedObservationRunner, _ []ObservationShardPlan) { r.MaxParallel = 3 }},
-		{name: "timeout above 20 seconds", mutate: func(r *BoundedObservationRunner, _ []ObservationShardPlan) { r.Timeout = 21 * time.Second }},
-		{name: "operation above batch", mutate: func(_ *BoundedObservationRunner, plans []ObservationShardPlan) { plans[0].OperationCount = 101 }},
+		{name: "batch above 100", mutate: func(r *boundedObservationRunner, _ []ObservationShardPlan) { r.BatchSize = 101 }},
+		{name: "parallel above 2", mutate: func(r *boundedObservationRunner, _ []ObservationShardPlan) { r.MaxParallel = 3 }},
+		{name: "timeout above 20 seconds", mutate: func(r *boundedObservationRunner, _ []ObservationShardPlan) { r.Timeout = 21 * time.Second }},
+		{name: "operation above batch", mutate: func(_ *boundedObservationRunner, plans []ObservationShardPlan) { plans[0].OperationCount = 101 }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			started := filepath.Join(t.TempDir(), "started")
@@ -271,7 +278,7 @@ func TestBoundedObservationRunnerRejectsBoundsOutsideTheEightByHundredByTwoContr
 }
 
 func TestBoundedObservationCommandRejectsShellAndSymlink(t *testing.T) {
-	if validObservationCommand(ObservationCommandSpec{Path: "/bin/sh"}) {
+	if validBoundedObservationCommand(observationCommandSpec{Path: "/bin/sh"}) {
 		t.Fatal("shell command accepted")
 	}
 	target := commandPath(t, "true")
@@ -279,7 +286,7 @@ func TestBoundedObservationCommandRejectsShellAndSymlink(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
 	}
-	if validObservationCommand(ObservationCommandSpec{Path: link}) {
+	if validBoundedObservationCommand(observationCommandSpec{Path: link}) {
 		t.Fatal("symlink executable accepted")
 	}
 }
@@ -394,16 +401,16 @@ func TestBoundedObservationRunnerHelperProcess(t *testing.T) {
 	os.Exit(0)
 }
 
-func testBoundedObservationRunner(t *testing.T, command ObservationCommandSpec) BoundedObservationRunner {
+func testBoundedObservationRunner(t *testing.T, command observationCommandSpec) boundedObservationRunner {
 	t.Helper()
 	registry := ObservationRunRegistry{SourceRevision: strings.Repeat("b", 40), SourceSHA256: strings.Repeat("c", 64), ManifestSHA256: strings.Repeat("d", 64), PolicySHA256: strings.Repeat("e", 64)}
 	verifiedAt := time.Date(2026, 7, 22, 0, 0, 0, 0, time.UTC)
-	return BoundedObservationRunner{Producer: ObservationRunProducer{Repository: "StatPan/datapan-health", Revision: strings.Repeat("a", 40)}, Registry: registry, Binding: ObservationBindingGuard{Expected: registry, BindingVerifiedAt: verifiedAt, ReferenceAt: verifiedAt.Add(30 * time.Second), MaxAge: time.Minute}, BatchSize: 100, MaxParallel: 2, Timeout: time.Second, OutputRoot: t.TempDir(), Command: command, Now: func() time.Time { return time.Date(2026, 7, 22, 0, 0, 0, 0, time.UTC) }}
+	return boundedObservationRunner{Producer: ObservationRunProducer{Repository: "StatPan/datapan-health", Revision: strings.Repeat("a", 40)}, Registry: registry, Binding: ObservationBindingGuard{Expected: registry, BindingVerifiedAt: verifiedAt, ReferenceAt: verifiedAt.Add(30 * time.Second), MaxAge: time.Minute}, BatchSize: 100, MaxParallel: 2, Timeout: time.Second, OutputRoot: t.TempDir(), command: command, Now: func() time.Time { return time.Date(2026, 7, 22, 0, 0, 0, 0, time.UTC) }}
 }
 
-func observationCommand(t *testing.T, name string) ObservationCommandSpec {
+func observationCommand(t *testing.T, name string) observationCommandSpec {
 	t.Helper()
-	return ObservationCommandSpec{Path: commandPath(t, name)}
+	return observationCommandSpec{Path: commandPath(t, name)}
 }
 
 func commandPath(t *testing.T, name string) string {
@@ -419,7 +426,7 @@ func commandPath(t *testing.T, name string) string {
 	return path
 }
 
-func helperCommand(started, childMarker, mode string) ObservationCommandSpec {
+func helperCommand(started, childMarker, mode string) observationCommandSpec {
 	environment := []string{"BOUNDED_OBSERVATION_HELPER_MODE=" + mode}
 	if started != "" {
 		environment = append(environment, "BOUNDED_OBSERVATION_STARTED="+started)
@@ -427,10 +434,10 @@ func helperCommand(started, childMarker, mode string) ObservationCommandSpec {
 	if childMarker != "" {
 		environment = append(environment, "BOUNDED_OBSERVATION_CHILD_MARKER="+childMarker)
 	}
-	return ObservationCommandSpec{Path: os.Args[0], Args: []string{"-test.run=^TestBoundedObservationRunnerHelperProcess$", "--"}, Environment: environment}
+	return observationCommandSpec{Path: os.Args[0], Args: []string{"-test.run=^TestBoundedObservationRunnerHelperProcess$", "--"}, Environment: environment}
 }
 
-func helperPlanCommand(markers string) ObservationCommandSpec {
+func helperPlanCommand(markers string) observationCommandSpec {
 	command := helperCommand("", "", "bind")
 	command.Environment = append(command.Environment, "BOUNDED_OBSERVATION_PLAN_MARKERS="+markers)
 	return command
