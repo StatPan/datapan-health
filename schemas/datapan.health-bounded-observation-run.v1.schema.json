@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.datapan.dev/datapan.health-bounded-observation-run.v1.schema.json",
+  "title": "Datapan Health Bounded Observation Run Receipt v1",
+  "description": "Private, redacted evidence for an eight-shard bounded provider-observation run. It contains no credential, query, endpoint, provider prose, response, or user-identity field.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "producer", "registry", "run", "shards", "aggregate", "redaction"],
+  "properties": {
+    "schema_version": {"const": "datapan.health-bounded-observation-run.v1"},
+    "producer": {"$ref": "#/$defs/producer"},
+    "registry": {"$ref": "#/$defs/registry"},
+    "run": {"$ref": "#/$defs/run"},
+    "shards": {"type": "array", "minItems": 8, "maxItems": 8, "items": {"$ref": "#/$defs/shard"}},
+    "aggregate": {"$ref": "#/$defs/aggregate"},
+    "redaction": {"$ref": "#/$defs/redaction"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "state": {"enum": ["verified", "failed", "skipped", "unknown"]},
+    "producer": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repository", "revision"],
+      "properties": {
+        "repository": {"const": "StatPan/datapan-health"},
+        "revision": {"$ref": "#/$defs/commit"}
+      }
+    },
+    "registry": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_revision", "source_sha256", "manifest_sha256", "policy_sha256"],
+      "properties": {
+        "source_revision": {"$ref": "#/$defs/commit"},
+        "source_sha256": {"$ref": "#/$defs/sha256"},
+        "manifest_sha256": {"$ref": "#/$defs/sha256"},
+        "policy_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "run": {
+      "type": "object", "additionalProperties": false,
+      "required": ["run_id", "started_at", "completed_at", "shard_count", "batch_size", "max_parallel", "timeout_ms"],
+      "properties": {
+        "run_id": {"type": "string", "pattern": "^health-run-[a-z0-9][a-z0-9-]{7,63}$"},
+        "started_at": {"type": "string", "format": "date-time"},
+        "completed_at": {"type": "string", "format": "date-time"},
+        "shard_count": {"const": 8},
+        "batch_size": {"type": "integer", "minimum": 1, "maximum": 100},
+        "max_parallel": {"type": "integer", "minimum": 1, "maximum": 2},
+        "timeout_ms": {"type": "integer", "minimum": 1000, "maximum": 20000}
+      }
+    },
+    "shard": {
+      "type": "object", "additionalProperties": false,
+      "required": ["index", "shard_digest", "scope", "manifest_sha256", "policy_sha256", "terminal_state", "completed", "receipt_available", "redaction"],
+      "properties": {
+        "index": {"type": "integer", "minimum": 0, "maximum": 7},
+        "shard_digest": {"$ref": "#/$defs/sha256"},
+        "scope": {"$ref": "#/$defs/shard_scope"},
+        "manifest_sha256": {"$ref": "#/$defs/sha256"},
+        "policy_sha256": {"$ref": "#/$defs/sha256"},
+        "terminal_state": {"$ref": "#/$defs/state"},
+        "completed": {"type": "boolean"},
+        "timed_out": {"type": "boolean"},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "receipt_available": {"type": "boolean"},
+        "receipt_path": {"type": "string", "pattern": "^shards/[0-7]/receipt\\.json$"},
+        "receipt_sha256": {"$ref": "#/$defs/sha256"},
+        "redaction": {"$ref": "#/$defs/redaction"}
+      },
+      "allOf": [
+        {"if": {"properties": {"receipt_available": {"const": true}}}, "then": {"required": ["observed_at", "receipt_path", "receipt_sha256"], "properties": {"completed": {"const": true}}}, "else": {"properties": {"completed": {"const": false}, "terminal_state": {"enum": ["unknown", "failed"]}}}}
+      ]
+    },
+    "shard_scope": {
+      "type": "object", "additionalProperties": false,
+      "required": ["provider", "subject"],
+      "properties": {"provider": {"const": "data_go_kr"}, "subject": {"const": "runtime_freshness_rotating_shard"}}
+    },
+    "aggregate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["terminal_state", "completeness", "timed_out"],
+      "properties": {
+        "terminal_state": {"$ref": "#/$defs/state"},
+        "completeness": {"enum": ["complete", "partial"]},
+        "timed_out": {"type": "boolean"}
+      }
+    },
+    "redaction": {
+      "type": "object", "additionalProperties": false,
+      "required": ["secret_values_removed", "secret_hashes_removed", "authorization_headers_removed", "credential_bearing_urls_removed", "raw_provider_text_removed", "raw_provider_urls_removed", "response_bodies_removed", "response_rows_removed", "user_identity_removed"],
+      "properties": {
+        "secret_values_removed": {"const": true},
+        "secret_hashes_removed": {"const": true},
+        "authorization_headers_removed": {"const": true},
+        "credential_bearing_urls_removed": {"const": true},
+        "raw_provider_text_removed": {"const": true},
+        "raw_provider_urls_removed": {"const": true},
+        "response_bodies_removed": {"const": true},
+        "response_rows_removed": {"const": true},
+        "user_identity_removed": {"const": true}
+      }
+    }
+  }
+}
