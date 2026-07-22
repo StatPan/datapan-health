@@ -33,9 +33,12 @@
     "operation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["operation_id", "observation_state", "availability", "diagnosis"],
+      "required": ["operation_id", "display_name", "group_name", "official_reference", "observation_state", "availability", "diagnosis"],
       "properties": {
         "operation_id": {"type": "string", "pattern": "^dpr-op-[0-9]{8}$"},
+        "display_name": {"type": "string", "minLength": 1, "maxLength": 160, "pattern": "[가-힣]"},
+        "group_name": {"const": "공공데이터"},
+        "official_reference": {"type": "string", "pattern": "^https://www\\.data\\.go\\.kr/data/[0-9]{1,20}/openapi\\.do$"},
         "observed_at": {"type": "string", "format": "date-time"},
         "observation_state": {"enum": ["current", "stale", "not_observed"]},
         "availability": {"enum": ["operational", "degraded", "unknown"]},
