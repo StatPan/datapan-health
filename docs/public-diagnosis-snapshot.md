@@ -2,7 +2,9 @@
 
 `datapan.health-public-diagnosis-snapshot.v1`은 이미 검토된 Health correlation receipt와
 exact assertion request만 browser-safe diagnosis로 옮기는 내부 입력 계약이다. 이 파일은
-새 공개 route가 아니며 기존 `/v1/status` schema를 변경하지 않는다.
+새 공개 route가 아니며 외부 의존성 관측 응답
+`/datapan/v1/dependencies`에만 overlay될 수 있다. Datapan-owned service
+status `/datapan/v1/services`를 바꾸거나 승격하지 않는다.
 
 ## Projection authority
 

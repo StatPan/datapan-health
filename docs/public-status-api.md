@@ -1,46 +1,53 @@
-# Browser-consumable public status contract
+# Datapan public status boundary
 
-`health-public` is a separate, read-only adapter for Datapan Web and other
-approved anonymous browser clients. It does not replace the Gatus HTML status
-page and this repository does not route or deploy it.
+`health-public` is a read-only adapter. It distinguishes Datapan-owned public
+services from observations of external data dependencies; it does not deploy,
+route, or prove availability of any Datapan product.
 
-## Response
+## Routes and scope
 
-`GET /v1/status` returns `datapan.health-public-status.v1`. Every configured
-canary appears exactly once under its Registry-owned `dpr-op-*` operation ID.
-The response deliberately excludes the internal Gatus key and name, dataset
-ID, operation display text, provider host/path/message, query data, receipt,
-credential identity, evidence references, response data, and support
-references.
+| Route | Contract | Meaning |
+| --- | --- | --- |
+| `GET /datapan/` | HTML overview | Explains the two scopes. |
+| `GET /datapan/services/` | HTML | Datapan-owned services only. |
+| `GET /datapan/dependencies/` | HTML | External dependency observations only. |
+| `GET /datapan/v1/services` | `datapan.service-status.v1` | Dataset API, Registry distribution, Datapan Web/Atlas, and Health itself. A service is `unknown` unless its own check supplies a public surface and immutable deployment identity. |
+| `GET /datapan/v1/dependencies` | `datapan.dependency-observation.v1` | The ten Registry-owned `dpr-op-*` canaries. This is not a Datapan service SLA or catalogue-coverage claim. |
+| `GET /datapan/v1/status` | `datapan.dependency-status-legacy.v1` | Dependency-only compatibility alias for one release. It emits `Deprecation: true`, `Sunset: Thu, 31 Dec 2026 23:59:59 GMT`, and links to both successors. |
 
-Availability and diagnosis remain separate. The adapter derives only
-`operational`, `degraded`, or `unknown` availability from a current Gatus
-observation. A missing, future, or heartbeat-expired observation is `unknown`.
-Until #21 or #22 supplies a separately reviewed current diagnosis, the public
-diagnosis is exactly `unknown` with no action IDs. `ProjectPublicDiagnosis`
-defines the allowlisted projection for a future accepted diagnostic input; an
-unknown code, malformed ownership, or unsafe action ID degrades to the same
-empty `unknown` diagnosis instead of changing availability.
+The legacy alias can be removed only with a separately reviewed decision that
+records one full release of consumer evidence, successor parity, a visible
+warning period, and the exact removal release. It never represents
+Datapan-owned service status.
 
-The exact response schema is
-`schemas/datapan.health-public-status.v1.schema.json`. Unknown schema versions
-are not coerced into v1.
+The dependency adapter deliberately excludes Gatus key/name, dataset ID,
+provider host/path/message, query data, receipt, credential identity, response
+data, and support references. A missing, future, or heartbeat-expired canary
+is `unknown`; it cannot promote an owned service. Diagnosis is projected only
+from a separately reviewed accepted input, otherwise it is `unknown` with no
+action IDs.
 
 ## CORS and caching
 
 `PUBLIC_STATUS_ALLOWED_ORIGINS` is required and contains comma-separated exact
-HTTPS origins. The service never reflects an unapproved origin, emits
-`Access-Control-Allow-Credentials`, accepts an authorization header, or uses a
-wildcard. Approved GET/HEAD preflight returns only `GET, HEAD`; a denied origin,
-method, or requested header fails closed.
+HTTPS origins. JSON routes never reflect an unapproved origin, emit
+credentials, accept an authorization header, or use a wildcard. Approved
+GET/HEAD preflight returns only `GET, HEAD`; other origin, method, and header
+shapes fail closed.
 
-Successful responses have a byte-derived strong ETag and
+JSON and HTML responses use a byte-derived strong ETag and
 `Cache-Control: public, max-age=30, stale-if-error=60, no-transform`.
-`If-None-Match` returns 304. Errors are generic, `no-store`, and never contain
-an upstream URL, response, or parser detail. Normal responses vary on `Origin`;
-all preflight responses additionally vary on `Access-Control-Request-Method`
-and `Access-Control-Request-Headers`, including denied variants, so caches
-cannot reuse one browser policy decision for another request shape.
+`If-None-Match` returns 304. Errors are generic, `no-store`, and contain no
+upstream/parser detail. JSON responses vary on `Origin`; preflight also varies
+on its requested method and headers.
+
+## Readiness report
+
+`make public-status-doctor` produces the value-free
+`datapan.public-status-doctor.v1` report without a Gatus or provider call. It
+names both contracts, fixes the external scope at ten canaries, and reports the
+four owned services with their explicit `unknown_reason`. It never turns a
+dependency observation into a service incident or readiness claim.
 
 ## Local container smoke
 
@@ -49,10 +56,12 @@ reviewed canary map:
 
 ```sh
 docker compose --profile public-status up --build gatus public-status
-curl -H 'Origin: https://datapan.statpan.com' http://127.0.0.1:8082/v1/status
+curl -H 'Origin: https://datapan.statpan.com' http://127.0.0.1:8082/datapan/v1/dependencies
+curl -H 'Origin: https://datapan.statpan.com' http://127.0.0.1:8082/datapan/v1/services
 ```
 
-`make smoke` also verifies approved and denied browser origins, preflight,
-schema identity, exact operation identity, and the public leakage boundary.
-Opening a public route, adding an origin, or deploying a new runtime image is a
-separate infra-owned approval and rollout.
+`make smoke` verifies the dependency schema/identity and CORS boundary. Public
+service checks remain `unknown` in this repository until the owning product
+supplies its own reviewed immutable deployment identity. Opening a public
+route, adding an origin, connecting a live service check, or deploying a new
+runtime image is a separate infra-owned approval and rollout.

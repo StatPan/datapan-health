@@ -2,7 +2,7 @@ RUNTIME_IMAGE ?= datapan-health-runtime:test
 ARCHIVE_IMAGE ?= datapan-health-archive:test
 TESTED_REVISION ?= $(HEALTH_HEAD)
 
-.PHONY: test quality build images image-smoke release-oci smoke visual archive-smoke hf-publish-smoke diagnostic-compatibility assertion-policy-compatibility correlation-replay diagnosis-snapshot-evidence
+.PHONY: test quality build images image-smoke release-oci smoke visual archive-smoke hf-publish-smoke diagnostic-compatibility assertion-policy-compatibility correlation-replay diagnosis-snapshot-evidence public-status-doctor
 
 test:
 	go test ./...
@@ -49,6 +49,9 @@ diagnosis-snapshot-evidence:
 	mkdir -p out
 	go run ./cmd/health-diagnosis-project -correlation-replay testdata/correlation/observed-notice.json -health-head "$(HEALTH_HEAD)" -tested-revision "$(TESTED_REVISION)" -output out/public-diagnosis-snapshot.json -receipt-output out/diagnosis-projector-receipt.json
 	go run ./cmd/health-diagnosis-doctor -snapshot out/public-diagnosis-snapshot.json -at 2026-07-17T00:15:00Z > out/diagnosis-doctor.json
+
+public-status-doctor:
+	go run ./cmd/health-public -doctor
 
 hf-publish-smoke:
 	./scripts/hf-publish-smoke.sh

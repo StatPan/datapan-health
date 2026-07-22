@@ -19,6 +19,15 @@ var healthArchiveSchema []byte
 //go:embed datapan.health-public-status.v1.schema.json
 var healthPublicStatusSchema []byte
 
+//go:embed datapan.service-status.v1.schema.json
+var serviceStatusSchema []byte
+
+//go:embed datapan.dependency-observation.v1.schema.json
+var dependencyObservationSchema []byte
+
+//go:embed datapan.dependency-status-legacy.v1.schema.json
+var legacyDependencySchema []byte
+
 //go:embed datapan.health-public-diagnosis-snapshot.v1.schema.json
 var healthPublicDiagnosisSnapshotSchema []byte
 
@@ -35,6 +44,15 @@ var (
 	healthPublicStatusOnce            sync.Once
 	healthPublicStatus                *jsonschema.Schema
 	healthPublicStatusErr             error
+	serviceStatusOnce                 sync.Once
+	serviceStatus                     *jsonschema.Schema
+	serviceStatusErr                  error
+	dependencyObservationOnce         sync.Once
+	dependencyObservation             *jsonschema.Schema
+	dependencyObservationErr          error
+	legacyDependencyOnce              sync.Once
+	legacyDependency                  *jsonschema.Schema
+	legacyDependencyErr               error
 	healthPublicDiagnosisSnapshotOnce sync.Once
 	healthPublicDiagnosisSnapshot     *jsonschema.Schema
 	healthPublicDiagnosisSnapshotErr  error
@@ -64,6 +82,27 @@ func ValidateHealthPublicStatusV1(data []byte) error {
 		healthPublicStatus, healthPublicStatusErr = compile(healthPublicStatusSchema, "https://schemas.datapan.dev/datapan.health-public-status.v1.schema.json")
 	})
 	return validate(data, healthPublicStatus, healthPublicStatusErr, "public status")
+}
+
+func ValidateServiceStatusV1(data []byte) error {
+	serviceStatusOnce.Do(func() {
+		serviceStatus, serviceStatusErr = compile(serviceStatusSchema, "https://schemas.datapan.dev/datapan.service-status.v1.schema.json")
+	})
+	return validate(data, serviceStatus, serviceStatusErr, "service status")
+}
+
+func ValidateDependencyObservationV1(data []byte) error {
+	dependencyObservationOnce.Do(func() {
+		dependencyObservation, dependencyObservationErr = compile(dependencyObservationSchema, "https://schemas.datapan.dev/datapan.dependency-observation.v1.schema.json")
+	})
+	return validate(data, dependencyObservation, dependencyObservationErr, "dependency observation")
+}
+
+func ValidateLegacyDependencyStatusV1(data []byte) error {
+	legacyDependencyOnce.Do(func() {
+		legacyDependency, legacyDependencyErr = compile(legacyDependencySchema, "https://schemas.datapan.dev/datapan.dependency-status-legacy.v1.schema.json")
+	})
+	return validate(data, legacyDependency, legacyDependencyErr, "legacy dependency status")
 }
 
 func ValidateHealthPublicDiagnosisSnapshotV1(data []byte) error {

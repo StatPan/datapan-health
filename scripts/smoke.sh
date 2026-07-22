@@ -29,16 +29,23 @@ docker compose --profile fixtures run --rm runner-unhealthy
 curl --fail --silent http://127.0.0.1:8081/live >/dev/null
 curl --fail --silent http://127.0.0.1:8081/ready >/dev/null
 curl --fail --silent http://127.0.0.1:8081/metrics | grep -q 'datapan_health_scheduler_runs_started_total'
-public_status="$(curl --fail --silent -H 'Origin: https://datapan.statpan.com' -D "$public_headers" http://127.0.0.1:8082/v1/status)"
+public_status="$(curl --fail --silent -H 'Origin: https://datapan.statpan.com' -D "$public_headers" http://127.0.0.1:8082/datapan/v1/dependencies)"
 grep -qi '^Access-Control-Allow-Origin: https://datapan.statpan.com' "$public_headers"
-printf '%s' "$public_status" | grep -q 'datapan.health-public-status.v1'
+printf '%s' "$public_status" | grep -q 'datapan.dependency-observation.v1'
 printf '%s' "$public_status" | grep -q 'dpr-op-00000001'
 if printf '%s' "$public_status" | grep -Eiq 'dataset_id|endpoint|credential|provider_message|query|response'; then
   echo "sensitive data found in browser status payload" >&2
   exit 1
 fi
-test "$(curl --silent --output /dev/null --write-out '%{http_code}' -X OPTIONS -H 'Origin: https://datapan.statpan.com' -H 'Access-Control-Request-Method: GET' http://127.0.0.1:8082/v1/status)" = 204
-test "$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'Origin: https://evil.example' http://127.0.0.1:8082/v1/status)" = 403
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' -X OPTIONS -H 'Origin: https://datapan.statpan.com' -H 'Access-Control-Request-Method: GET' http://127.0.0.1:8082/datapan/v1/dependencies)" = 204
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'Origin: https://evil.example' http://127.0.0.1:8082/datapan/v1/dependencies)" = 403
+services="$(curl --fail --silent http://127.0.0.1:8082/datapan/v1/services)"
+printf '%s' "$services" | grep -q 'datapan.service-status.v1'
+printf '%s' "$services" | grep -q 'deployment_identity_unavailable'
+if printf '%s' "$services" | grep -q 'dpr-op-'; then
+  echo "dependency observation leaked into service status payload" >&2
+  exit 1
+fi
 statuses="$(curl --fail --silent http://127.0.0.1:8080/api/v1/endpoints/statuses)"
 printf '%s' "$statuses" | grep -q 'holiday-emergency-clinics'
 printf '%s' "$statuses" | grep -q 'qnet-practical-pass-rate'
