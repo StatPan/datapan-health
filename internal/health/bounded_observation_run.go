@@ -122,7 +122,7 @@ func (r BoundedObservationRun) Validate() error {
 	if r.SchemaVersion != BoundedObservationRunSchemaVersion || r.Producer.Repository != "StatPan/datapan-health" || !commitPattern.MatchString(r.Producer.Revision) {
 		return errors.New("bounded observation producer is invalid")
 	}
-	if !commitPattern.MatchString(r.Registry.SourceRevision) || !sha256Pattern.MatchString(r.Registry.SourceSHA256) || !sha256Pattern.MatchString(r.Registry.ManifestSHA256) || !sha256Pattern.MatchString(r.Registry.PolicySHA256) {
+	if !validObservationRunRegistry(r.Registry) {
 		return errors.New("bounded observation registry binding is invalid")
 	}
 	if r.Run.ShardCount != 8 || r.Run.BatchSize < 1 || r.Run.BatchSize > 100 || r.Run.MaxParallel < 1 || r.Run.MaxParallel > 2 || r.Run.TimeoutMS < 1000 || r.Run.TimeoutMS > 20000 || r.Run.StartedAt.IsZero() || r.Run.CompletedAt.IsZero() || r.Run.CompletedAt.Before(r.Run.StartedAt) || r.Run.CompletedAt.Sub(r.Run.StartedAt) > r.Run.maximumDuration() {
@@ -174,6 +174,10 @@ func (r BoundedObservationRun) Validate() error {
 		return errors.New("bounded observation aggregate is invalid")
 	}
 	return nil
+}
+
+func validObservationRunRegistry(registry ObservationRunRegistry) bool {
+	return commitPattern.MatchString(registry.SourceRevision) && sha256Pattern.MatchString(registry.SourceSHA256) && sha256Pattern.MatchString(registry.ManifestSHA256) && sha256Pattern.MatchString(registry.PolicySHA256)
 }
 
 // ValidateAt adds the admission-safe temporal boundary that intentionally
