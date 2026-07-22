@@ -1,5 +1,28 @@
 # Datapan public status boundary
 
+## Public presentation and redaction boundary
+
+The public adapter is the only supported Datapan status presentation surface.
+It reads Gatus only as an internal availability input and discards the Gatus
+endpoint key, endpoint name, group, URL, host, port, query string, and probe
+target before creating a public document or HTML card.
+
+Each external-dependency card obtains its primary display name from the
+SHA-pinned Registry health-probe catalog at
+`entries[].aliases.operation_name`. The catalog is loaded through
+`config/canaries.json` and its `catalog_sha256`; it is not translated from a
+Gatus slug. A missing, non-Korean, URL-like, or otherwise unsafe catalog name
+fails the public source closed rather than falling back to an operation ID or
+English endpoint label.
+
+The explicit presentation mapping is deliberately small: the pinned
+`data.go.kr` provider maps to `공공데이터`; owned records are headed
+`Datapan 서비스`; external observations are headed `외부 데이터 의존성`.
+The only public external link is the canonical dataset-entry reference derived
+from the pinned numeric `dataset_id`:
+`https://www.data.go.kr/data/{dataset_id}/openapi.do`. Probe endpoints are not
+links and are never text in the public response.
+
 `health-public` is a read-only adapter. It distinguishes Datapan-owned public
 services from observations of external data dependencies; it does not deploy,
 route, or prove availability of any Datapan product.

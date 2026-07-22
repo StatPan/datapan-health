@@ -66,6 +66,7 @@ type PublicStatusDoctorReport struct {
 	SchemaVersion              string                `json:"schema_version"`
 	ServiceContract            string                `json:"service_contract"`
 	DependencyContract         string                `json:"dependency_contract"`
+	DependencyPresentation     string                `json:"dependency_presentation"`
 	DependencyCanaryCount      int                   `json:"dependency_canary_count"`
 	OwnedServiceStatus         []PublicServiceStatus `json:"owned_service_status"`
 	ExternalObservationMeaning string                `json:"external_observation_meaning"`
@@ -180,6 +181,7 @@ func BuildPublicStatusDoctorReport(ctx context.Context, services PublicServiceSt
 		SchemaVersion:              PublicStatusDoctorSchemaVersion,
 		ServiceContract:            ServiceStatusSchemaVersion,
 		DependencyContract:         DependencyObservationSchemaVersion,
+		DependencyPresentation:     "pinned_registry_catalog_operation_name_fail_closed",
 		DependencyCanaryCount:      dependencyCanaryCount,
 		OwnedServiceStatus:         document.Services,
 		ExternalObservationMeaning: "external_dependency_observations_not_datapan_service_incidents",

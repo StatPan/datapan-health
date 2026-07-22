@@ -32,7 +32,11 @@ func testPublicDocument(t *testing.T) PublicStatusDocument {
 	}
 	operations := make([]PublicOperationStatus, 0, len(config.Canaries))
 	for _, canary := range config.Canaries {
-		operations = append(operations, PublicOperationStatus{OperationID: canary.OperationID, ObservationState: "not_observed", Availability: "unknown", Diagnosis: unknownPublicDiagnosis()})
+		presentation, err := config.PublicPresentation(canary)
+		if err != nil {
+			t.Fatal(err)
+		}
+		operations = append(operations, PublicOperationStatus{OperationID: canary.OperationID, DisplayName: presentation.DisplayName, GroupName: presentation.GroupName, OfficialReference: presentation.OfficialReference, ObservationState: "not_observed", Availability: "unknown", Diagnosis: unknownPublicDiagnosis()})
 	}
 	return PublicStatusDocument{SchemaVersion: PublicStatusSchemaVersion, GeneratedAt: publicNow, DiagnosticRegistryRevision: AcceptedDiagnosticRegistryRevision, ObservationCatalogRevision: config.ConsumptionProvenance.RegistryDatasetRevision, Operations: operations}
 }
@@ -167,7 +171,7 @@ func TestPublicStatusSourceProjectsExactIdentityAndFreshness(t *testing.T) {
 	currentKey := config.Canaries[0].GatusEndpointKey
 	staleKey := config.Canaries[1].GatusEndpointKey
 	body, _ := json.Marshal([]map[string]any{
-		{"key": currentKey, "name": "private-name-must-not-project", "results": []map[string]any{
+		{"key": currentKey, "name": "public-data_private-name-must-not-project", "group": "public-data", "url": "http://127.0.0.1:8080/health?secret=1", "results": []map[string]any{
 			{"success": true, "timestamp": publicNow.Add(-time.Minute), "errors": []string{"secret-provider-message"}},
 		}},
 		{"key": staleKey, "results": []map[string]any{
@@ -205,9 +209,58 @@ func TestPublicStatusSourceProjectsExactIdentityAndFreshness(t *testing.T) {
 		t.Fatalf("stale=%+v", got)
 	}
 	encoded, _ := json.Marshal(document)
-	for _, forbidden := range []string{"private-name", "secret-provider-message", currentKey, "dataset_id", "endpoint_host", "query"} {
+	for _, forbidden := range []string{"private-name", "public-data", "127.0.0.1", "localhost", "secret-provider-message", currentKey, "dataset_id", "endpoint_host", "query"} {
 		if strings.Contains(string(encoded), forbidden) {
 			t.Fatalf("forbidden %q projected", forbidden)
+		}
+	}
+}
+
+func TestPublicStatusPresentationFailsClosedAndRedactsPublicHTMLAndAPI(t *testing.T) {
+	document := testPublicDocument(t)
+	document.Operations[0].DisplayName = "가" + strings.Repeat("나다라마바사아자차카타파하", 10)
+	handler, err := NewPublicStatusHandler(staticPublicSource{document: document}, []string{"https://datapan.statpan.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/datapan/", "/datapan/dependencies/", "/datapan/v1/dependencies"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s status=%d body=%s", path, recorder.Code, recorder.Body.String())
+		}
+		body := recorder.Body.String()
+		for _, forbidden := range []string{"127.0.0.1", "localhost", "public-data", "holiday-emergency-clinics", "apis.data.go.kr/", "?secret=", "http://127."} {
+			if strings.Contains(strings.ToLower(body), strings.ToLower(forbidden)) {
+				t.Fatalf("%s leaked %q: %s", path, forbidden, body)
+			}
+		}
+		if !strings.Contains(body, "공공데이터") {
+			t.Fatalf("%s missing Korean presentation group: %s", path, body)
+		}
+		if path != "/datapan/v1/dependencies" && !strings.Contains(body, "외부 데이터 의존성") {
+			t.Fatalf("%s missing external dependency heading: %s", path, body)
+		}
+	}
+	htmlRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(htmlRecorder, httptest.NewRequest(http.MethodGet, "/datapan/dependencies/", nil))
+	for _, required := range []string{"aria-label=", "focus-visible", "overflow-wrap:anywhere", "공식 데이터포털 페이지"} {
+		if !strings.Contains(htmlRecorder.Body.String(), required) {
+			t.Fatalf("public HTML missing %q: %s", required, htmlRecorder.Body.String())
+		}
+	}
+
+	document = testPublicDocument(t)
+	document.Operations[0].DisplayName = "http://127.0.0.1:8080/raw-probe"
+	unsafe, err := NewPublicStatusHandler(staticPublicSource{document: document}, []string{"https://datapan.statpan.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/datapan/dependencies/", "/datapan/v1/dependencies"} {
+		recorder := httptest.NewRecorder()
+		unsafe.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if recorder.Code != http.StatusServiceUnavailable || strings.Contains(recorder.Body.String(), "127.0.0.1") {
+			t.Fatalf("unsafe presentation was not fail-closed for %s: %d %s", path, recorder.Code, recorder.Body.String())
 		}
 	}
 }
@@ -348,13 +401,10 @@ func TestDatapanStatusRoutesKeepServicesAndDependenciesSeparate(t *testing.T) {
 
 func TestExternalDependencyObservationCannotPromoteOwnedService(t *testing.T) {
 	document := testPublicDocument(t)
-	document.Operations[0] = PublicOperationStatus{
-		OperationID:      document.Operations[0].OperationID,
-		ObservedAt:       &publicNow,
-		ObservationState: "current",
-		Availability:     "operational",
-		Diagnosis:        unknownPublicDiagnosis(),
-	}
+	document.Operations[0].ObservedAt = &publicNow
+	document.Operations[0].ObservationState = "current"
+	document.Operations[0].Availability = "operational"
+	document.Operations[0].Diagnosis = unknownPublicDiagnosis()
 	handler, err := NewPublicStatusHandler(staticPublicSource{document: document}, []string{"https://datapan.statpan.com"})
 	if err != nil {
 		t.Fatal(err)
@@ -442,7 +492,7 @@ func TestPublicStatusDoctorSeparatesContractScopes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.SchemaVersion != PublicStatusDoctorSchemaVersion || report.ServiceContract != ServiceStatusSchemaVersion || report.DependencyContract != DependencyObservationSchemaVersion || report.DependencyCanaryCount != 10 || report.ExternalObservationMeaning != "external_dependency_observations_not_datapan_service_incidents" {
+	if report.SchemaVersion != PublicStatusDoctorSchemaVersion || report.ServiceContract != ServiceStatusSchemaVersion || report.DependencyContract != DependencyObservationSchemaVersion || report.DependencyPresentation != "pinned_registry_catalog_operation_name_fail_closed" || report.DependencyCanaryCount != 10 || report.ExternalObservationMeaning != "external_dependency_observations_not_datapan_service_incidents" {
 		t.Fatalf("doctor scope=%+v", report)
 	}
 	for _, service := range report.OwnedServiceStatus {
