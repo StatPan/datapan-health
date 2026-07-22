@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.datapan.dev/datapan.dependency-observation.v1.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "scope", "operations"],
+  "properties": {
+    "schema_version": {"const": "datapan.dependency-observation.v1"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "scope": {"$ref": "#/$defs/scope"},
+    "operations": {"type": "array", "minItems": 10, "maxItems": 10, "items": {"$ref": "#/$defs/operation"}}
+  },
+  "$defs": {
+    "scope": {"type": "object", "additionalProperties": false, "required": ["kind", "canary_count", "coverage"], "properties": {"kind": {"const": "external_dependency_observations"}, "canary_count": {"const": 10}, "coverage": {"const": "not_datapan_service_sla_or_catalog_coverage"}}},
+    "operation": {"type": "object", "additionalProperties": false, "required": ["operation_id", "observation_state", "availability", "diagnosis"], "properties": {"operation_id": {"type": "string", "pattern": "^dpr-op-[0-9]{8}$"}, "observed_at": {"type": "string", "format": "date-time"}, "observation_state": {"enum": ["current", "stale", "not_observed"]}, "availability": {"enum": ["operational", "degraded", "unknown"]}, "diagnosis": {"$ref": "#/$defs/diagnosis"}}, "allOf": [{"if": {"properties": {"observation_state": {"enum": ["stale", "not_observed"]}}}, "then": {"properties": {"availability": {"const": "unknown"}}}}]},
+    "diagnosis": {"type": "object", "additionalProperties": false, "required": ["code", "determination", "accountable_party", "recommended_action_ids", "avoid_action_ids"], "properties": {"code": {"type": "string"}, "determination": {"enum": ["observed", "inferred", "unknown"]}, "accountable_party": {"enum": ["user", "datapan", "data_go_kr", "provider", "shared", "unknown"]}, "recommended_action_ids": {"type": "array", "maxItems": 8, "items": {"type": "string"}}, "avoid_action_ids": {"type": "array", "maxItems": 8, "items": {"type": "string"}}}}
+  }
+}

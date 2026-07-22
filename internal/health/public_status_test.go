@@ -43,7 +43,7 @@ func TestPublicStatusHandlerBrowserAndCacheContract(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	request := httptest.NewRequest(http.MethodGet, "https://health.example/v1/status", nil)
+	request := httptest.NewRequest(http.MethodGet, "https://health.example/datapan/v1/dependencies", nil)
 	request.Header.Set("Origin", "https://datapan.statpan.com")
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
@@ -59,7 +59,7 @@ func TestPublicStatusHandlerBrowserAndCacheContract(t *testing.T) {
 	if recorder.Header().Get("Vary") != "Origin" || !strings.Contains(recorder.Header().Get("Cache-Control"), "max-age=30") || recorder.Header().Get("ETag") == "" {
 		t.Fatal("cache/CORS headers missing")
 	}
-	if err := schemas.ValidateHealthPublicStatusV1(recorder.Body.Bytes()); err != nil {
+	if err := schemas.ValidateDependencyObservationV1(recorder.Body.Bytes()); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(strings.ToLower(recorder.Body.String()), "dataset_id") || strings.Contains(strings.ToLower(recorder.Body.String()), "endpoint") || strings.Contains(strings.ToLower(recorder.Body.String()), "credential") {
@@ -67,7 +67,7 @@ func TestPublicStatusHandlerBrowserAndCacheContract(t *testing.T) {
 	}
 
 	etag := recorder.Header().Get("ETag")
-	conditional := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	conditional := httptest.NewRequest(http.MethodGet, "/datapan/v1/dependencies", nil)
 	conditional.Header.Set("If-None-Match", etag)
 	conditionalRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(conditionalRecorder, conditional)
@@ -75,7 +75,7 @@ func TestPublicStatusHandlerBrowserAndCacheContract(t *testing.T) {
 		t.Fatal("conditional GET did not return empty 304")
 	}
 
-	head := httptest.NewRequest(http.MethodHead, "/v1/status", nil)
+	head := httptest.NewRequest(http.MethodHead, "/datapan/v1/dependencies", nil)
 	headRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(headRecorder, head)
 	if headRecorder.Code != http.StatusOK || headRecorder.Body.Len() != 0 || headRecorder.Header().Get("Content-Length") == "" {
@@ -104,7 +104,7 @@ func TestPublicStatusHandlerCORSMatrix(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			req := httptest.NewRequest(test.method, "/v1/status", nil)
+			req := httptest.NewRequest(test.method, "/datapan/v1/dependencies", nil)
 			req.Header.Set("Origin", test.origin)
 			req.Header.Set("Access-Control-Request-Method", test.requestedMethod)
 			req.Header.Set("Access-Control-Request-Headers", test.requestedHeaders)
@@ -142,7 +142,7 @@ func TestPublicStatusPreflightVaryCacheDimensions(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodOptions, "/v1/status", nil)
+			req := httptest.NewRequest(http.MethodOptions, "/datapan/v1/dependencies", nil)
 			req.Header.Set("Origin", test.origin)
 			req.Header.Set("Access-Control-Request-Method", test.requestedMethod)
 			req.Header.Set("Access-Control-Request-Headers", test.requestedHeaders)
@@ -292,16 +292,176 @@ func TestPublicStatusHandlerSourceFailureIsBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v1/status", nil))
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/datapan/v1/dependencies", nil))
 	if recorder.Code != 503 || recorder.Header().Get("Cache-Control") != "no-store" || strings.Contains(recorder.Body.String(), "secret") {
 		t.Fatalf("unsafe error: %s", recorder.Body.String())
 	}
 
 	queryRecorder := httptest.NewRecorder()
-	handler.ServeHTTP(queryRecorder, httptest.NewRequest(http.MethodGet, "/v1/status?secret=1", nil))
+	handler.ServeHTTP(queryRecorder, httptest.NewRequest(http.MethodGet, "/datapan/v1/dependencies?secret=1", nil))
 	if queryRecorder.Code != 404 || queryRecorder.Header().Get("Cache-Control") != "no-store" || !strings.Contains(queryRecorder.Body.String(), `"status_unavailable"`) || strings.Contains(queryRecorder.Body.String(), "secret") {
 		t.Fatalf("query-bearing public route was not rejected safely: %s", queryRecorder.Body.String())
 	}
+}
+
+func TestDatapanStatusRoutesKeepServicesAndDependenciesSeparate(t *testing.T) {
+	handler, err := NewPublicStatusHandler(staticPublicSource{document: testPublicDocument(t)}, []string{"https://datapan.statpan.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	services := []PublicServiceStatus{
+		{ServiceID: "dataset-api", Owner: "datapan-data", SurfaceKind: "dataset_api", State: "operational", ObservedAt: publicNow, CheckID: "dataset-api-immutable-deployment", PublicSurface: "https://api.example.test", DeploymentIdentity: strings.Repeat("a", 40)},
+		{ServiceID: "registry-distribution", Owner: "datapan-registry", SurfaceKind: "registry_distribution", State: "unknown", ObservedAt: publicNow, CheckID: "registry-distribution-artifact", UnknownReason: "deployment_identity_unavailable"},
+		{ServiceID: "datapan-web-atlas", Owner: "datapan", SurfaceKind: "web_delivery", State: "unknown", ObservedAt: publicNow, CheckID: "datapan-web-immutable-release", UnknownReason: "public_surface_unavailable"},
+		{ServiceID: "datapan-health", Owner: "datapan-health", SurfaceKind: "health_self", State: "unknown", ObservedAt: publicNow, CheckID: "health-self-immutable-deployment", UnknownReason: "deployment_identity_unavailable"},
+	}
+	handler.services = &OwnedServiceStatusSource{checks: []OwnedServiceCheck{
+		OwnedServiceCheckFunc(func(context.Context, time.Time) PublicServiceStatus { return services[0] }),
+		OwnedServiceCheckFunc(func(context.Context, time.Time) PublicServiceStatus { return services[1] }),
+		OwnedServiceCheckFunc(func(context.Context, time.Time) PublicServiceStatus { return services[2] }),
+		OwnedServiceCheckFunc(func(context.Context, time.Time) PublicServiceStatus { return services[3] }),
+	}, now: func() time.Time { return publicNow }}
+
+	serviceRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(serviceRecorder, httptest.NewRequest(http.MethodGet, "/datapan/v1/services", nil))
+	if serviceRecorder.Code != http.StatusOK || schemas.ValidateServiceStatusV1(serviceRecorder.Body.Bytes()) != nil || strings.Contains(serviceRecorder.Body.String(), "dpr-op-") {
+		t.Fatalf("services=%d %s", serviceRecorder.Code, serviceRecorder.Body.String())
+	}
+	dependencyRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(dependencyRecorder, httptest.NewRequest(http.MethodGet, "/datapan/v1/dependencies", nil))
+	if dependencyRecorder.Code != http.StatusOK || schemas.ValidateDependencyObservationV1(dependencyRecorder.Body.Bytes()) != nil || strings.Contains(dependencyRecorder.Body.String(), "dataset-api") {
+		t.Fatalf("dependencies=%d %s", dependencyRecorder.Code, dependencyRecorder.Body.String())
+	}
+	legacyRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(legacyRecorder, httptest.NewRequest(http.MethodGet, "/datapan/v1/status", nil))
+	if legacyRecorder.Code != http.StatusOK || schemas.ValidateLegacyDependencyStatusV1(legacyRecorder.Body.Bytes()) != nil || legacyRecorder.Header().Get("Deprecation") != "true" || legacyRecorder.Header().Get("Sunset") != "Thu, 31 Dec 2026 23:59:59 GMT" || legacyRecorder.Header().Get("Link") != "</datapan/v1/dependencies>; rel=\"successor-version\", </datapan/dependencies/>; rel=\"alternate\"; type=\"text/html\"" {
+		t.Fatalf("legacy headers/body=%v %s", legacyRecorder.Header(), legacyRecorder.Body.String())
+	}
+	for _, path := range []string{"/datapan/", "/datapan/services/", "/datapan/dependencies/"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if recorder.Code != http.StatusOK || recorder.Header().Get("Content-Type") != "text/html; charset=utf-8" || recorder.Header().Get("ETag") == "" || !strings.Contains(recorder.Body.String(), "Datapan") {
+			t.Fatalf("html %s=%d %s", path, recorder.Code, recorder.Body.String())
+		}
+	}
+}
+
+func TestExternalDependencyObservationCannotPromoteOwnedService(t *testing.T) {
+	document := testPublicDocument(t)
+	document.Operations[0] = PublicOperationStatus{
+		OperationID:      document.Operations[0].OperationID,
+		ObservedAt:       &publicNow,
+		ObservationState: "current",
+		Availability:     "operational",
+		Diagnosis:        unknownPublicDiagnosis(),
+	}
+	handler, err := NewPublicStatusHandler(staticPublicSource{document: document}, []string{"https://datapan.statpan.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dependencies := httptest.NewRecorder()
+	handler.ServeHTTP(dependencies, httptest.NewRequest(http.MethodGet, "/datapan/v1/dependencies", nil))
+	if dependencies.Code != http.StatusOK || !strings.Contains(dependencies.Body.String(), `"availability":"operational"`) {
+		t.Fatalf("dependency observation was not retained: %d %s", dependencies.Code, dependencies.Body.String())
+	}
+
+	services := httptest.NewRecorder()
+	handler.ServeHTTP(services, httptest.NewRequest(http.MethodGet, "/datapan/v1/services", nil))
+	if services.Code != http.StatusOK || schemas.ValidateServiceStatusV1(services.Body.Bytes()) != nil {
+		t.Fatalf("services=%d %s", services.Code, services.Body.String())
+	}
+	var serviceDocument ServiceStatusDocument
+	if err := json.Unmarshal(services.Body.Bytes(), &serviceDocument); err != nil {
+		t.Fatal(err)
+	}
+	if len(serviceDocument.Services) != 4 {
+		t.Fatalf("services=%d", len(serviceDocument.Services))
+	}
+	for _, service := range serviceDocument.Services {
+		if service.State != "unknown" || service.DeploymentIdentity != "" || service.UnknownReason != "deployment_identity_unavailable" {
+			t.Fatalf("external observation promoted owned service: %+v", service)
+		}
+	}
+}
+
+func TestOwnedServiceChecksRequireOwnImmutableIdentity(t *testing.T) {
+	valid := []OwnedServiceCheck{
+		OwnedServiceCheckFunc(func(context.Context, time.Time) PublicServiceStatus {
+			return PublicServiceStatus{ServiceID: "dataset-api", Owner: "datapan-data", SurfaceKind: "dataset_api", State: "operational", ObservedAt: publicNow, CheckID: "dataset-api-immutable-deployment", PublicSurface: "https://api.example.test", DeploymentIdentity: strings.Repeat("a", 40)}
+		}),
+		OwnedServiceCheckFunc(func(context.Context, time.Time) PublicServiceStatus {
+			return PublicServiceStatus{ServiceID: "registry-distribution", Owner: "datapan-registry", SurfaceKind: "registry_distribution", State: "degraded", ObservedAt: publicNow, CheckID: "registry-distribution-artifact", PublicSurface: "https://registry.example.test", DeploymentIdentity: strings.Repeat("b", 40)}
+		}),
+		OwnedServiceCheckFunc(func(context.Context, time.Time) PublicServiceStatus {
+			return PublicServiceStatus{ServiceID: "datapan-web-atlas", Owner: "datapan", SurfaceKind: "web_delivery", State: "unknown", ObservedAt: publicNow, CheckID: "datapan-web-immutable-release", UnknownReason: "configuration_unavailable"}
+		}),
+		OwnedServiceCheckFunc(func(context.Context, time.Time) PublicServiceStatus {
+			return PublicServiceStatus{ServiceID: "datapan-health", Owner: "datapan-health", SurfaceKind: "health_self", State: "unknown", ObservedAt: publicNow, CheckID: "health-self-immutable-deployment", UnknownReason: "deployment_identity_unavailable"}
+		}),
+	}
+	source, err := NewOwnedServiceStatusSource(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.now = func() time.Time { return publicNow }
+	document, err := source.Snapshot(context.Background())
+	if err != nil || schemas.ValidateServiceStatusV1(mustJSON(t, document)) != nil {
+		t.Fatalf("valid owned checks failed: document=%+v err=%v", document, err)
+	}
+	encoded := mustJSON(t, document)
+	var projected map[string]any
+	_ = json.Unmarshal(encoded, &projected)
+	for _, service := range projected["services"].([]any) {
+		entry := service.(map[string]any)
+		if entry["service_id"] == "dataset-api" {
+			entry["owner"] = "datapan"
+		}
+	}
+	wrongOwner, _ := json.Marshal(projected)
+	if schemas.ValidateServiceStatusV1(wrongOwner) == nil {
+		t.Fatal("service schema accepted a mismatched owner")
+	}
+
+	invalid := append([]OwnedServiceCheck(nil), valid...)
+	invalid[0] = OwnedServiceCheckFunc(func(context.Context, time.Time) PublicServiceStatus {
+		return PublicServiceStatus{ServiceID: "dataset-api", Owner: "datapan-data", SurfaceKind: "dataset_api", State: "operational", ObservedAt: publicNow, CheckID: "dataset-api-immutable-deployment", PublicSurface: "https://api.example.test"}
+	})
+	bad, err := NewOwnedServiceStatusSource(invalid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad.now = func() time.Time { return publicNow }
+	if _, err := bad.Snapshot(context.Background()); err == nil {
+		t.Fatal("operational service without immutable deployment identity was accepted")
+	}
+}
+
+func TestPublicStatusDoctorSeparatesContractScopes(t *testing.T) {
+	report, err := BuildPublicStatusDoctorReport(context.Background(), DefaultOwnedServiceStatusSource(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.SchemaVersion != PublicStatusDoctorSchemaVersion || report.ServiceContract != ServiceStatusSchemaVersion || report.DependencyContract != DependencyObservationSchemaVersion || report.DependencyCanaryCount != 10 || report.ExternalObservationMeaning != "external_dependency_observations_not_datapan_service_incidents" {
+		t.Fatalf("doctor scope=%+v", report)
+	}
+	for _, service := range report.OwnedServiceStatus {
+		if service.State != "unknown" || service.UnknownReason != "deployment_identity_unavailable" {
+			t.Fatalf("doctor did not retain explicit unknown: %+v", service)
+		}
+	}
+	if _, err := BuildPublicStatusDoctorReport(context.Background(), DefaultOwnedServiceStatusSource(), 9); err == nil {
+		t.Fatal("doctor accepted a non-canonical dependency scope")
+	}
+}
+
+func mustJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
 }
 
 func TestPublicStatusSchemaRejectsPrivateFields(t *testing.T) {
@@ -334,5 +494,15 @@ func TestPublicStatusSchemaRejectsPrivateFields(t *testing.T) {
 	duplicateIdentity, _ := json.Marshal(document)
 	if schemas.ValidateHealthPublicStatusV1(duplicateIdentity) == nil {
 		t.Fatal("schema accepted a duplicate public operation identity")
+	}
+
+	legacy, _ := json.Marshal(legacyDependencyDocument(testPublicDocument(t)))
+	var legacyValue map[string]any
+	_ = json.Unmarshal(legacy, &legacyValue)
+	legacyOperations := legacyValue["operations"].([]any)
+	legacyOperations[0].(map[string]any)["endpoint"] = "private.example"
+	unsafeLegacy, _ := json.Marshal(legacyValue)
+	if schemas.ValidateLegacyDependencyStatusV1(unsafeLegacy) == nil {
+		t.Fatal("legacy schema accepted a private operation field")
 	}
 }

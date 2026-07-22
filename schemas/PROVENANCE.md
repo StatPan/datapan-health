@@ -21,3 +21,12 @@ an explicit consumer upgrade; a new unknown version is not accepted as v1.
 issue #27. It is an internal atomic input to the existing public status adapter,
 not a new public response version. Its exact Registry, vocabulary, correlation
 rule, assertion policy, and ten-operation identities are fail-closed.
+
+`datapan.service-status.v1`, `datapan.dependency-observation.v1`, and
+`datapan.dependency-status-legacy.v1` are Health-owned route contracts from
+issue #41. The service schema is limited to the four named Datapan-owned
+surfaces and requires an immutable deployment identity before `operational` or
+`degraded`. The dependency schemas carry only the ten external canary
+observations. The legacy schema is dependency-only and has a separate
+deprecation/removal gate; no external observation may be converted to a
+Datapan service state.

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
@@ -18,11 +20,19 @@ func main() {
 	diagnosisPath := flag.String("diagnosis-snapshot", env("PUBLIC_DIAGNOSIS_SNAPSHOT", "data/public-diagnosis-snapshot.json"), "atomic reviewed diagnosis snapshot")
 	assertionPinPath := flag.String("assertion-pin", env("ASSERTION_POLICY_PIN", "config/registry/assertion-policy-contract-pin.json"), "exact assertion policy contract")
 	originList := flag.String("allowed-origins", os.Getenv("PUBLIC_STATUS_ALLOWED_ORIGINS"), "comma-separated exact HTTPS browser origins")
+	doctor := flag.Bool("doctor", false, "print value-free service/dependency readiness report and exit")
 	flag.Parse()
 
 	canaries, err := health.LoadCanaryConfig(*canaryPath)
 	if err != nil {
 		fatal()
+	}
+	if *doctor {
+		report, err := health.BuildPublicStatusDoctorReport(context.Background(), health.DefaultOwnedServiceStatusSource(), len(canaries.Canaries))
+		if err != nil || json.NewEncoder(os.Stdout).Encode(report) != nil {
+			fatal()
+		}
+		return
 	}
 	source, err := health.NewGatusPublicStatusSource(*gatusStatusURL, canaries, 5*time.Second)
 	if err != nil {

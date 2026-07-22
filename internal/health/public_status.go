@@ -230,8 +230,9 @@ func (s *GatusPublicStatusSource) Snapshot(ctx context.Context) (PublicStatusDoc
 }
 
 type PublicStatusHandler struct {
-	source  PublicStatusSource
-	origins map[string]bool
+	source   PublicStatusSource
+	services PublicServiceStatusSource
+	origins  map[string]bool
 }
 
 func NewPublicStatusHandler(source PublicStatusSource, origins []string) (*PublicStatusHandler, error) {
@@ -246,17 +247,25 @@ func NewPublicStatusHandler(source PublicStatusSource, origins []string) (*Publi
 		}
 		allowed[origin] = true
 	}
-	return &PublicStatusHandler{source: source, origins: allowed}, nil
+	return &PublicStatusHandler{source: source, services: DefaultOwnedServiceStatusSource(), origins: allowed}, nil
 }
 
 func (h *PublicStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawQuery != "" {
+		writePublicError(w, http.StatusNotFound)
+		return
+	}
+	if isDatapanHTMLRoute(r.URL.Path) {
+		serveDatapanHTML(w, r)
+		return
+	}
+	if !isDatapanJSONRoute(r.URL.Path) {
+		writePublicError(w, http.StatusNotFound)
+		return
+	}
 	mergeVary(w.Header(), "Origin")
 	if r.Method == http.MethodOptions {
 		mergeVary(w.Header(), "Access-Control-Request-Method", "Access-Control-Request-Headers")
-	}
-	if r.URL.Path != "/v1/status" || r.URL.RawQuery != "" {
-		writePublicError(w, http.StatusNotFound)
-		return
 	}
 	origin := r.Header.Get("Origin")
 	if origin != "" && !h.origins[origin] {
@@ -281,13 +290,38 @@ func (h *PublicStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		writePublicError(w, http.StatusMethodNotAllowed)
 		return
 	}
-	document, err := h.source.Snapshot(r.Context())
-	if err != nil {
-		writePublicError(w, http.StatusServiceUnavailable)
-		return
+	var data []byte
+	var err error
+	switch r.URL.Path {
+	case "/datapan/v1/services":
+		var document ServiceStatusDocument
+		document, err = h.services.Snapshot(r.Context())
+		if err == nil {
+			data, err = json.Marshal(document)
+			if schemas.ValidateServiceStatusV1(data) != nil {
+				err = errors.New("service status invalid")
+			}
+		}
+	case "/datapan/v1/dependencies", "/datapan/v1/status":
+		var document PublicStatusDocument
+		document, err = h.source.Snapshot(r.Context())
+		if err == nil && r.URL.Path == "/datapan/v1/dependencies" {
+			data, err = json.Marshal(dependencyDocument(document))
+			if schemas.ValidateDependencyObservationV1(data) != nil {
+				err = errors.New("dependency status invalid")
+			}
+		}
+		if err == nil && r.URL.Path == "/datapan/v1/status" {
+			data, err = json.Marshal(legacyDependencyDocument(document))
+			if schemas.ValidateLegacyDependencyStatusV1(data) != nil {
+				err = errors.New("legacy dependency status invalid")
+			}
+			w.Header().Set("Deprecation", "true")
+			w.Header().Set("Sunset", "Thu, 31 Dec 2026 23:59:59 GMT")
+			w.Header().Set("Link", "</datapan/v1/dependencies>; rel=\"successor-version\", </datapan/dependencies/>; rel=\"alternate\"; type=\"text/html\"")
+		}
 	}
-	data, err := json.Marshal(document)
-	if err != nil || schemas.ValidateHealthPublicStatusV1(data) != nil {
+	if err != nil {
 		writePublicError(w, http.StatusServiceUnavailable)
 		return
 	}
@@ -309,6 +343,45 @@ func (h *PublicStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+func isDatapanJSONRoute(path string) bool {
+	return path == "/datapan/v1/services" || path == "/datapan/v1/dependencies" || path == "/datapan/v1/status"
+}
+
+func isDatapanHTMLRoute(path string) bool {
+	return path == "/datapan/" || path == "/datapan/services/" || path == "/datapan/dependencies/"
+}
+
+func serveDatapanHTML(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		writePublicError(w, http.StatusMethodNotAllowed)
+		return
+	}
+	copy := map[string]struct{ title, body string }{
+		"/datapan/":              {"Datapan 상태 개요", "Datapan 서비스와 외부 데이터 의존성 관측을 분리해 표시합니다."},
+		"/datapan/services/":     {"Datapan 서비스", "Dataset API, Registry 배포, Datapan Web/Atlas, Health 자체 상태만 표시합니다. 배포 identity가 없으면 unknown입니다."},
+		"/datapan/dependencies/": {"외부 데이터 의존성", "data.go.kr canary 관측은 외부 의존성 표본이며 Datapan 서비스 SLA나 전체 카탈로그 상태가 아닙니다."},
+	}
+	page := copy[r.URL.Path]
+	body := "<!doctype html><html lang=\"ko\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>" + page.title + "</title><style>body{font:16px system-ui;margin:0;background:#f8fafc;color:#0f172a}main{max-width:760px;margin:48px auto;padding:24px}nav{display:flex;gap:16px;flex-wrap:wrap}a{color:#2563eb}section{background:#fff;border:1px solid #dbe3ef;border-radius:12px;padding:24px;margin-top:24px}small{color:#475569}</style><main><nav><a href=\"/datapan/\">개요</a><a href=\"/datapan/services/\">서비스</a><a href=\"/datapan/dependencies/\">외부 의존성</a></nav><section><h1>" + page.title + "</h1><p>" + page.body + "</p><small>JSON: /datapan/v1/services · /datapan/v1/dependencies</small></section></main></html>"
+	w.Header().Set("Cache-Control", "public, max-age=30, stale-if-error=60, no-transform")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	sum := sha256.Sum256([]byte(body))
+	etag := `"sha256-` + hex.EncodeToString(sum[:]) + `"`
+	w.Header().Set("ETag", etag)
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	_, _ = io.WriteString(w, body)
 }
 
 func mergeVary(header http.Header, fields ...string) {
