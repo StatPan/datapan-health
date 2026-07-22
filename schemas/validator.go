@@ -22,6 +22,9 @@ var healthPublicStatusSchema []byte
 //go:embed datapan.health-public-diagnosis-snapshot.v1.schema.json
 var healthPublicDiagnosisSnapshotSchema []byte
 
+//go:embed datapan.health-bounded-observation-run.v1.schema.json
+var healthBoundedObservationRunSchema []byte
+
 var (
 	healthProbeOnce                   sync.Once
 	healthProbe                       *jsonschema.Schema
@@ -35,6 +38,9 @@ var (
 	healthPublicDiagnosisSnapshotOnce sync.Once
 	healthPublicDiagnosisSnapshot     *jsonschema.Schema
 	healthPublicDiagnosisSnapshotErr  error
+	healthBoundedObservationRunOnce   sync.Once
+	healthBoundedObservationRun       *jsonschema.Schema
+	healthBoundedObservationRunErr    error
 )
 
 func ValidateHealthProbeV1(data []byte) error {
@@ -65,6 +71,16 @@ func ValidateHealthPublicDiagnosisSnapshotV1(data []byte) error {
 		healthPublicDiagnosisSnapshot, healthPublicDiagnosisSnapshotErr = compile(healthPublicDiagnosisSnapshotSchema, "https://schemas.datapan.dev/datapan.health-public-diagnosis-snapshot.v1.schema.json")
 	})
 	return validate(data, healthPublicDiagnosisSnapshot, healthPublicDiagnosisSnapshotErr, "public diagnosis snapshot")
+}
+
+// ValidateHealthBoundedObservationRunV1 validates the private Health producer
+// receipt used to replace Registry-side bounded provider execution. It is not
+// a public status or archive schema.
+func ValidateHealthBoundedObservationRunV1(data []byte) error {
+	healthBoundedObservationRunOnce.Do(func() {
+		healthBoundedObservationRun, healthBoundedObservationRunErr = compile(healthBoundedObservationRunSchema, "https://schemas.datapan.dev/datapan.health-bounded-observation-run.v1.schema.json")
+	})
+	return validate(data, healthBoundedObservationRun, healthBoundedObservationRunErr, "bounded observation run")
 }
 
 func compile(source []byte, uri string) (*jsonschema.Schema, error) {
