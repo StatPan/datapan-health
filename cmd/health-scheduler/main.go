@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -27,7 +28,11 @@ func main() {
 		RegistryRevision:  config.ConsumptionProvenance.RegistryDatasetRevision,
 	}
 	adapter := health.AdapterProcess{Path: env("HEALTH_RUNNER_BIN", "health-runner"), Env: []string{"GATUS_URL", "GATUS_TOKEN", "RECEIPT_ARCHIVE", "CANARY_CONFIG"}}
-	scheduler, err := health.NewScheduler(config, env("SCHEDULER_STATE", "data/scheduler-state.json"), runner, adapter)
+	coverage, err := scheduleCoverageLifecycle()
+	if err != nil {
+		log.Fatal("scheduler coverage configuration is not ready")
+	}
+	scheduler, err := health.NewSchedulerWithCoverage(config, env("SCHEDULER_STATE", "data/scheduler-state.json"), runner, adapter, coverage)
 	if err != nil {
 		log.Fatal("scheduler state is not ready")
 	}
@@ -87,3 +92,29 @@ func env(key, fallback string) string {
 	return fallback
 }
 func envList(key string) []string { return strings.Split(strings.TrimSpace(os.Getenv(key)), ",") }
+
+// scheduleCoverageLifecycle is opt-in and dry-run-only. It joins the real
+// health-scheduler acceptance loop without adding a provider runner, canary
+// execution mode, credential, or delivery target for full-population work.
+func scheduleCoverageLifecycle() (*health.ScheduleCoverageLifecycle, error) {
+	statePath := strings.TrimSpace(os.Getenv("SCHEDULE_COVERAGE_STATE"))
+	if statePath == "" {
+		return nil, nil
+	}
+	dryRun, err := strconv.ParseBool(env("SCHEDULE_COVERAGE_DRY_RUN", "true"))
+	if err != nil || !dryRun {
+		return nil, fmt.Errorf("schedule coverage requires dry run")
+	}
+	shards, err := strconv.Atoi(env("SCHEDULE_COVERAGE_SHARDS", "64"))
+	if err != nil {
+		return nil, err
+	}
+	return health.NewScheduleCoverageLifecycle(health.ScheduleCoverageLifecycleConfig{
+		StatePath:           statePath,
+		ManifestPath:        strings.TrimSpace(os.Getenv("SCHEDULE_COVERAGE_MANIFEST")),
+		ReleaseManifestPath: strings.TrimSpace(os.Getenv("SCHEDULE_COVERAGE_RELEASE_MANIFEST")),
+		ReceiptPath:         env("SCHEDULE_COVERAGE_RECEIPT", "config/registry/operation-manifest-receipt.json"),
+		ShardCount:          shards,
+		DryRun:              dryRun,
+	})
+}

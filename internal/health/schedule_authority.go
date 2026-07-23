@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -14,19 +15,26 @@ const ScheduleCoverageAuthorityStateVersion = "datapan.health-schedule-coverage-
 
 var ErrSchedulePlanTransition = errors.New("schedule plan transition is unsafe")
 
+// ErrScheduleAuthorityConflict is returned when the persisted generation has
+// changed before a state transition can be committed. Callers must reload the
+// authority; they must never retry a stale in-memory ledger blindly.
+var ErrScheduleAuthorityConflict = errors.New("schedule authority state changed")
+
 // ScheduleCoverageAuthority persists the queue state before returning a claim
 // or terminal transition. It intentionally has no provider runner: the only
 // supported mode in #49 is dry-run scheduling and evidence production.
 type ScheduleCoverageAuthority struct {
-	mu        sync.Mutex
-	statePath string
-	ledger    *ScheduleCoverageLedger
-	latest    *ScheduleCoverageReceipt
-	previous  *ScheduleCoverageReceipt
+	mu         sync.Mutex
+	statePath  string
+	ledger     *ScheduleCoverageLedger
+	latest     *ScheduleCoverageReceipt
+	previous   *ScheduleCoverageReceipt
+	generation uint64
 }
 
 type scheduleCoverageAuthorityState struct {
 	SchemaVersion string                         `json:"schema_version"`
+	Generation    uint64                         `json:"generation"`
 	Ledger        ScheduleCoverageLedgerSnapshot `json:"ledger"`
 	Latest        *ScheduleCoverageReceipt       `json:"latest_receipt,omitempty"`
 	Previous      *ScheduleCoverageReceipt       `json:"previous_receipt,omitempty"`
@@ -48,41 +56,52 @@ func OpenScheduleCoverageAuthority(statePath string, plan ScheduleCoveragePlan, 
 	if statePath == "" || VerifyScheduleCoveragePlan(plan, queue) != nil {
 		return nil, errors.New("schedule authority input is invalid")
 	}
-	state, found, err := readScheduleCoverageAuthorityState(statePath)
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		ledger, err := NewScheduleCoverageLedger(plan, queue)
+	var authority *ScheduleCoverageAuthority
+	err := withScheduleCoverageAuthorityLock(statePath, func() error {
+		state, found, err := readScheduleCoverageAuthorityState(statePath)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		authority := &ScheduleCoverageAuthority{statePath: statePath, ledger: ledger}
-		if err := authority.saveLocked(); err != nil {
-			return nil, err
+		if !found {
+			ledger, err := NewScheduleCoverageLedger(plan, queue)
+			if err != nil {
+				return err
+			}
+			state = scheduleCoverageAuthorityState{SchemaVersion: ScheduleCoverageAuthorityStateVersion, Ledger: ledger.Snapshot()}
+			if err := commitScheduleCoverageAuthorityState(statePath, 0, state); err != nil {
+				return err
+			}
+			authority = &ScheduleCoverageAuthority{statePath: statePath, ledger: ledger, generation: 1}
+			return nil
 		}
-		return authority, nil
-	}
-	ledger, err := restoreScheduleCoverageAuthorityState(state)
-	if err != nil || !sameScheduleCoveragePlan(ledger.plan, plan) || VerifyScheduleCoveragePlan(plan, queue) != nil {
-		return nil, ErrSchedulePlanTransition
-	}
-	return &ScheduleCoverageAuthority{statePath: statePath, ledger: ledger, latest: state.Latest, previous: state.Previous}, nil
+		ledger, err := restoreScheduleCoverageAuthorityState(state)
+		if err != nil || !sameScheduleCoveragePlan(ledger.plan, plan) {
+			return ErrSchedulePlanTransition
+		}
+		authority = &ScheduleCoverageAuthority{statePath: statePath, ledger: ledger, latest: state.Latest, previous: state.Previous, generation: state.Generation}
+		return nil
+	})
+	return authority, err
 }
 
 func LoadScheduleCoverageAuthority(statePath string) (*ScheduleCoverageAuthority, error) {
 	if statePath == "" {
 		return nil, errors.New("schedule authority input is invalid")
 	}
-	state, found, err := readScheduleCoverageAuthorityState(statePath)
-	if err != nil || !found {
-		return nil, errors.New("schedule authority state is unavailable")
-	}
-	ledger, err := restoreScheduleCoverageAuthorityState(state)
-	if err != nil {
-		return nil, errors.New("schedule authority state is unavailable")
-	}
-	return &ScheduleCoverageAuthority{statePath: statePath, ledger: ledger, latest: state.Latest, previous: state.Previous}, nil
+	var authority *ScheduleCoverageAuthority
+	err := withScheduleCoverageAuthorityLock(statePath, func() error {
+		state, found, err := readScheduleCoverageAuthorityState(statePath)
+		if err != nil || !found {
+			return errors.New("schedule authority state is unavailable")
+		}
+		ledger, err := restoreScheduleCoverageAuthorityState(state)
+		if err != nil {
+			return errors.New("schedule authority state is unavailable")
+		}
+		authority = &ScheduleCoverageAuthority{statePath: statePath, ledger: ledger, latest: state.Latest, previous: state.Previous, generation: state.Generation}
+		return nil
+	})
+	return authority, err
 }
 
 func (a *ScheduleCoverageAuthority) Claim(subject string, now time.Time, lease time.Duration) (ScheduleClaim, error) {
@@ -120,17 +139,17 @@ func (a *ScheduleCoverageAuthority) Complete(claim ScheduleClaim, now time.Time)
 func (a *ScheduleCoverageAuthority) RecordCoverage(observedAt time.Time) (ScheduleCoverageReceipt, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	receipt, err := a.ledger.CoverageReceipt(observedAt)
-	if err != nil {
-		return ScheduleCoverageReceipt{}, err
-	}
-	previousLatest := a.latest
-	a.latest = &receipt
-	if err := a.saveLocked(); err != nil {
-		a.latest = previousLatest
-		return ScheduleCoverageReceipt{}, err
-	}
-	return receipt, nil
+	var receipt ScheduleCoverageReceipt
+	err := a.withFreshStateLocked(func(state scheduleCoverageAuthorityState, ledger *ScheduleCoverageLedger) (scheduleCoverageAuthorityState, *ScheduleCoverageLedger, error) {
+		var err error
+		receipt, err = ledger.CoverageReceipt(observedAt)
+		if err != nil {
+			return state, ledger, err
+		}
+		state.Latest = &receipt
+		return state, ledger, nil
+	})
+	return receipt, err
 }
 
 func ReadScheduleCoverageDoctorReport(statePath string, reference time.Time, maxAge time.Duration) ScheduleCoverageDoctorReport {
@@ -156,53 +175,49 @@ func ReadScheduleCoverageDoctorReport(statePath string, reference time.Time, max
 func (a *ScheduleCoverageAuthority) Rebalance(next ScheduleCoveragePlan, queue []ScheduledOperation, at time.Time) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if VerifyScheduleCoveragePlan(next, queue) != nil || !at.UTC().Equal(next.Interval.Start) || !next.Interval.Start.After(a.ledger.plan.Interval.Start) || next.Interval.Start.Sub(a.ledger.plan.Interval.Start)%scheduleInterval != 0 {
-		return ErrSchedulePlanTransition
-	}
-	for _, entry := range a.ledger.entries {
-		if entry.State == "claimed" && entry.LeaseExpires.After(at.UTC()) {
-			return ErrSchedulePlanTransition
+	return a.withFreshStateLocked(func(state scheduleCoverageAuthorityState, ledger *ScheduleCoverageLedger) (scheduleCoverageAuthorityState, *ScheduleCoverageLedger, error) {
+		if VerifyScheduleCoveragePlan(next, queue) != nil || !at.UTC().Equal(next.Interval.Start) || !next.Interval.Start.After(ledger.plan.Interval.Start) || next.Interval.Start.Sub(ledger.plan.Interval.Start)%scheduleInterval != 0 {
+			return state, ledger, ErrSchedulePlanTransition
 		}
-	}
-	previous, err := a.ledger.CoverageReceipt(at)
-	if err != nil {
-		return ErrSchedulePlanTransition
-	}
-	ledger, err := NewScheduleCoverageLedger(next, queue)
-	if err != nil {
-		return ErrSchedulePlanTransition
-	}
-	oldLedger, oldLatest, oldPrevious := a.ledger, a.latest, a.previous
-	a.ledger, a.latest, a.previous = ledger, nil, &previous
-	if err := a.saveLocked(); err != nil {
-		a.ledger, a.latest, a.previous = oldLedger, oldLatest, oldPrevious
-		return err
-	}
-	return nil
+		for _, entry := range ledger.entries {
+			if entry.State == "claimed" && entry.LeaseExpires.After(at.UTC()) {
+				return state, ledger, ErrSchedulePlanTransition
+			}
+		}
+		previous, err := ledger.CoverageReceipt(at)
+		if err != nil {
+			return state, ledger, ErrSchedulePlanTransition
+		}
+		nextLedger, err := NewScheduleCoverageLedger(next, queue)
+		if err != nil {
+			return state, ledger, ErrSchedulePlanTransition
+		}
+		state.Latest, state.Previous = nil, &previous
+		return state, nextLedger, nil
+	})
 }
 
 func (a *ScheduleCoverageAuthority) transition(apply func(*ScheduleCoverageLedger) error) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	candidate, err := RestoreScheduleCoverageLedger(a.ledger.Snapshot())
-	if err != nil {
-		return errors.New("schedule authority state is unavailable")
-	}
-	if err := apply(candidate); err != nil {
-		return err
-	}
-	old := a.ledger
-	a.ledger = candidate
-	if err := a.saveLocked(); err != nil {
-		a.ledger = old
-		return err
-	}
-	return nil
+	return a.withFreshStateLocked(func(state scheduleCoverageAuthorityState, ledger *ScheduleCoverageLedger) (scheduleCoverageAuthorityState, *ScheduleCoverageLedger, error) {
+		candidate, err := RestoreScheduleCoverageLedger(ledger.Snapshot())
+		if err != nil {
+			return state, ledger, errors.New("schedule authority state is unavailable")
+		}
+		if err := apply(candidate); err != nil {
+			return state, ledger, err
+		}
+		return state, candidate, nil
+	})
 }
 
 func (a *ScheduleCoverageAuthority) Doctor(reference time.Time, maxAge time.Duration) ScheduleCoverageDoctorReport {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if err := a.refreshLocked(); err != nil {
+		return ScheduleCoverageDoctorReport{SchemaVersion: "datapan.health-schedule-coverage-doctor.v1", ReceiptState: "invalid"}
+	}
 	plan := a.ledger.plan
 	report := ScheduleCoverageDoctorReport{SchemaVersion: "datapan.health-schedule-coverage-doctor.v1", ReceiptState: "missing", Registry: plan.Registry, ShardCount: plan.Scheduler.ShardCount, LatestInterval: plan.Interval.Start, Counts: ScheduleCoverageCounts{Expected: totalScheduleExpected(plan), Assigned: totalScheduleExpected(plan), Missing: totalScheduleExpected(plan)}}
 	if a.latest == nil {
@@ -221,9 +236,50 @@ func (a *ScheduleCoverageAuthority) Doctor(reference time.Time, maxAge time.Dura
 	return report
 }
 
-func (a *ScheduleCoverageAuthority) saveLocked() error {
-	state := scheduleCoverageAuthorityState{SchemaVersion: ScheduleCoverageAuthorityStateVersion, Ledger: a.ledger.Snapshot(), Latest: a.latest, Previous: a.previous}
-	return writeScheduleCoverageAuthorityState(a.statePath, state)
+func (a *ScheduleCoverageAuthority) refreshLocked() error {
+	return withScheduleCoverageAuthorityLock(a.statePath, func() error {
+		state, found, err := readScheduleCoverageAuthorityState(a.statePath)
+		if err != nil || !found {
+			return errors.New("schedule authority state is unavailable")
+		}
+		ledger, err := restoreScheduleCoverageAuthorityState(state)
+		if err != nil || !sameScheduleCoveragePlan(a.ledger.plan, ledger.plan) {
+			return ErrSchedulePlanTransition
+		}
+		a.ledger, a.latest, a.previous, a.generation = ledger, state.Latest, state.Previous, state.Generation
+		return nil
+	})
+}
+
+// withFreshStateLocked serializes writers across scheduler processes, reloads
+// the durable generation while holding the lock, and CAS-commits the candidate.
+// A stale instance can therefore neither overwrite a newer claim nor mutate a
+// ledger after a rebalance changed its schedule plan.
+func (a *ScheduleCoverageAuthority) withFreshStateLocked(apply func(scheduleCoverageAuthorityState, *ScheduleCoverageLedger) (scheduleCoverageAuthorityState, *ScheduleCoverageLedger, error)) error {
+	return withScheduleCoverageAuthorityLock(a.statePath, func() error {
+		state, found, err := readScheduleCoverageAuthorityState(a.statePath)
+		if err != nil || !found {
+			return errors.New("schedule authority state is unavailable")
+		}
+		ledger, err := restoreScheduleCoverageAuthorityState(state)
+		if err != nil {
+			return errors.New("schedule authority state is unavailable")
+		}
+		if !sameScheduleCoveragePlan(a.ledger.plan, ledger.plan) {
+			return ErrSchedulePlanTransition
+		}
+		nextState, nextLedger, err := apply(state, ledger)
+		if err != nil {
+			return err
+		}
+		nextState.SchemaVersion = ScheduleCoverageAuthorityStateVersion
+		nextState.Ledger = nextLedger.Snapshot()
+		if err := commitScheduleCoverageAuthorityState(a.statePath, state.Generation, nextState); err != nil {
+			return err
+		}
+		a.ledger, a.latest, a.previous, a.generation = nextLedger, nextState.Latest, nextState.Previous, state.Generation+1
+		return nil
+	})
 }
 
 func readScheduleCoverageAuthorityState(path string) (scheduleCoverageAuthorityState, bool, error) {
@@ -281,6 +337,46 @@ func writeScheduleCoverageAuthorityState(path string, state scheduleCoverageAuth
 		return errors.New("schedule authority state is unavailable")
 	}
 	return nil
+}
+
+// commitScheduleCoverageAuthorityState is a generation-checked compare and
+// swap. It is called only while the adjacent lock file is exclusively held;
+// retaining the generation check makes stale/miswired writers fail closed even
+// if a future storage implementation changes the lock boundary.
+func commitScheduleCoverageAuthorityState(path string, expectedGeneration uint64, state scheduleCoverageAuthorityState) error {
+	current, found, err := readScheduleCoverageAuthorityState(path)
+	if err != nil {
+		return err
+	}
+	actual := uint64(0)
+	if found {
+		actual = current.Generation
+	}
+	if actual != expectedGeneration {
+		return ErrScheduleAuthorityConflict
+	}
+	state.Generation = expectedGeneration + 1
+	return writeScheduleCoverageAuthorityState(path, state)
+}
+
+func withScheduleCoverageAuthorityLock(statePath string, apply func() error) error {
+	if filepath.IsAbs(statePath) && filepath.Clean(statePath) == string(filepath.Separator) {
+		return errors.New("schedule authority state is unsafe")
+	}
+	directory := filepath.Dir(statePath)
+	if err := os.MkdirAll(directory, 0o750); err != nil {
+		return errors.New("schedule authority state is unavailable")
+	}
+	lock, err := os.OpenFile(statePath+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return errors.New("schedule authority state is unavailable")
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return errors.New("schedule authority state is unavailable")
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	return apply()
 }
 
 func writeAllAndSync(file *os.File, data []byte) error {

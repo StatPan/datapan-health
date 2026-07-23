@@ -126,7 +126,10 @@ boundary.
 operation identity once per ten-minute UTC interval. It emits private queue
 coverage evidence (expected, assigned, attempted, completed, late and missing)
 bound to the Registry revision and manifest digest. It does not invoke a
-provider, alter the ten-canary scheduler, or change the archive policy. See
+provider or change the archive policy. `health-scheduler` can opt into the
+same dry-run-only lifecycle with pinned manifest inputs; that path is rejected
+unless `SCHEDULE_COVERAGE_DRY_RUN=true` and never attaches full-population work
+to the canary runner. See
 [schedule coverage](docs/schedule-coverage.md) for lease/fencing semantics,
 durable dry-run authority state, Doctor readiness, capacity assumptions,
 shard-count changes and rollback.

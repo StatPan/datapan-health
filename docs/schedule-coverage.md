@@ -22,12 +22,15 @@ go run ./cmd/health-schedule-coverage \
   -output out/schedule-coverage.json
 ```
 
-The authority state is private, mode `0600`, atomically replaced and directory
-synced before a claim/retry/completion result is returned. It stores the queue
-identity internally so restart recovery can fence stale workers; browser and
-Doctor output never contain that identity list. `-dry-run` is required and is
-the only mode in this ticket. There is no provider runner, credential input or
-provider-call path in this command.
+The authority state is private, mode `0600`, and guarded by an adjacent
+cross-process exclusive lock. Every mutation reloads the latest state under
+that lock, verifies the persisted generation, then atomically CAS-commits a
+new generation and directory-syncs it before returning. A stale authority can
+therefore neither overwrite another process's claim nor mutate an old plan
+after rebalance. It stores queue identity internally so restart recovery can
+fence stale workers; browser and Doctor output never contain that identity
+list. `-dry-run` is required and is the only mode in this ticket. There is no
+provider runner, credential input or provider-call path in this command.
 
 ## Queue lifecycle
 
@@ -59,6 +62,18 @@ make schedule-coverage-doctor
 
 The emitted dry-run example is intentionally `missing=12385`: it proves that
 the queue was persisted and observed, not that providers were contacted.
+
+## Scheduler acceptance path
+
+The same lifecycle can be attached to `health-scheduler` without widening its
+canary/provider boundary. Set `SCHEDULE_COVERAGE_STATE` together with pinned
+`SCHEDULE_COVERAGE_MANIFEST` and `SCHEDULE_COVERAGE_RELEASE_MANIFEST` paths;
+the scheduler accepts it only when `SCHEDULE_COVERAGE_DRY_RUN=true` (default)
+and uses `SCHEDULE_COVERAGE_RECEIPT` and `SCHEDULE_COVERAGE_SHARDS` only to
+construct the coverage plan. Its `ProcessDue` loop persists one receipt per
+ten-minute interval before considering canaries. This lifecycle has no
+`ProbeRunner`, delivery adapter, endpoint, credential, or provider-call mode.
+Setting dry-run false fails scheduler startup rather than enabling execution.
 
 ## Capacity and safe shard-count changes
 
