@@ -97,13 +97,20 @@ func envList(key string) []string { return strings.Split(strings.TrimSpace(os.Ge
 // health-scheduler acceptance loop without adding a provider runner, canary
 // execution mode, credential, or delivery target for full-population work.
 func scheduleCoverageLifecycle() (*health.ScheduleCoverageLifecycle, error) {
+	// An explicit mode declaration is a global scheduler safety gate. Validate
+	// it before looking at coverage state so false/invalid cannot silently fall
+	// back to legacy canary execution when SCHEDULE_COVERAGE_STATE is unset.
+	dryRun := true
+	if raw, declared := os.LookupEnv("SCHEDULE_COVERAGE_DRY_RUN"); declared {
+		parsed, err := strconv.ParseBool(strings.TrimSpace(raw))
+		if err != nil || !parsed {
+			return nil, fmt.Errorf("schedule coverage requires dry run")
+		}
+		dryRun = parsed
+	}
 	statePath := strings.TrimSpace(os.Getenv("SCHEDULE_COVERAGE_STATE"))
 	if statePath == "" {
 		return nil, nil
-	}
-	dryRun, err := strconv.ParseBool(env("SCHEDULE_COVERAGE_DRY_RUN", "true"))
-	if err != nil || !dryRun {
-		return nil, fmt.Errorf("schedule coverage requires dry run")
 	}
 	shards, err := strconv.Atoi(env("SCHEDULE_COVERAGE_SHARDS", "64"))
 	if err != nil {

@@ -73,7 +73,10 @@ and uses `SCHEDULE_COVERAGE_RECEIPT` and `SCHEDULE_COVERAGE_SHARDS` only to
 construct the coverage plan. Its `ProcessDue` loop persists one receipt per
 ten-minute interval before considering canaries. This lifecycle has no
 `ProbeRunner`, delivery adapter, endpoint, credential, or provider-call mode.
-Setting dry-run false fails scheduler startup rather than enabling execution.
+An explicit false, empty, or invalid `SCHEDULE_COVERAGE_DRY_RUN` fails
+scheduler startup even when no coverage state path is configured; only an
+absent variable preserves the legacy scheduler path. Setting dry-run false
+never enables execution.
 
 ## Capacity and safe shard-count changes
 
