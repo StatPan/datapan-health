@@ -18,6 +18,8 @@ jobs:
           go-version: 1.26.4
       - run: make test
       - run: make manifest-verify
+
+      - run: make schedule-coverage
       - run: make quality
       - run: make build
       - run: make image-smoke
@@ -37,4 +39,6 @@ jobs:
             out/public-diagnosis-snapshot.json
             out/diagnosis-projector-receipt.json
             out/diagnosis-doctor.json
+
+            out/schedule-coverage.json
           if-no-files-found: error

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.datapan.dev/datapan.health-schedule-coverage.v1.schema.json",
+  "title": "Datapan Health Schedule Coverage Receipt v1",
+  "description": "Private, identity-preserving ten-minute schedule coverage. It is queue evidence only and contains no provider execution or public archive data.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "registry", "interval", "scheduler", "observed_at", "shards", "aggregate"],
+  "properties": {
+    "schema_version": {"const": "datapan.health-schedule-coverage.v1"},
+    "registry": {"$ref": "#/$defs/registry"},
+    "interval": {"$ref": "#/$defs/interval"},
+    "scheduler": {"$ref": "#/$defs/scheduler"},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "shards": {"type": "array", "minItems": 1, "maxItems": 4096, "items": {"$ref": "#/$defs/shard"}},
+    "aggregate": {"$ref": "#/$defs/counts"}
+  },
+  "$defs": {
+    "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "registry": {"type": "object", "additionalProperties": false, "required": ["revision", "manifest_sha256"], "properties": {"revision": {"$ref": "#/$defs/commit"}, "manifest_sha256": {"$ref": "#/$defs/sha256"}}},
+    "interval": {"type": "object", "additionalProperties": false, "required": ["start", "duration_seconds"], "properties": {"start": {"type": "string", "format": "date-time"}, "duration_seconds": {"const": 600}}},
+    "scheduler": {"type": "object", "additionalProperties": false, "required": ["shard_count", "assignment_algorithm"], "properties": {"shard_count": {"type": "integer", "minimum": 1, "maximum": 4096}, "assignment_algorithm": {"const": "operation-id-sha256-mod-v1"}}},
+    "counts": {"type": "object", "additionalProperties": false, "required": ["expected", "assigned", "attempted", "completed", "late", "missing"], "properties": {"expected": {"type": "integer", "minimum": 0}, "assigned": {"type": "integer", "minimum": 0}, "attempted": {"type": "integer", "minimum": 0}, "completed": {"type": "integer", "minimum": 0}, "late": {"type": "integer", "minimum": 0}, "missing": {"type": "integer", "minimum": 0}}},
+    "shard": {"type": "object", "additionalProperties": false, "required": ["index", "queue_sha256", "counts"], "properties": {"index": {"type": "integer", "minimum": 0}, "queue_sha256": {"$ref": "#/$defs/sha256"}, "counts": {"$ref": "#/$defs/counts"}}}
+  }
+}

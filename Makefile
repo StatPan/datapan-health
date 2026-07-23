@@ -2,7 +2,7 @@ RUNTIME_IMAGE ?= datapan-health-runtime:test
 ARCHIVE_IMAGE ?= datapan-health-archive:test
 TESTED_REVISION ?= $(HEALTH_HEAD)
 
-.PHONY: test quality build images image-smoke release-oci smoke visual archive-smoke hf-publish-smoke diagnostic-compatibility assertion-policy-compatibility correlation-replay diagnosis-snapshot-evidence public-status-doctor manifest-verify
+.PHONY: test quality build images image-smoke release-oci smoke visual archive-smoke hf-publish-smoke diagnostic-compatibility assertion-policy-compatibility correlation-replay diagnosis-snapshot-evidence public-status-doctor manifest-verify schedule-coverage
 
 test:
 	go test ./...
@@ -55,6 +55,10 @@ public-status-doctor:
 
 manifest-verify:
 	go run ./cmd/health-manifest-verify
+
+schedule-coverage:
+	mkdir -p out
+	go run ./cmd/health-schedule-coverage -at 2026-07-23T00:00:00Z -shards 64 -output out/schedule-coverage.json
 
 hf-publish-smoke:
 	./scripts/hf-publish-smoke.sh

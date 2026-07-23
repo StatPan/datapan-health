@@ -116,8 +116,19 @@ REST includes its method and SOAP includes its action. API, dataset, host, and
 endpoint are metadata only and cannot collapse subjects.
 
 The fixture is pinned to Registry commit `420edc34b16d1243e2a2389226615fff9e5b708f`.
-It is contract-test input only: it neither schedules all operations nor changes
-the ten-canary scheduler boundary.
+It is contract-test input: it can prove a deterministic full-population queue,
+but it does not attach a provider worker or change the ten-canary scheduler
+boundary.
+
+## Full-population schedule coverage
+
+`health-schedule-coverage` deterministically queues every pinned Registry
+operation identity once per ten-minute UTC interval. It emits private queue
+coverage evidence (expected, assigned, attempted, completed, late and missing)
+bound to the Registry revision and manifest digest. It does not invoke a
+provider, alter the ten-canary scheduler, or change the archive policy. See
+[schedule coverage](docs/schedule-coverage.md) for lease/fencing semantics,
+capacity assumptions, shard-count changes and rollback.
 
 ## Scheduler
 
