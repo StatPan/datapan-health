@@ -105,6 +105,20 @@ Publishing is optional and retried only after a complete local export; it is nev
 
 `health-runner` remains intentionally one-shot. The separately deployed `health-scheduler` consumes this same Registry-pinned cadence boundary with bounded concurrency and jitter; it does not add an archive or Hugging Face dependency to the live delivery path.
 
+## Immutable operation denominator
+
+The ten public service canaries are a deliberately small observation input,
+not a coverage denominator. `make manifest-verify` validates the Health-owned,
+redacted receipt and the vendored immutable Registry operation-manifest fixture.
+It reproduces 12,385 operation-status subjects (12,350 REST and 35 SOAP) and
+7,365 API metadata records. A status subject is the Registry operation identity:
+REST includes its method and SOAP includes its action. API, dataset, host, and
+endpoint are metadata only and cannot collapse subjects.
+
+The fixture is pinned to Registry commit `420edc34b16d1243e2a2389226615fff9e5b708f`.
+It is contract-test input only: it neither schedules all operations nor changes
+the ten-canary scheduler boundary.
+
 ## Scheduler
 
 `health-scheduler` is the composition layer for ticket #4. It pins the signed

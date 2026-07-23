@@ -1,0 +1,50 @@
+{
+  "schema_version": "datapan.health-operation-manifest-receipt.v1",
+  "registry": {
+    "revision": "420edc34b16d1243e2a2389226615fff9e5b708f"
+  },
+  "acquisition": {
+    "acquired_at": "2026-07-23T10:10:56+09:00",
+    "method": "git_commit"
+  },
+  "manifest": {
+    "schema_version": "datapan.data-go-kr-operation-manifest.v1",
+    "path": "reports/data-go-kr/operation-manifest.json",
+    "bytes": 23887000,
+    "sha256": "931be9cfcc4aa2ce0b444221de2044b624e6dbdcff8af1288be295b7d202f04a"
+  },
+  "release_manifest": {
+    "path": "manifest.json",
+    "bytes": 41319,
+    "sha256": "6275ed1ccacbc968636d3f440db120dbf77f4f4b0b890fd210d206fbfc3ffdba"
+  },
+  "schema": {
+    "path": "schemas/datapan.data-go-kr-operation-manifest.v1.schema.json",
+    "sha256": "40d749d7c45ee9e9a9ab38f3022aaab3f5d8a0f74bedea5aa2144f5722b65e94"
+  },
+  "source_snapshot": {
+    "path": "data/data-go-kr.registry.json",
+    "bytes": 137735169,
+    "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644"
+  },
+  "denominator": {
+    "operation_status_subjects": 12385,
+    "protocols": {
+      "REST": 12350,
+      "SOAP": 35
+    },
+    "api_metadata_count": 7365,
+    "exclusions": {
+      "link_operations": 8871,
+      "operationless_catalog_entries": 473,
+      "filedata_catalog_entries": 0,
+      "endpoint_missing": 142,
+      "required_parameter_approval": 12243
+    }
+  },
+  "service_canaries": {
+    "count": 10,
+    "role": "separate_observation_input",
+    "included_in_operation_denominator": false
+  }
+}
