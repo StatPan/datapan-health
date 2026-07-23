@@ -17,6 +17,7 @@ jobs:
         with:
           go-version: 1.26.4
       - run: make test
+      - run: make manifest-verify
       - run: make quality
       - run: make build
       - run: make image-smoke
