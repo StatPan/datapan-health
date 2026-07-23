@@ -20,6 +20,7 @@ jobs:
       - run: make manifest-verify
 
       - run: make schedule-coverage
+      - run: make schedule-coverage-doctor
       - run: make quality
       - run: make build
       - run: make image-smoke
@@ -41,4 +42,5 @@ jobs:
             out/diagnosis-doctor.json
 
             out/schedule-coverage.json
+            out/schedule-coverage-doctor.json
           if-no-files-found: error

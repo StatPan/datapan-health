@@ -18,8 +18,16 @@ make schedule-coverage
 # or select a reproducible interval and candidate shard count
 go run ./cmd/health-schedule-coverage \
   -at 2026-07-23T00:00:00Z -shards 64 \
+  -state out/schedule-coverage-state.json -dry-run \
   -output out/schedule-coverage.json
 ```
+
+The authority state is private, mode `0600`, atomically replaced and directory
+synced before a claim/retry/completion result is returned. It stores the queue
+identity internally so restart recovery can fence stale workers; browser and
+Doctor output never contain that identity list. `-dry-run` is required and is
+the only mode in this ticket. There is no provider runner, credential input or
+provider-call path in this command.
 
 ## Queue lifecycle
 
@@ -35,6 +43,22 @@ Work completed after the interval deadline is counted as `late`; work without
 a completion at receipt observation time is `missing`. Those counts are
 separate from `attempted` so scheduling pressure is visible without guessing a
 provider result.
+
+## Operator readiness
+
+The existing `health-public -doctor` path accepts an optional private
+`-schedule-coverage-state` file. It reports only the pinned Registry revision,
+manifest digest, shard count, latest interval, aggregate counts, and receipt
+state (`current`, `stale`, `missing`, `invalid`, or `not_configured`). It does
+not widen the browser-facing service/dependency APIs. Run the deterministic
+integration proof with:
+
+```sh
+make schedule-coverage-doctor
+```
+
+The emitted dry-run example is intentionally `missing=12385`: it proves that
+the queue was persisted and observed, not that providers were contacted.
 
 ## Capacity and safe shard-count changes
 

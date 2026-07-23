@@ -16,8 +16,14 @@ func main() {
 	receiptPath := flag.String("receipt", "config/registry/operation-manifest-receipt.json", "redacted Health manifest receipt")
 	atValue := flag.String("at", "", "required RFC3339 schedule observation time")
 	shards := flag.Int("shards", 64, "deterministic scheduler shard count")
+	statePath := flag.String("state", "", "required private durable scheduler-authority state path")
+	rebalance := flag.Bool("rebalance", false, "allow only a next-interval durable shard-count transition")
+	dryRun := flag.Bool("dry-run", true, "required no-provider-call scheduling mode")
 	output := flag.String("output", "", "optional coverage receipt path; stdout when empty")
 	flag.Parse()
+	if !*dryRun || *statePath == "" {
+		fail()
+	}
 	at, err := time.Parse(time.RFC3339, *atValue)
 	if err != nil {
 		fail()
@@ -30,11 +36,19 @@ func main() {
 	if err != nil {
 		fail()
 	}
-	ledger, err := health.NewScheduleCoverageLedger(plan, queue)
+	var authority *health.ScheduleCoverageAuthority
+	if *rebalance {
+		authority, err = health.LoadScheduleCoverageAuthority(*statePath)
+		if err == nil {
+			err = authority.Rebalance(plan, queue, at)
+		}
+	} else {
+		authority, err = health.OpenScheduleCoverageAuthority(*statePath, plan, queue)
+	}
 	if err != nil {
 		fail()
 	}
-	coverage, err := ledger.CoverageReceipt(plan.Interval.Start)
+	coverage, err := authority.RecordCoverage(plan.Interval.Start)
 	if err != nil {
 		fail()
 	}

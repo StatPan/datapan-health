@@ -69,21 +69,21 @@ type ScheduleCoverageShard struct {
 }
 
 type ScheduledOperation struct {
-	Subject       string
-	Registry      ScheduleCoverageRegistry
-	IntervalStart time.Time
-	Shard         int
+	Subject       string                   `json:"subject"`
+	Registry      ScheduleCoverageRegistry `json:"registry"`
+	IntervalStart time.Time                `json:"interval_start"`
+	Shard         int                      `json:"shard"`
 }
 
 // ScheduleClaim is a lease/fencing token. A completion is authoritative only
 // when the matching current generation is presented to the ledger.
 type ScheduleClaim struct {
-	Subject       string
-	Registry      ScheduleCoverageRegistry
-	IntervalStart time.Time
-	Shard         int
-	Generation    uint64
-	LeaseExpires  time.Time
+	Subject       string                   `json:"subject"`
+	Registry      ScheduleCoverageRegistry `json:"registry"`
+	IntervalStart time.Time                `json:"interval_start"`
+	Shard         int                      `json:"shard"`
+	Generation    uint64                   `json:"generation"`
+	LeaseExpires  time.Time                `json:"lease_expires"`
 }
 
 type ScheduleCoverageCounts struct {

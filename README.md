@@ -128,7 +128,8 @@ coverage evidence (expected, assigned, attempted, completed, late and missing)
 bound to the Registry revision and manifest digest. It does not invoke a
 provider, alter the ten-canary scheduler, or change the archive policy. See
 [schedule coverage](docs/schedule-coverage.md) for lease/fencing semantics,
-capacity assumptions, shard-count changes and rollback.
+durable dry-run authority state, Doctor readiness, capacity assumptions,
+shard-count changes and rollback.
 
 ## Scheduler
 
