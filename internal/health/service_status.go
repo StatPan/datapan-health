@@ -63,12 +63,13 @@ type LegacyDependencyDocument struct {
 // contracts separately and retains each owned service's explicit unknown
 // reason, without querying a provider or claiming a deployed service state.
 type PublicStatusDoctorReport struct {
-	SchemaVersion              string                `json:"schema_version"`
-	ServiceContract            string                `json:"service_contract"`
-	DependencyContract         string                `json:"dependency_contract"`
-	DependencyCanaryCount      int                   `json:"dependency_canary_count"`
-	OwnedServiceStatus         []PublicServiceStatus `json:"owned_service_status"`
-	ExternalObservationMeaning string                `json:"external_observation_meaning"`
+	SchemaVersion              string                       `json:"schema_version"`
+	ServiceContract            string                       `json:"service_contract"`
+	DependencyContract         string                       `json:"dependency_contract"`
+	DependencyCanaryCount      int                          `json:"dependency_canary_count"`
+	OwnedServiceStatus         []PublicServiceStatus        `json:"owned_service_status"`
+	ExternalObservationMeaning string                       `json:"external_observation_meaning"`
+	ScheduleCoverage           ScheduleCoverageDoctorReport `json:"schedule_coverage"`
 }
 
 type PublicServiceStatusSource interface {
@@ -169,6 +170,13 @@ func legacyDependencyDocument(document PublicStatusDocument) LegacyDependencyDoc
 }
 
 func BuildPublicStatusDoctorReport(ctx context.Context, services PublicServiceStatusSource, dependencyCanaryCount int) (PublicStatusDoctorReport, error) {
+	return BuildPublicStatusDoctorReportWithSchedule(ctx, services, dependencyCanaryCount, ScheduleCoverageDoctorReport{SchemaVersion: "datapan.health-schedule-coverage-doctor.v1", ReceiptState: "not_configured"})
+}
+
+// BuildPublicStatusDoctorReportWithSchedule retains the operator-only
+// scheduler-readiness summary without widening the browser-facing public status
+// contracts. The summary contains counts and pinned revisions only.
+func BuildPublicStatusDoctorReportWithSchedule(ctx context.Context, services PublicServiceStatusSource, dependencyCanaryCount int, schedule ScheduleCoverageDoctorReport) (PublicStatusDoctorReport, error) {
 	if services == nil || dependencyCanaryCount != 10 {
 		return PublicStatusDoctorReport{}, errors.New("public status doctor configuration is invalid")
 	}
@@ -183,5 +191,6 @@ func BuildPublicStatusDoctorReport(ctx context.Context, services PublicServiceSt
 		DependencyCanaryCount:      dependencyCanaryCount,
 		OwnedServiceStatus:         document.Services,
 		ExternalObservationMeaning: "external_dependency_observations_not_datapan_service_incidents",
+		ScheduleCoverage:           schedule,
 	}, nil
 }

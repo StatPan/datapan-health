@@ -141,6 +141,60 @@ func TestTierSlotsAndJitterAreDeterministicAndBounded(t *testing.T) {
 	}
 }
 
+func TestSchedulerAcceptancePathRecordsDryRunCoverageWithoutCanaryExecution(t *testing.T) {
+	at := time.Date(2026, 7, 23, 0, 0, 0, 0, time.UTC)
+	coveragePath := filepath.Join(t.TempDir(), "schedule-coverage-state.json")
+	coverage, err := NewScheduleCoverageLifecycle(ScheduleCoverageLifecycleConfig{
+		StatePath:           coveragePath,
+		ManifestPath:        pinnedOperationManifestFixture,
+		ReleaseManifestPath: pinnedReleaseManifestFixture,
+		ReceiptPath:         pinnedOperationManifestReceipt,
+		ShardCount:          64,
+		DryRun:              true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := schedulerConfig(t, 1)
+	config.Canaries = nil // This exercises the actual scheduler acceptance path without opening a provider boundary.
+	runner := &fakeProbeRunner{}
+	delivery := &fakeDeliverer{}
+	scheduler, err := NewSchedulerWithCoverage(config, filepath.Join(t.TempDir(), "scheduler-state.json"), runner, delivery, coverage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := scheduler.ProcessDue(context.Background(), at); err != nil {
+		t.Fatal(err)
+	}
+	report := ReadScheduleCoverageDoctorReport(coveragePath, at, 20*time.Minute)
+	if report.ReceiptState != "current" || report.ShardCount != 64 || report.Counts != (ScheduleCoverageCounts{Expected: 12385, Assigned: 12385, Missing: 12385}) {
+		t.Fatalf("scheduler path did not persist the dry-run schedule receipt: %#v", report)
+	}
+	if runner.count() != 0 || delivery.count() != 0 {
+		t.Fatalf("dry-run coverage opened the canary/provider boundary: runner=%d delivery=%d", runner.count(), delivery.count())
+	}
+	if err := scheduler.ProcessDue(context.Background(), at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	state, found, err := readScheduleCoverageAuthorityState(coveragePath)
+	if err != nil || !found || state.Generation != 2 {
+		t.Fatalf("same interval was not idempotent through scheduler path: found=%t generation=%d err=%v", found, state.Generation, err)
+	}
+	if err := scheduler.ProcessDue(context.Background(), at.Add(10*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	rolled := ReadScheduleCoverageDoctorReport(coveragePath, at.Add(10*time.Minute), 20*time.Minute)
+	if rolled.ReceiptState != "current" || !rolled.LatestInterval.Equal(at.Add(10*time.Minute)) || rolled.Counts.Missing != 12385 {
+		t.Fatalf("scheduler path did not roll dry-run coverage at the interval boundary: %#v", rolled)
+	}
+}
+
+func TestScheduleCoverageLifecycleRejectsProviderMode(t *testing.T) {
+	if _, err := NewScheduleCoverageLifecycle(ScheduleCoverageLifecycleConfig{StatePath: "coverage.json", ShardCount: 64, DryRun: false}); err == nil {
+		t.Fatal("provider-capable schedule lifecycle was accepted")
+	}
+}
+
 func TestSchedulerDeliversOneCanonicalReceiptAndDoesNotRetryProvider(t *testing.T) {
 	config := schedulerConfig(t, 2)
 	config.Canaries = config.Canaries[:1]

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -452,6 +453,29 @@ func TestPublicStatusDoctorSeparatesContractScopes(t *testing.T) {
 	}
 	if _, err := BuildPublicStatusDoctorReport(context.Background(), DefaultOwnedServiceStatusSource(), 9); err == nil {
 		t.Fatal("doctor accepted a non-canonical dependency scope")
+	}
+}
+
+func TestPublicStatusDoctorIncludesOnlyValueFreeDurableScheduleReadiness(t *testing.T) {
+	at := time.Date(2026, 7, 23, 0, 0, 0, 0, time.UTC)
+	plan, queue := fullSchedulePlan(t, at, 64)
+	authority, err := OpenScheduleCoverageAuthority(filepath.Join(t.TempDir(), "schedule-state.json"), plan, queue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := authority.RecordCoverage(at); err != nil {
+		t.Fatal(err)
+	}
+	report, err := BuildPublicStatusDoctorReportWithSchedule(context.Background(), DefaultOwnedServiceStatusSource(), 10, authority.Doctor(at, 20*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.ScheduleCoverage.ReceiptState != "current" || report.ScheduleCoverage.Registry != plan.Registry || report.ScheduleCoverage.ShardCount != 64 || report.ScheduleCoverage.Counts.Missing != 12385 {
+		t.Fatalf("public doctor omitted durable schedule status: %#v", report.ScheduleCoverage)
+	}
+	encoded := string(mustJSON(t, report))
+	if strings.Contains(encoded, queue[0].Subject) || strings.Contains(encoded, "endpoint") || strings.Contains(encoded, "provider") {
+		t.Fatalf("public doctor leaked private schedule input: %s", encoded)
 	}
 }
 

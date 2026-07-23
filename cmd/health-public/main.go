@@ -19,6 +19,9 @@ func main() {
 	canaryPath := flag.String("canaries", env("CANARY_CONFIG", "config/canaries.json"), "reviewed public canary identity map")
 	diagnosisPath := flag.String("diagnosis-snapshot", env("PUBLIC_DIAGNOSIS_SNAPSHOT", "data/public-diagnosis-snapshot.json"), "atomic reviewed diagnosis snapshot")
 	assertionPinPath := flag.String("assertion-pin", env("ASSERTION_POLICY_PIN", "config/registry/assertion-policy-contract-pin.json"), "exact assertion policy contract")
+	scheduleCoverageState := flag.String("schedule-coverage-state", os.Getenv("SCHEDULE_COVERAGE_STATE"), "private durable full-population schedule coverage authority state")
+	scheduleCoverageMaxAge := flag.Duration("schedule-coverage-max-age", 20*time.Minute, "maximum accepted age for schedule coverage receipt in doctor mode")
+	scheduleCoverageReferenceAt := flag.String("schedule-coverage-reference-at", "", "optional RFC3339 doctor reference time")
 	originList := flag.String("allowed-origins", os.Getenv("PUBLIC_STATUS_ALLOWED_ORIGINS"), "comma-separated exact HTTPS browser origins")
 	doctor := flag.Bool("doctor", false, "print value-free service/dependency readiness report and exit")
 	flag.Parse()
@@ -28,7 +31,16 @@ func main() {
 		fatal()
 	}
 	if *doctor {
-		report, err := health.BuildPublicStatusDoctorReport(context.Background(), health.DefaultOwnedServiceStatusSource(), len(canaries.Canaries))
+		reference := time.Now().UTC()
+		if *scheduleCoverageReferenceAt != "" {
+			parsed, parseErr := time.Parse(time.RFC3339, *scheduleCoverageReferenceAt)
+			if parseErr != nil {
+				fatal()
+			}
+			reference = parsed.UTC()
+		}
+		schedule := health.ReadScheduleCoverageDoctorReport(*scheduleCoverageState, reference, *scheduleCoverageMaxAge)
+		report, err := health.BuildPublicStatusDoctorReportWithSchedule(context.Background(), health.DefaultOwnedServiceStatusSource(), len(canaries.Canaries), schedule)
 		if err != nil || json.NewEncoder(os.Stdout).Encode(report) != nil {
 			fatal()
 		}

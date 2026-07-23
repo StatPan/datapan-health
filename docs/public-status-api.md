@@ -49,6 +49,12 @@ names both contracts, fixes the external scope at ten canaries, and reports the
 four owned services with their explicit `unknown_reason`. It never turns a
 dependency observation into a service incident or readiness claim.
 
+When a private full-population schedule authority state is mounted, the same
+Doctor path may include its bounded schedule receipt state and aggregate counts.
+It contains no operation IDs, queue members, endpoints, provider values,
+credentials, parameters, or response data, and does not change any browser
+route or dependency coverage meaning.
+
 ## Local container smoke
 
 The Compose `public-status` profile uses the private Gatus status URL and the

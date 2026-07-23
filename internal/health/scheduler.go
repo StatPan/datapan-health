@@ -36,6 +36,7 @@ type Scheduler struct {
 	config    CanaryConfig
 	runner    ProbeRunner
 	deliverer ReceiptDeliverer
+	coverage  *ScheduleCoverageLifecycle
 	statePath string
 	mu        sync.Mutex
 	state     scheduleState
@@ -74,6 +75,14 @@ type MetricsSnapshot struct {
 }
 
 func NewScheduler(config CanaryConfig, statePath string, runner ProbeRunner, deliverer ReceiptDeliverer) (*Scheduler, error) {
+	return NewSchedulerWithCoverage(config, statePath, runner, deliverer, nil)
+}
+
+// NewSchedulerWithCoverage keeps the canary runner contract unchanged while
+// accepting an optional dry-run-only full-population coverage lifecycle. The
+// lifecycle has no provider runner and executes before canary work, so a
+// coverage-state failure fails closed without starting any provider process.
+func NewSchedulerWithCoverage(config CanaryConfig, statePath string, runner ProbeRunner, deliverer ReceiptDeliverer, coverage *ScheduleCoverageLifecycle) (*Scheduler, error) {
 	if runner == nil || deliverer == nil || statePath == "" {
 		return nil, errors.New("scheduler dependencies are required")
 	}
@@ -81,7 +90,7 @@ func NewScheduler(config CanaryConfig, statePath string, runner ProbeRunner, del
 	if err != nil {
 		return nil, err
 	}
-	return &Scheduler{config: config, statePath: statePath, runner: runner, deliverer: deliverer, state: state, active: map[string]bool{}, sem: make(chan struct{}, config.GlobalConcurrency)}, nil
+	return &Scheduler{config: config, statePath: statePath, runner: runner, deliverer: deliverer, coverage: coverage, state: state, active: map[string]bool{}, sem: make(chan struct{}, config.GlobalConcurrency)}, nil
 }
 
 func loadScheduleState(path string) (scheduleState, error) {
@@ -136,6 +145,11 @@ func (s *Scheduler) saveLocked() error {
 // replay it after restart, preventing catch-up storms and duplicate probes.
 func (s *Scheduler) ProcessDue(ctx context.Context, now time.Time) error {
 	now = now.UTC()
+	if s.coverage != nil {
+		if err := s.coverage.ProcessDue(now); err != nil {
+			return err
+		}
+	}
 	for _, canary := range s.config.Canaries {
 		entry, _ := s.config.Entry(canary)
 		if err := s.claimAndStart(ctx, now, canary, entry); err != nil {

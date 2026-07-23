@@ -34,6 +34,9 @@ var healthPublicDiagnosisSnapshotSchema []byte
 //go:embed datapan.health-bounded-observation-run.v1.schema.json
 var healthBoundedObservationRunSchema []byte
 
+//go:embed datapan.health-schedule-coverage.v1.schema.json
+var healthScheduleCoverageSchema []byte
+
 var (
 	healthProbeOnce                   sync.Once
 	healthProbe                       *jsonschema.Schema
@@ -59,6 +62,9 @@ var (
 	healthBoundedObservationRunOnce   sync.Once
 	healthBoundedObservationRun       *jsonschema.Schema
 	healthBoundedObservationRunErr    error
+	healthScheduleCoverageOnce        sync.Once
+	healthScheduleCoverage            *jsonschema.Schema
+	healthScheduleCoverageErr         error
 )
 
 func ValidateHealthProbeV1(data []byte) error {
@@ -120,6 +126,16 @@ func ValidateHealthBoundedObservationRunV1(data []byte) error {
 		healthBoundedObservationRun, healthBoundedObservationRunErr = compile(healthBoundedObservationRunSchema, "https://schemas.datapan.dev/datapan.health-bounded-observation-run.v1.schema.json")
 	})
 	return validate(data, healthBoundedObservationRun, healthBoundedObservationRunErr, "bounded observation run")
+}
+
+// ValidateHealthScheduleCoverageV1 validates private queue/coverage evidence.
+// It is intentionally not a provider-observation, public-status, or archive
+// contract.
+func ValidateHealthScheduleCoverageV1(data []byte) error {
+	healthScheduleCoverageOnce.Do(func() {
+		healthScheduleCoverage, healthScheduleCoverageErr = compile(healthScheduleCoverageSchema, "https://schemas.datapan.dev/datapan.health-schedule-coverage.v1.schema.json")
+	})
+	return validate(data, healthScheduleCoverage, healthScheduleCoverageErr, "schedule coverage")
 }
 
 func compile(source []byte, uri string) (*jsonschema.Schema, error) {
