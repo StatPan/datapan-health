@@ -126,9 +126,11 @@ func (w DataGoKRObservationWorker) Run(ctx context.Context, runID string) (Bound
 	completed := now().UTC()
 	states := make([]string, 0, len(runShards))
 	partial := false
+	timedOut := false
 	for _, shard := range runShards {
 		states = append(states, shard.TerminalState)
 		partial = partial || !shard.ReceiptAvailable
+		timedOut = timedOut || shard.TimedOut
 	}
 	completeness := "complete"
 	if partial {
@@ -140,7 +142,7 @@ func (w DataGoKRObservationWorker) Run(ctx context.Context, runID string) (Bound
 		Registry:      w.Inputs.Registry,
 		Run:           ObservationRunScope{RunID: runID, StartedAt: started, CompletedAt: completed, ShardCount: 8, BatchSize: w.BatchSize, MaxParallel: w.MaxParallel, TimeoutMS: w.Timeout.Milliseconds()},
 		Shards:        runShards,
-		Aggregate:     ObservationRunAggregate{TerminalState: aggregateObservationRunState(states, partial), Completeness: completeness},
+		Aggregate:     ObservationRunAggregate{TerminalState: aggregateObservationRunState(states, partial), Completeness: completeness, TimedOut: timedOut},
 		Redaction:     completeObservationRunRedaction(),
 		Cleanup:       &cleanup,
 	}
@@ -171,6 +173,7 @@ func (w DataGoKRObservationWorker) observeFixtureShard(parent context.Context, r
 	for _, operation := range shard.operations {
 		outcome := observePinnedDataGoKROperation(parent, w.Timeout, w.fixtureTransport, operationSlots, operation)
 		if !outcome.completed {
+			receipt.TimedOut = outcome.timedOut
 			return receipt
 		}
 		states = append(states, outcome.state)
@@ -194,6 +197,7 @@ func (w DataGoKRObservationWorker) observeFixtureShard(parent context.Context, r
 type fixtureOperationOutcome struct {
 	state     string
 	completed bool
+	timedOut  bool
 }
 
 func observePinnedDataGoKROperation(parent context.Context, timeout time.Duration, transport dataGoKRFixtureTransport, operationSlots chan struct{}, operation DataGoKROperation) fixtureOperationOutcome {
@@ -216,7 +220,7 @@ func observePinnedDataGoKROperation(parent context.Context, timeout time.Duratio
 		}
 	case <-operationContext.Done():
 	}
-	return fixtureOperationOutcome{state: "unknown"}
+	return fixtureOperationOutcome{state: "unknown", timedOut: errors.Is(operationContext.Err(), context.DeadlineExceeded)}
 }
 
 func validDataGoKRObservationWorker(w DataGoKRObservationWorker) bool {

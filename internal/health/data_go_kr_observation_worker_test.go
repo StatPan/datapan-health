@@ -132,8 +132,20 @@ func TestDataGoKRObservationWorkerTimeoutKeepsLiveFixtureCallsAtTwo(t *testing.T
 		if outcome.err != nil {
 			t.Fatal(outcome.err)
 		}
-		if outcome.run.Aggregate.TerminalState != "unknown" || outcome.run.Aggregate.Completeness != "partial" {
+		if outcome.run.Aggregate.TerminalState != "unknown" || outcome.run.Aggregate.Completeness != "partial" || !outcome.run.Aggregate.TimedOut {
 			t.Fatalf("timed-out bounded run was promoted: %#v", outcome.run.Aggregate)
+		}
+		timedOutShards := 0
+		for _, shard := range outcome.run.Shards {
+			if shard.TimedOut {
+				timedOutShards++
+				if shard.TerminalState != "unknown" || shard.Completed || shard.ReceiptAvailable {
+					t.Fatalf("timed-out shard was promoted: %#v", shard)
+				}
+			}
+		}
+		if timedOutShards != 2 {
+			t.Fatalf("expected two timed-out live fixture shards, got %d: %#v", timedOutShards, outcome.run.Shards)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("worker did not return a bounded partial result after timeout")
