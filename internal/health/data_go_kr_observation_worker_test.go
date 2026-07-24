@@ -47,6 +47,12 @@ func TestDataGoKRObservationWorkerRejectsUnpinnedInputsBeforeFixtureTransport(t 
 			inputs.Registry.SourceSHA256 = testSHA256(inputs.Catalog)
 			inputs.Registry.ManifestSHA256 = inputs.Registry.SourceSHA256
 		}},
+		{name: "duplicate shard index", mutate: func(inputs *PinnedDataGoKRObservationInputs) {
+			mutatePinnedDataGoKRPolicy(t, inputs, func(policy *testDataGoKRPolicy) { policy.Shards[7].Index = 6 })
+		}},
+		{name: "cross shard duplicate operation", mutate: func(inputs *PinnedDataGoKRObservationInputs) {
+			mutatePinnedDataGoKRPolicy(t, inputs, func(policy *testDataGoKRPolicy) { policy.Shards[1].OperationIDs = []int{1} })
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			inputs := testPinnedDataGoKRInputs(t, nil)
@@ -63,6 +69,74 @@ func TestDataGoKRObservationWorkerRejectsUnpinnedInputsBeforeFixtureTransport(t 
 				t.Fatalf("invalid input reached artifact boundary: %v", err)
 			}
 		})
+	}
+}
+
+func TestDataGoKRObservationWorkerRejectsPerShardOperationCountBeforeFixtureTransport(t *testing.T) {
+	inputs := testPinnedDataGoKRInputs(t, nil)
+	mutatePinnedDataGoKRPolicy(t, &inputs, func(policy *testDataGoKRPolicy) {
+		policy.Shards[0].OperationIDs = []int{1, 2}
+		policy.Shards[1].OperationIDs = []int{3}
+		for index := 2; index < 8; index++ {
+			policy.Shards[index].OperationIDs = []int{index + 1}
+		}
+	})
+	transport := &recordingDataGoKRFixtureTransport{outcome: "verified"}
+	worker := testDataGoKRObservationWorker(t, inputs, transport)
+	worker.BatchSize = 1
+	if _, err := worker.Run(context.Background(), "health-run-fixture-0063"); err == nil {
+		t.Fatal("per-shard operation count above batch was accepted")
+	}
+	if transport.callCount() != 0 {
+		t.Fatalf("invalid operation count reached fixture transport: %d", transport.callCount())
+	}
+}
+
+func TestDataGoKRObservationWorkerTimeoutKeepsLiveFixtureCallsAtTwo(t *testing.T) {
+	inputs := testPinnedDataGoKRInputs(t, nil)
+	mutatePinnedDataGoKRCatalog(t, &inputs, func(catalog *testDataGoKRCatalog) {
+		catalog.Operations = append(catalog.Operations, testDataGoKROperation{ID: 9}, testDataGoKROperation{ID: 10})
+	})
+	mutatePinnedDataGoKRPolicy(t, &inputs, func(policy *testDataGoKRPolicy) {
+		policy.Shards[0].OperationIDs = []int{1, 9}
+		policy.Shards[1].OperationIDs = []int{2, 10}
+		for index := 2; index < 8; index++ {
+			policy.Shards[index].OperationIDs = []int{index + 1}
+		}
+	})
+	transport := newContextIgnoringDataGoKRFixtureTransport()
+	defer close(transport.release)
+	worker := testDataGoKRObservationWorker(t, inputs, transport)
+	worker.Timeout = time.Second
+
+	type result struct {
+		run BoundedObservationRun
+		err error
+	}
+	completed := make(chan result, 1)
+	go func() {
+		run, err := worker.Run(context.Background(), "health-run-fixture-0064")
+		completed <- result{run: run, err: err}
+	}()
+	for count := 0; count < 2; count++ {
+		select {
+		case <-transport.started:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("worker did not start two bounded fixture calls")
+		}
+	}
+	select {
+	case extra := <-transport.started:
+		t.Fatalf("third fixture operation started before a timed-out call returned: %d", extra)
+	case outcome := <-completed:
+		if outcome.err != nil {
+			t.Fatal(outcome.err)
+		}
+		if outcome.run.Aggregate.TerminalState != "unknown" || outcome.run.Aggregate.Completeness != "partial" {
+			t.Fatalf("timed-out bounded run was promoted: %#v", outcome.run.Aggregate)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not return a bounded partial result after timeout")
 	}
 }
 
@@ -191,7 +265,7 @@ func testPinnedDataGoKRInputs(t *testing.T, mutate func(*testDataGoKRCatalog)) P
 	}
 }
 
-func testDataGoKRObservationWorker(t *testing.T, inputs PinnedDataGoKRObservationInputs, transport *recordingDataGoKRFixtureTransport) DataGoKRObservationWorker {
+func testDataGoKRObservationWorker(t *testing.T, inputs PinnedDataGoKRObservationInputs, transport dataGoKRFixtureTransport) DataGoKRObservationWorker {
 	t.Helper()
 	now := time.Date(2026, 7, 24, 0, 0, 0, 0, time.UTC)
 	return DataGoKRObservationWorker{
@@ -204,6 +278,37 @@ func testDataGoKRObservationWorker(t *testing.T, inputs PinnedDataGoKRObservatio
 		fixtureTransport: transport,
 		Now:              func() time.Time { return now },
 	}
+}
+
+func mutatePinnedDataGoKRPolicy(t *testing.T, inputs *PinnedDataGoKRObservationInputs, mutate func(*testDataGoKRPolicy)) {
+	t.Helper()
+	var policy testDataGoKRPolicy
+	if err := json.Unmarshal(inputs.Policy, &policy); err != nil {
+		t.Fatal(err)
+	}
+	mutate(&policy)
+	var err error
+	inputs.Policy, err = json.Marshal(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs.Registry.PolicySHA256 = testSHA256(inputs.Policy)
+}
+
+func mutatePinnedDataGoKRCatalog(t *testing.T, inputs *PinnedDataGoKRObservationInputs, mutate func(*testDataGoKRCatalog)) {
+	t.Helper()
+	var catalog testDataGoKRCatalog
+	if err := json.Unmarshal(inputs.Catalog, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	mutate(&catalog)
+	var err error
+	inputs.Catalog, err = json.Marshal(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs.Registry.SourceSHA256 = testSHA256(inputs.Catalog)
+	inputs.Registry.ManifestSHA256 = inputs.Registry.SourceSHA256
 }
 
 type recordingDataGoKRFixtureTransport struct {
@@ -235,6 +340,24 @@ func (t *recordingDataGoKRFixtureTransport) operationIDs() []string {
 		ids[index] = string(rune('0' + id))
 	}
 	return ids
+}
+
+type contextIgnoringDataGoKRFixtureTransport struct {
+	started chan int
+	release chan struct{}
+}
+
+func newContextIgnoringDataGoKRFixtureTransport() *contextIgnoringDataGoKRFixtureTransport {
+	return &contextIgnoringDataGoKRFixtureTransport{started: make(chan int, 3), release: make(chan struct{})}
+}
+
+func (t *contextIgnoringDataGoKRFixtureTransport) Observe(_ context.Context, operation DataGoKROperation) string {
+	select {
+	case t.started <- operation.ID:
+	default:
+	}
+	<-t.release
+	return "verified"
 }
 
 func testSHA256(data []byte) string {

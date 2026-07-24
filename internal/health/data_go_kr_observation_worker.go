@@ -96,6 +96,10 @@ func (w DataGoKRObservationWorker) Run(ctx context.Context, runID string) (Bound
 	started := now().UTC()
 	jobs := make(chan reconstructedDataGoKRShard, len(shards))
 	results := make(chan ObservationRunShard, len(shards))
+	// A slot remains occupied until the transport function itself returns. In
+	// particular, a context-ignoring fixture cannot time out and then permit a
+	// third live operation to start.
+	operationSlots := make(chan struct{}, w.MaxParallel)
 	for _, shard := range shards {
 		jobs <- shard
 	}
@@ -107,7 +111,7 @@ func (w DataGoKRObservationWorker) Run(ctx context.Context, runID string) (Bound
 		go func() {
 			defer workers.Done()
 			for shard := range jobs {
-				results <- w.observeFixtureShard(ctx, runRoot, shard, now)
+				results <- w.observeFixtureShard(ctx, runRoot, shard, operationSlots, now)
 			}
 		}()
 	}
@@ -121,8 +125,14 @@ func (w DataGoKRObservationWorker) Run(ctx context.Context, runID string) (Bound
 	sort.Slice(runShards, func(i, j int) bool { return runShards[i].Index < runShards[j].Index })
 	completed := now().UTC()
 	states := make([]string, 0, len(runShards))
+	partial := false
 	for _, shard := range runShards {
 		states = append(states, shard.TerminalState)
+		partial = partial || !shard.ReceiptAvailable
+	}
+	completeness := "complete"
+	if partial {
+		completeness = "partial"
 	}
 	run := BoundedObservationRun{
 		SchemaVersion: BoundedObservationRunSchemaVersion,
@@ -130,7 +140,7 @@ func (w DataGoKRObservationWorker) Run(ctx context.Context, runID string) (Bound
 		Registry:      w.Inputs.Registry,
 		Run:           ObservationRunScope{RunID: runID, StartedAt: started, CompletedAt: completed, ShardCount: 8, BatchSize: w.BatchSize, MaxParallel: w.MaxParallel, TimeoutMS: w.Timeout.Milliseconds()},
 		Shards:        runShards,
-		Aggregate:     ObservationRunAggregate{TerminalState: aggregateObservationRunState(states, false), Completeness: "complete"},
+		Aggregate:     ObservationRunAggregate{TerminalState: aggregateObservationRunState(states, partial), Completeness: completeness},
 		Redaction:     completeObservationRunRedaction(),
 		Cleanup:       &cleanup,
 	}
@@ -147,18 +157,23 @@ func (w DataGoKRObservationWorker) Run(ctx context.Context, runID string) (Bound
 	return run, nil
 }
 
-func (w DataGoKRObservationWorker) observeFixtureShard(parent context.Context, root string, shard reconstructedDataGoKRShard, now func() time.Time) ObservationRunShard {
+func (w DataGoKRObservationWorker) observeFixtureShard(parent context.Context, root string, shard reconstructedDataGoKRShard, operationSlots chan struct{}, now func() time.Time) ObservationRunShard {
 	receipt := ObservationRunShard{
 		Index:          shard.plan.Index,
 		ShardDigest:    shard.plan.ShardDigest,
 		Scope:          ObservationRunShardScope{Provider: "data_go_kr", Subject: "runtime_freshness_rotating_shard"},
 		ManifestSHA256: w.Inputs.Registry.ManifestSHA256,
 		PolicySHA256:   w.Inputs.Registry.PolicySHA256,
+		TerminalState:  "unknown",
 		Redaction:      completeObservationRunRedaction(),
 	}
 	states := make([]string, 0, len(shard.operations))
 	for _, operation := range shard.operations {
-		states = append(states, observePinnedDataGoKROperation(parent, w.Timeout, w.fixtureTransport, operation))
+		outcome := observePinnedDataGoKROperation(parent, w.Timeout, w.fixtureTransport, operationSlots, operation)
+		if !outcome.completed {
+			return receipt
+		}
+		states = append(states, outcome.state)
 	}
 	state := aggregateFixtureOperationStates(states)
 	artifact := canonicalObservationShardArtifact(shard.plan.Index, state)
@@ -176,19 +191,32 @@ func (w DataGoKRObservationWorker) observeFixtureShard(parent context.Context, r
 	return receipt
 }
 
-func observePinnedDataGoKROperation(parent context.Context, timeout time.Duration, transport dataGoKRFixtureTransport, operation DataGoKROperation) string {
+type fixtureOperationOutcome struct {
+	state     string
+	completed bool
+}
+
+func observePinnedDataGoKROperation(parent context.Context, timeout time.Duration, transport dataGoKRFixtureTransport, operationSlots chan struct{}, operation DataGoKROperation) fixtureOperationOutcome {
+	select {
+	case operationSlots <- struct{}{}:
+	default:
+		return fixtureOperationOutcome{state: "unknown"}
+	}
 	operationContext, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	result := make(chan string, 1)
-	go func() { result <- transport.Observe(operationContext, operation) }()
+	go func() {
+		defer func() { <-operationSlots }()
+		result <- transport.Observe(operationContext, operation)
+	}()
 	select {
 	case state := <-result:
 		if validObservationRunState(state) {
-			return state
+			return fixtureOperationOutcome{state: state, completed: true}
 		}
 	case <-operationContext.Done():
 	}
-	return "unknown"
+	return fixtureOperationOutcome{state: "unknown"}
 }
 
 func validDataGoKRObservationWorker(w DataGoKRObservationWorker) bool {
