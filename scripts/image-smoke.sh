@@ -19,16 +19,25 @@ trap cleanup EXIT INT TERM
 
 docker run --rm --entrypoint /health-runner "$runtime_image" -h >/dev/null
 docker run --rm --entrypoint /health-public "$runtime_image" -h >/dev/null
+if docker run --rm --entrypoint /datapan-health-data-go-kr-observer "$runtime_image" >/dev/null; then
+  echo "observer ran without its sealed shard binding" >&2
+  exit 1
+else
+  observer_status=$?
+  [ "$observer_status" -eq 76 ]
+fi
 docker run --rm --entrypoint /health-archive "$archive_image" -h >/dev/null
 docker run --rm --entrypoint hf "$archive_image" --help >/dev/null
 
-# Live image inventory is intentionally limited to the two live binaries.
+# Live image inventory is intentionally limited to Health runtime binaries;
+# the observer remains fail-closed until a later deployment binding.
 runtime_container=$(docker create "$runtime_image")
 docker export "$runtime_container" > "$work/runtime.tar"
 docker rm "$runtime_container" >/dev/null
 tar -tf "$work/runtime.tar" | grep -qx 'health-runner'
 tar -tf "$work/runtime.tar" | grep -qx 'health-scheduler'
 tar -tf "$work/runtime.tar" | grep -qx 'health-public'
+tar -tf "$work/runtime.tar" | grep -qx 'datapan-health-data-go-kr-observer'
 if tar -tf "$work/runtime.tar" | grep -Eq '(^|/)health-archive$|(^|/)hf$'; then
   echo "archive publication tooling leaked into the live image" >&2
   exit 1

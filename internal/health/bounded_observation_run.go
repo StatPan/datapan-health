@@ -17,18 +17,28 @@ import (
 const BoundedObservationRunSchemaVersion = "datapan.health-bounded-observation-run.v1"
 
 type BoundedObservationRun struct {
-	SchemaVersion string                  `json:"schema_version"`
-	Producer      ObservationRunProducer  `json:"producer"`
-	Registry      ObservationRunRegistry  `json:"registry"`
-	Run           ObservationRunScope     `json:"run"`
-	Shards        []ObservationRunShard   `json:"shards"`
-	Aggregate     ObservationRunAggregate `json:"aggregate"`
-	Redaction     ObservationRunRedaction `json:"redaction"`
+	SchemaVersion string                            `json:"schema_version"`
+	Producer      ObservationRunProducer            `json:"producer"`
+	Registry      ObservationRunRegistry            `json:"registry"`
+	Run           ObservationRunScope               `json:"run"`
+	Shards        []ObservationRunShard             `json:"shards"`
+	Aggregate     ObservationRunAggregate           `json:"aggregate"`
+	Redaction     ObservationRunRedaction           `json:"redaction"`
+	Cleanup       *BoundedObservationCleanupReceipt `json:"cleanup,omitempty"`
 }
 
 type ObservationRunProducer struct {
-	Repository string `json:"repository"`
-	Revision   string `json:"revision"`
+	Repository string                  `json:"repository"`
+	Revision   string                  `json:"revision"`
+	Observer   *ObservationRunObserver `json:"observer,omitempty"`
+}
+
+// ObservationRunObserver records only the immutable identity of the
+// Health-owned observer binary. It never carries a path, argument, provider
+// response, credential, or other execution detail.
+type ObservationRunObserver struct {
+	BinarySHA256  string `json:"binary_sha256"`
+	BuildRevision string `json:"build_revision"`
 }
 
 type ObservationRunRegistry struct {
@@ -119,7 +129,7 @@ func DecodeBoundedObservationRun(r io.Reader) (BoundedObservationRun, error) {
 }
 
 func (r BoundedObservationRun) Validate() error {
-	if r.SchemaVersion != BoundedObservationRunSchemaVersion || r.Producer.Repository != "StatPan/datapan-health" || !commitPattern.MatchString(r.Producer.Revision) {
+	if r.SchemaVersion != BoundedObservationRunSchemaVersion || !validObservationRunProducer(r.Producer) {
 		return errors.New("bounded observation producer is invalid")
 	}
 	if !validObservationRunRegistry(r.Registry) {
@@ -130,6 +140,9 @@ func (r BoundedObservationRun) Validate() error {
 	}
 	if !validObservationRunRedaction(r.Redaction) {
 		return errors.New("bounded observation redaction assertions are required")
+	}
+	if r.Cleanup != nil && !validBoundedObservationCleanupReceipt(*r.Cleanup) {
+		return errors.New("bounded observation cleanup receipt is invalid")
 	}
 	if len(r.Shards) != r.Run.ShardCount {
 		return errors.New("bounded observation shard coverage is incomplete")
@@ -174,6 +187,13 @@ func (r BoundedObservationRun) Validate() error {
 		return errors.New("bounded observation aggregate is invalid")
 	}
 	return nil
+}
+
+func validObservationRunProducer(producer ObservationRunProducer) bool {
+	if producer.Repository != "StatPan/datapan-health" || !commitPattern.MatchString(producer.Revision) {
+		return false
+	}
+	return producer.Observer == nil || (sha256Pattern.MatchString(producer.Observer.BinarySHA256) && producer.Observer.BuildRevision == producer.Revision)
 }
 
 func validObservationRunRegistry(registry ObservationRunRegistry) bool {
