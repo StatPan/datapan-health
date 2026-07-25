@@ -13,7 +13,8 @@
     "run": {"$ref": "#/$defs/run"},
     "shards": {"type": "array", "minItems": 8, "maxItems": 8, "items": {"$ref": "#/$defs/shard"}},
     "aggregate": {"$ref": "#/$defs/aggregate"},
-    "redaction": {"$ref": "#/$defs/redaction"}
+    "redaction": {"$ref": "#/$defs/redaction"},
+    "cleanup": {"$ref": "#/$defs/cleanup"}
   },
   "$defs": {
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
@@ -84,6 +85,18 @@
         "terminal_state": {"$ref": "#/$defs/state"},
         "completeness": {"enum": ["complete", "partial"]},
         "timed_out": {"type": "boolean"}
+      }
+    },
+    "cleanup": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "cleaned_at", "retention_seconds", "expired_runs_removed", "terminal_state", "redaction"],
+      "properties": {
+        "schema_version": {"const": "datapan.health-bounded-observation-cleanup.v1"},
+        "cleaned_at": {"type": "string", "format": "date-time"},
+        "retention_seconds": {"const": 600},
+        "expired_runs_removed": {"type": "integer", "minimum": 0},
+        "terminal_state": {"const": "verified"},
+        "redaction": {"$ref": "#/$defs/redaction"}
       }
     },
     "redaction": {

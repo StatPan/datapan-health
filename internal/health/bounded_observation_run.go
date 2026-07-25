@@ -17,13 +17,14 @@ import (
 const BoundedObservationRunSchemaVersion = "datapan.health-bounded-observation-run.v1"
 
 type BoundedObservationRun struct {
-	SchemaVersion string                  `json:"schema_version"`
-	Producer      ObservationRunProducer  `json:"producer"`
-	Registry      ObservationRunRegistry  `json:"registry"`
-	Run           ObservationRunScope     `json:"run"`
-	Shards        []ObservationRunShard   `json:"shards"`
-	Aggregate     ObservationRunAggregate `json:"aggregate"`
-	Redaction     ObservationRunRedaction `json:"redaction"`
+	SchemaVersion string                            `json:"schema_version"`
+	Producer      ObservationRunProducer            `json:"producer"`
+	Registry      ObservationRunRegistry            `json:"registry"`
+	Run           ObservationRunScope               `json:"run"`
+	Shards        []ObservationRunShard             `json:"shards"`
+	Aggregate     ObservationRunAggregate           `json:"aggregate"`
+	Redaction     ObservationRunRedaction           `json:"redaction"`
+	Cleanup       *BoundedObservationCleanupReceipt `json:"cleanup,omitempty"`
 }
 
 type ObservationRunProducer struct {
@@ -130,6 +131,9 @@ func (r BoundedObservationRun) Validate() error {
 	}
 	if !validObservationRunRedaction(r.Redaction) {
 		return errors.New("bounded observation redaction assertions are required")
+	}
+	if r.Cleanup != nil && !validBoundedObservationCleanupReceipt(*r.Cleanup) {
+		return errors.New("bounded observation cleanup receipt is invalid")
 	}
 	if len(r.Shards) != r.Run.ShardCount {
 		return errors.New("bounded observation shard coverage is incomplete")
