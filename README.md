@@ -12,7 +12,10 @@ See [third-party notices](THIRD_PARTY_NOTICES.md),
 [contribution guidance](CONTRIBUTING.md), [security reporting status](SECURITY.md),
 and [Datapan mark guidance](TRADEMARKS.md). Run `make governance-check` before
 making a source release; it verifies the required files are tracked and present
-in the Git source archive.
+in the Git source archive. `make release-oci` also emits a reproducible,
+checksum-bound `governance-bundle.tar` containing these notices, the selected
+component manifests, and the resolved Go-module inventory for the exact source
+revision. This bundle is a promotion artifact, not a live runtime input.
 
 ## 로컬 실행
 
