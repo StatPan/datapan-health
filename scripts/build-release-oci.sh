@@ -10,6 +10,7 @@ builder=${BUILDER:-datapan-health-release}
 revision=$(git -C "$root" rev-parse HEAD)
 created=$(git -C "$root" log -1 --format=%cI)
 
+"$root/scripts/check-release-source.sh" "$root" "$revision"
 mkdir -p "$output"
 "$root/scripts/write-release-governance-bundle.sh" \
   --output "$output/governance-bundle.tar" \

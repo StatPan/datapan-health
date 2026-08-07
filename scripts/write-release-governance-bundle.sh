@@ -19,6 +19,7 @@ test -n "$output"
 test -n "$revision"
 test -n "$created"
 
+"$root/scripts/check-release-source.sh" "$root" "$revision"
 "$root/scripts/check-governance.sh"
 
 stage=$(mktemp -d)

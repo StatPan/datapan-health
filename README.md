@@ -15,7 +15,9 @@ making a source release; it verifies the required files are tracked and present
 in the Git source archive. `make release-oci` also emits a reproducible,
 checksum-bound `governance-bundle.tar` containing these notices, the selected
 component manifests, and the resolved Go-module inventory for the exact source
-revision. This bundle is a promotion artifact, not a live runtime input.
+revision. It fails closed when tracked, staged, or non-ignored untracked
+source changes would make the build context differ from that revision. This
+bundle is a promotion artifact, not a live runtime input.
 
 ## 로컬 실행
 

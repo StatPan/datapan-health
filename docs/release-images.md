@@ -61,6 +61,11 @@ tool must preserve when it promotes the archives to:
 - `ghcr.io/statpan/datapan-health-runtime@sha256:...`
 - `ghcr.io/statpan/datapan-health-archive@sha256:...`
 
+The OCI Docker context is the checkout itself, so release refuses tracked,
+staged, or non-ignored untracked changes before creating the governance bundle
+or an OCI archive. This prevents the revision recorded in the bundle, image
+labels, and promotion input from naming bytes other than the bytes built.
+
 Before providing the values to infra, an app owner must verify the promoted
 registry digest equals the generated manifest digest, preserve the SHA-256
 checksums, source revision, and `governance-bundle.tar` with its

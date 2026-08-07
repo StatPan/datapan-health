@@ -34,7 +34,9 @@ contains third-party material:
 1. Run `make release-oci`. It first runs the governance gates and emits a
    reproducible `governance-bundle.tar` alongside the OCI archives. That bundle
    contains the legal notices, component manifests, and a checksum-bound,
-   resolved Go-module inventory for the source revision.
+   resolved Go-module inventory for the source revision. The command fails
+   before output when tracked, staged, or non-ignored untracked changes would
+   make the Docker context differ from that revision.
 2. Preserve the bundle, its `sha256sums.txt` entry, and the
    `DATAPAN_HEALTH_GOVERNANCE_BUNDLE_*` bindings in `infra-image-inputs.env`
    with the OCI promotion record. Add the resolved Python package inventory if
