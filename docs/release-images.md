@@ -49,16 +49,27 @@ Build the target platform as local OCI archives; this command never pushes:
 PLATFORM=linux/arm64 OUTPUT_DIR=dist/images ./scripts/build-release-oci.sh
 ```
 
-The command emits `runtime.oci.tar`, `archive.oci.tar`, checksums, and
+The command first verifies governance files and creates a reproducible
+`governance-bundle.tar`. The bundle contains the required legal notices,
+component-input manifests, and the resolved Go module inventory; it is a
+promotion artifact and is not added to either runtime image. The command emits
+`runtime.oci.tar`, `archive.oci.tar`, `governance-bundle.tar`, checksums, and
 `infra-image-inputs.env`. The latter contains the exact OCI manifest digests
-that an approved release tool must preserve when it promotes the archives to:
+and the governance-bundle checksum/source revision that an approved release
+tool must preserve when it promotes the archives to:
 
 - `ghcr.io/statpan/datapan-health-runtime@sha256:...`
 - `ghcr.io/statpan/datapan-health-archive@sha256:...`
 
+The OCI Docker context is the checkout itself, so release refuses tracked,
+staged, or non-ignored untracked changes before creating the governance bundle
+or an OCI archive. This prevents the revision recorded in the bundle, image
+labels, and promotion input from naming bytes other than the bytes built.
+
 Before providing the values to infra, an app owner must verify the promoted
 registry digest equals the generated manifest digest, preserve the SHA-256
-checksums and source revision as release evidence, and fill the prior deployed
+checksums, source revision, and `governance-bundle.tar` with its
+`DATAPAN_HEALTH_GOVERNANCE_BUNDLE_*` binding as release evidence, and fill the prior deployed
 pair in the generated rollback fields. Copy the two current and two prior
 references into the separate mode-0600 infra role bundles; never place a tag,
 `HF_TOKEN`, `GATUS_TOKEN`, or database URL in this repository, image label,

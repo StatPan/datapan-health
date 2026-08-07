@@ -2,7 +2,7 @@ RUNTIME_IMAGE ?= datapan-health-runtime:test
 ARCHIVE_IMAGE ?= datapan-health-archive:test
 TESTED_REVISION ?= $(HEALTH_HEAD)
 
-.PHONY: test quality build images image-smoke release-oci smoke visual archive-smoke hf-publish-smoke diagnostic-compatibility assertion-policy-compatibility correlation-replay diagnosis-snapshot-evidence public-status-doctor manifest-verify schedule-coverage schedule-coverage-doctor
+.PHONY: test quality build images image-smoke release-oci release-governance-smoke release-provenance-smoke smoke visual archive-smoke hf-publish-smoke governance-check diagnostic-compatibility assertion-policy-compatibility correlation-replay diagnosis-snapshot-evidence public-status-doctor manifest-verify schedule-coverage schedule-coverage-doctor
 
 test:
 	go test ./...
@@ -20,10 +20,10 @@ images:
 	docker build --target runtime --tag $(RUNTIME_IMAGE) .
 	docker build --target archive --tag $(ARCHIVE_IMAGE) .
 
-image-smoke: images
+image-smoke: images release-governance-smoke
 	RUNTIME_IMAGE=$(RUNTIME_IMAGE) ARCHIVE_IMAGE=$(ARCHIVE_IMAGE) ./scripts/image-smoke.sh
 
-release-oci:
+release-oci: governance-check release-governance-smoke release-provenance-smoke
 	./scripts/build-release-oci.sh
 
 smoke:
@@ -65,6 +65,15 @@ schedule-coverage-doctor: schedule-coverage
 
 hf-publish-smoke:
 	./scripts/hf-publish-smoke.sh
+
+governance-check:
+	./scripts/check-governance.sh
+
+release-governance-smoke:
+	./scripts/release-governance-smoke.sh
+
+release-provenance-smoke:
+	./scripts/release-provenance-smoke.sh
 
 visual:
 	@test -f docs/evidence/status-desktop.png

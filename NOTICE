@@ -1,0 +1,32 @@
+Datapan Health
+
+This repository's Apache-2.0 LICENSE applies only to Datapan-authored source
+code, documentation, configuration, and schemas unless a file or artifact
+states a different license or provenance. It does not relicense upstream data,
+provider terms, copied or pinned external artifacts, container images, or
+third-party components.
+
+The long-term observation dataset is separately identified as CC-BY-4.0 in
+dataset-card/README.md. Registry and CLI inputs retain the provenance and
+terms recorded with their source artifacts; see schemas/PROVENANCE.md and the
+corresponding pinned manifests.
+
+Third-party component and attribution boundary:
+
+* Gatus is used as an unmodified, digest-pinned external container image in
+  compose.yaml. Its source, license, and notices are maintained by its
+  upstream project at https://github.com/TwiN/gatus . No Gatus source is
+  copied into this repository.
+* PostgreSQL and the base/container images are external, digest-pinned images
+  identified in compose.yaml and Dockerfile. Their own licenses and notices
+  apply to the images.
+* The exact Go module build graph is go.mod and go.sum. For a given source
+  revision, `go list -m -json all` is the authoritative module inventory.
+* The archive image's direct Python requirement is
+  docker/hf-requirements.txt. Its resolver output and the exact container
+  digests must be retained with a release SBOM when an archive image is
+  distributed.
+
+See THIRD_PARTY_NOTICES.md for the release attribution procedure. Datapan name
+and logo permissions are not granted by this NOTICE or by Apache-2.0; see
+TRADEMARKS.md.
