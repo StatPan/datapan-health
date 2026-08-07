@@ -13,6 +13,8 @@ grep -Fq 'Apache License' "$root/LICENSE"
 grep -Fq 'Version 2.0, January 2004' "$root/LICENSE"
 grep -Fq 'THIRD_PARTY_NOTICES.md' "$root/NOTICE"
 grep -Fq 'Governance' "$root/README.md"
+grep -Fq 'https://github.com/StatPan/datapan-health/security/advisories/new' "$root/SECURITY.md"
+grep -Fq 'make security-reporting-check' "$root/SECURITY.md"
 
 # A Git source archive is the release form this repository can validate without
 # building or changing any runtime image. Use the current index tree so the
