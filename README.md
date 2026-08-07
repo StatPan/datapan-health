@@ -2,6 +2,18 @@
 
 공공데이터 API가 고장 난 것처럼 보일 때 가장 먼저 확인하는 공개 상태 페이지의 최소 구현입니다. UI는 익숙한 한 열 세로 목록을 유지하며, [upstream Gatus v5.36.0](https://github.com/TwiN/gatus/releases/tag/v5.36.0)을 수정 없이 사용합니다.
 
+## Governance
+
+Datapan-authored code, documentation, configuration, and schemas are available
+under [Apache-2.0](LICENSE), subject to the boundary in [NOTICE](NOTICE).
+Provider data, pinned cross-repository artifacts, datasets, container images,
+and third-party components retain their own terms and are not relicensed here.
+See [third-party notices](THIRD_PARTY_NOTICES.md),
+[contribution guidance](CONTRIBUTING.md), [security reporting status](SECURITY.md),
+and [Datapan mark guidance](TRADEMARKS.md). Run `make governance-check` before
+making a source release; it verifies the required files are tracked and present
+in the Git source archive.
+
 ## 로컬 실행
 
 Go 1.26.4와 Docker Compose v2가 필요합니다.
