@@ -2,7 +2,7 @@ RUNTIME_IMAGE ?= datapan-health-runtime:test
 ARCHIVE_IMAGE ?= datapan-health-archive:test
 TESTED_REVISION ?= $(HEALTH_HEAD)
 
-.PHONY: test quality build images image-smoke release-oci release-governance-smoke release-provenance-smoke smoke visual archive-smoke hf-publish-smoke governance-check security-reporting-check security-reporting-check-test diagnostic-compatibility assertion-policy-compatibility correlation-replay diagnosis-snapshot-evidence public-status-doctor manifest-verify schedule-coverage schedule-coverage-doctor
+.PHONY: test quality build images image-smoke release-oci release-governance-smoke release-provenance-smoke smoke visual archive-smoke hf-publish-smoke governance-check security-reporting-check security-reporting-check-test diagnostic-compatibility diagnostic-provenance diagnostic-provenance-check assertion-policy-compatibility correlation-replay diagnosis-snapshot-evidence public-status-doctor manifest-verify schedule-coverage schedule-coverage-doctor
 
 test:
 	go test ./...
@@ -35,6 +35,12 @@ archive-smoke:
 diagnostic-compatibility:
 	test -n "$(HEALTH_HEAD)"
 	go run ./cmd/health-compatibility -health-head "$(HEALTH_HEAD)" -tested-revision "$(TESTED_REVISION)" -output out/diagnostic-compatibility.json
+
+diagnostic-provenance:
+	go run ./cmd/health-diagnostic-provenance
+
+diagnostic-provenance-check:
+	go run ./cmd/health-diagnostic-provenance -check
 
 assertion-policy-compatibility:
 	test -n "$(HEALTH_HEAD)"
