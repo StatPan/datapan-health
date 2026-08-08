@@ -77,3 +77,11 @@ unchanged exposure boundaries. CI uploads it as
 `diagnostic-compatibility-<commit>`. Registry #568 can consume that exact-head
 artifact as Health's compatibility proof; the generated receipt is not a
 runtime or rollout authorization.
+
+## Refreshing Health-owned test provenance
+
+When either pinned compatibility test source changes, run
+`make diagnostic-provenance`. The generator refreshes only the two source
+digests, the manifest pin, and the accepted manifest digest. Run
+`make diagnostic-provenance-check` before the full test suite. Do not hand-edit
+those derived digest values.

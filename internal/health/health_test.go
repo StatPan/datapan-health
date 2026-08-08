@@ -179,6 +179,16 @@ func TestGatusUsesInjectedPostgresWithBoundedRetention(t *testing.T) {
 	}
 }
 
+func TestGatusUILinkUsesCanonicalDatapanHost(t *testing.T) {
+	gatus := string(mustRead(t, "../../config/gatus.yaml"))
+	if !strings.Contains(gatus, "  link: https://datapan.statpan.com/\n") {
+		t.Fatal("Gatus UI must link to the canonical Datapan host")
+	}
+	if strings.Contains(gatus, "datapan.dev") {
+		t.Fatal("retired Datapan domain remains in Gatus UI configuration")
+	}
+}
+
 func TestRejectsUnredactedOrUnknownSensitiveFields(t *testing.T) {
 	raw := string(mustRead(t, "../../testdata/receipts/v1/unhealthy.json"))
 	for _, mutation := range []string{
