@@ -1,8 +1,10 @@
 # Immutable runtime images
 
 Ticket #7 supplies application-owned OCI artifacts for the runtime request in
-`statpan-infra#475` / PR #476. It does not publish an image, materialize a
-secret, deploy a Compose project, or enable ingress.
+`statpan-infra#475` / PR #476. The local release command does not publish an
+image, materialize a secret, deploy a Compose project, or enable ingress.
+Ticket #66 adds the only repository-owned publisher:
+`.github/workflows/publish-runtime-image.yml`.
 
 ## Role split
 
@@ -74,6 +76,40 @@ pair in the generated rollback fields. Copy the two current and two prior
 references into the separate mode-0600 infra role bundles; never place a tag,
 `HF_TOKEN`, `GATUS_TOKEN`, or database URL in this repository, image label,
 image argument, or release manifest.
+
+## Trusted runtime publication
+
+The runtime publisher is manual by design. It accepts only a full lowercase
+`source_sha` that is still the exact `main` tip at execution and a declared,
+immutable prior runtime image for a future rollback handoff. It checks out that
+SHA without persisted credentials, runs the existing functional, quality,
+container, archive, governance, and local-OCI release contracts, and produces
+the `runtime` target for `linux/arm64` only.
+
+The only registry marker is `sha-<source_sha>`. It is a reconciliation key, not
+a deploy reference: an existing marker must resolve to the same locally
+generated manifest digest or the job fails. The receipt and every Infra input
+use only `ghcr.io/statpan/datapan-health-runtime@sha256:<digest>`. The workflow
+then pulls that digest for `linux/arm64` and verifies both architecture and
+`org.opencontainers.image.revision` before uploading its secret-free receipt.
+
+The receipt is a short-lived observation, not an admission token: it carries
+an RFC3339 `issued_at`, `expires_at`, and a fixed 900-second maximum age. Its
+GitHub identity names the exact repository, workflow path/ref, run ID, source
+SHA, successful conclusion, and expected artifact name; it also names the
+immutable package digest and its local release inputs. An Infra consumer must
+independently re-read the GitHub Actions run and workflow blob at the source
+SHA, require the exact successful `workflow_dispatch` provenance, query the
+single unexpired named artifact and its provider ZIP digest, then download and
+validate the artifact bytes before relying on the receipt. It must independently
+inspect the GHCR package digest, architecture, and OCI revision label, and must
+reject stale, missing, mismatched, edited, or self-authored-only evidence.
+
+The publication job does not start Compose, contact a runtime host, change
+DNS/Tunnel/Kong, or perform a runtime deployment. The `rollback_image` input
+is a declared handoff field, not evidence that it is current; Infra must
+recapture live identity and obtain its own short-lived approval before any
+mutation.
 
 For rollback, stop scheduler/archive work and set both current inputs back to
 the recorded `*_PREVIOUS` immutable references. PostgreSQL restore is a

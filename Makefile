@@ -2,7 +2,7 @@ RUNTIME_IMAGE ?= datapan-health-runtime:test
 ARCHIVE_IMAGE ?= datapan-health-archive:test
 TESTED_REVISION ?= $(HEALTH_HEAD)
 
-.PHONY: test quality build images image-smoke release-oci release-governance-smoke release-provenance-smoke smoke visual archive-smoke hf-publish-smoke governance-check security-reporting-check security-reporting-check-test diagnostic-compatibility diagnostic-provenance diagnostic-provenance-check assertion-policy-compatibility correlation-replay diagnosis-snapshot-evidence public-status-doctor manifest-verify schedule-coverage schedule-coverage-doctor
+.PHONY: test quality build images image-smoke release-oci release-governance-smoke release-provenance-smoke runtime-publication-contract smoke visual archive-smoke hf-publish-smoke governance-check security-reporting-check security-reporting-check-test diagnostic-compatibility diagnostic-provenance diagnostic-provenance-check assertion-policy-compatibility correlation-replay diagnosis-snapshot-evidence public-status-doctor manifest-verify schedule-coverage schedule-coverage-doctor
 
 test:
 	go test ./...
@@ -86,6 +86,9 @@ release-governance-smoke:
 
 release-provenance-smoke:
 	./scripts/release-provenance-smoke.sh
+
+runtime-publication-contract:
+	./scripts/check-runtime-publication-workflow.sh
 
 visual:
 	@test -f docs/evidence/status-desktop.png

@@ -20,6 +20,7 @@ jobs:
       - run: make security-reporting-check-test
       - run: make release-governance-smoke
       - run: make release-provenance-smoke
+      - run: make runtime-publication-contract
       - run: make test
       - run: make manifest-verify
 
