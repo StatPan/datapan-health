@@ -33,18 +33,38 @@
     "operation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["operation_id", "observation_state", "availability", "diagnosis"],
+      "required": ["operation_id", "observation_state", "raw_observation_state", "incident_state", "consecutive_failure_threshold", "pending_count", "availability", "diagnosis"],
       "properties": {
         "operation_id": {"type": "string", "pattern": "^dpr-op-[0-9]{8}$"},
         "observed_at": {"type": "string", "format": "date-time"},
         "observation_state": {"enum": ["current", "stale", "not_observed"]},
+        "raw_observation_state": {"enum": ["succeeded", "failed", "unknown"]},
+        "incident_state": {"enum": ["operational", "pending", "confirmed", "recovering", "unknown"]},
+        "consecutive_failure_threshold": {"type": "integer", "minimum": 2, "maximum": 100},
+        "pending_count": {"type": "integer", "minimum": 0, "maximum": 99},
         "availability": {"enum": ["operational", "degraded", "unknown"]},
         "diagnosis": {"$ref": "#/$defs/diagnosis"}
       },
       "allOf": [
         {
           "if": {"properties": {"observation_state": {"enum": ["stale", "not_observed"]}}},
-          "then": {"properties": {"availability": {"const": "unknown"}}}
+          "then": {"properties": {"raw_observation_state": {"const": "unknown"}, "incident_state": {"const": "unknown"}, "pending_count": {"const": 0}, "availability": {"const": "unknown"}}}
+        },
+        {
+          "if": {"properties": {"raw_observation_state": {"const": "succeeded"}}},
+          "then": {"properties": {"incident_state": {"enum": ["operational", "recovering"]}, "pending_count": {"const": 0}, "availability": {"const": "operational"}}}
+        },
+        {
+          "if": {"properties": {"raw_observation_state": {"const": "failed"}}},
+          "then": {"properties": {"incident_state": {"enum": ["pending", "confirmed"]}, "availability": {"const": "degraded"}}}
+        },
+        {
+          "if": {"properties": {"incident_state": {"const": "pending"}}},
+          "then": {"properties": {"pending_count": {"minimum": 1}}}
+        },
+        {
+          "if": {"properties": {"incident_state": {"enum": ["confirmed", "operational", "recovering", "unknown"]}}},
+          "then": {"properties": {"pending_count": {"const": 0}}}
         }
       ]
     },
