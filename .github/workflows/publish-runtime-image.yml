@@ -1,0 +1,167 @@
+name: Publish immutable Health runtime image
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact merged main revision to publish (40 lowercase hex characters)
+        required: true
+        type: string
+      rollback_image:
+        description: Declared immutable prior runtime image for a later rollback handoff; never deployed here
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: datapan-health-runtime-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build, reconcile, and receipt an ARM64 runtime digest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      IMAGE: ghcr.io/statpan/datapan-health-runtime
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      ROLLBACK_IMAGE: ${{ inputs.rollback_image }}
+      RELEASE_ARTIFACT: datapan-health-runtime-release-${{ inputs.source_sha }}
+      RECEIPT_MAX_AGE_SECONDS: "900"
+    steps:
+      - name: Validate immutable dispatch inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$ROLLBACK_IMAGE" =~ ^ghcr\.io/statpan/datapan-health-runtime@sha256:[0-9a-f]{64}$ ]]
+
+      - name: Check out the requested source revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+
+      - name: Prove source is the current merged main tip
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git rev-parse origin/main)" = "$SOURCE_SHA"
+          test -z "$(git status --porcelain)"
+          printf 'SOURCE_CREATED=%s\n' "$(git show -s --format=%cI "$SOURCE_SHA")" >> "$GITHUB_ENV"
+
+      - name: Set up emulation and Buildx
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Run the existing release contract and local checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          make test quality image-smoke archive-smoke release-provenance-smoke
+          PLATFORM=linux/arm64 OUTPUT_DIR=dist/images ./scripts/build-release-oci.sh
+          test "$(awk -F= '/^DATAPAN_HEALTH_RELEASE_REVISION=/{print $2}' dist/images/infra-image-inputs.env)" = "$SOURCE_SHA"
+          test "$(awk -F= '/^DATAPAN_HEALTH_RELEASE_PLATFORM=/{print $2}' dist/images/infra-image-inputs.env)" = linux/arm64
+          runtime_digest="$(awk -F@ '/^DATAPAN_HEALTH_IMAGE=/{print $2}' dist/images/infra-image-inputs.env)"
+          [[ "$runtime_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf 'local_runtime_digest=%s\n' "$runtime_digest" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR with workflow-scoped authority
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Refuse a conflicting immutable source marker
+        id: existing
+        shell: bash
+        run: |
+          set -euo pipefail
+          marker="$IMAGE:sha-$SOURCE_SHA"
+          if digest="$(docker buildx imagetools inspect "$marker" --format '{{.Digest}}' 2>/dev/null)"; then
+            test "$digest" = "$local_runtime_digest"
+            printf 'publish=false\nimage_digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+          else
+            printf 'publish=true\n' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish the exact runtime target once
+        id: build
+        if: steps.existing.outputs.publish == 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          target: runtime
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          build-args: |
+            VCS_REF=${{ inputs.source_sha }}
+            CREATED=${{ env.SOURCE_CREATED }}
+          tags: ${{ env.IMAGE }}:sha-${{ inputs.source_sha }}
+
+      - name: Verify promoted digest and runtime identity
+        id: promoted
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.existing.outputs.publish }}" == true ]]; then
+            digest="${{ steps.build.outputs.digest }}"
+          else
+            digest="${{ steps.existing.outputs.image_digest }}"
+          fi
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "$digest" = "$local_runtime_digest"
+          image="$IMAGE@$digest"
+          docker pull --platform linux/arm64 "$image"
+          test "$(docker image inspect --format '{{.Architecture}}' "$image")" = arm64
+          test "$(docker image inspect --format '{{index .Config.Labels \"org.opencontainers.image.revision\"}}' "$image")" = "$SOURCE_SHA"
+          printf 'image=%s\ndigest=%s\n' "$image" "$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Write secret-free release receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          issued_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          expires_at="$(date -u -d "$issued_at + $RECEIPT_MAX_AGE_SECONDS seconds" +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n \
+            --arg schema statpan.datapan-health-runtime-release.v1 \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg workflow_path .github/workflows/publish-runtime-image.yml \
+            --arg workflow_ref "$GITHUB_WORKFLOW_REF" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg source_sha "$SOURCE_SHA" \
+            --arg image "${{ steps.promoted.outputs.image }}" \
+            --arg digest "${{ steps.promoted.outputs.digest }}" \
+            --arg local_digest "$local_runtime_digest" \
+            --arg rollback_image "$ROLLBACK_IMAGE" \
+            --arg platform linux/arm64 \
+            --arg governance_bundle_sha256 "$(sha256sum dist/images/governance-bundle.tar | awk '{print $1}')" \
+            --arg runtime_oci_sha256 "$(sha256sum dist/images/runtime.oci.tar | awk '{print $1}')" \
+            --arg reconciled "${{ steps.existing.outputs.publish }}" \
+            --arg issued_at "$issued_at" \
+            --arg expires_at "$expires_at" \
+            --argjson max_age_seconds "$RECEIPT_MAX_AGE_SECONDS" \
+            --arg artifact_name "$RELEASE_ARTIFACT" \
+            '{schema_version:$schema,issued_at:$issued_at,expires_at:$expires_at,max_age_seconds:$max_age_seconds,github:{repository:$repository,workflow_path:$workflow_path,workflow_ref:$workflow_ref,run_id:$run_id,source_revision:$source_sha,conclusion:"success",artifact_name:$artifact_name},package:{image:$image,digest:$digest,platform:$platform,oci_revision_label:$source_sha},local_release:{oci_manifest_digest:$local_digest,governance_bundle_sha256:$governance_bundle_sha256,runtime_oci_sha256:$runtime_oci_sha256},declared_rollback_image:$rollback_image,published:($reconciled == "true")}' \
+            > dist/images/runtime-release-receipt.json
+          jq -e '(.github.repository == "StatPan/datapan-health") and (.github.workflow_path == ".github/workflows/publish-runtime-image.yml") and (.github.source_revision == .package.oci_revision_label) and (.github.conclusion == "success") and (.github.artifact_name != "") and (.package.image | test("^ghcr\\.io/statpan/datapan-health-runtime@sha256:[0-9a-f]{64}$")) and (.package.digest == .local_release.oci_manifest_digest) and (.package.platform == "linux/arm64") and (.max_age_seconds == 900)' dist/images/runtime-release-receipt.json
+
+      - name: Upload release evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.RELEASE_ARTIFACT }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            dist/images/runtime-release-receipt.json
+            dist/images/infra-image-inputs.env
+            dist/images/sha256sums.txt
