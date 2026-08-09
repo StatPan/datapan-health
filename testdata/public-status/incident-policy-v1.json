@@ -1,0 +1,46 @@
+{
+  "schema_version": "datapan.health-public-status-incident-fixture.v1",
+  "cases": [
+    {
+      "canary_index": 0,
+      "results": [
+        {"success": false, "timestamp": "2026-07-16T23:59:00Z"},
+        {"success": true, "timestamp": "2026-07-16T23:58:00Z"}
+      ],
+      "expected": {"observation_state": "current", "raw_observation_state": "failed", "incident_state": "pending", "pending_count": 1, "availability": "degraded"}
+    },
+    {
+      "canary_index": 1,
+      "results": [
+        {"success": false, "timestamp": "2026-07-16T23:59:00Z"},
+        {"success": false, "timestamp": "2026-07-16T23:58:00Z"}
+      ],
+      "expected": {"observation_state": "current", "raw_observation_state": "failed", "incident_state": "confirmed", "pending_count": 0, "availability": "degraded"}
+    },
+    {
+      "canary_index": 2,
+      "results": [
+        {"success": true, "timestamp": "2026-07-16T23:59:00Z"},
+        {"success": false, "timestamp": "2026-07-16T23:58:00Z"},
+        {"success": false, "timestamp": "2026-07-16T23:57:00Z"}
+      ],
+      "expected": {"observation_state": "current", "raw_observation_state": "succeeded", "incident_state": "recovering", "pending_count": 0, "availability": "operational"}
+    },
+    {
+      "canary_index": 3,
+      "results": [
+        {"success": true, "timestamp": "2026-07-16T23:59:00Z"},
+        {"success": true, "timestamp": "2026-07-16T23:58:00Z"}
+      ],
+      "expected": {"observation_state": "current", "raw_observation_state": "succeeded", "incident_state": "operational", "pending_count": 0, "availability": "operational"}
+    },
+    {
+      "canary_index": 4,
+      "results": [
+        {"success": false, "timestamp": "2026-07-16T22:00:00Z"}
+      ],
+      "expected": {"observation_state": "stale", "raw_observation_state": "unknown", "incident_state": "unknown", "pending_count": 0, "availability": "unknown"}
+    }
+  ],
+  "missing_canary_index": 5
+}

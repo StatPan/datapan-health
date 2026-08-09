@@ -33,7 +33,7 @@ func testPublicDocument(t *testing.T) PublicStatusDocument {
 	}
 	operations := make([]PublicOperationStatus, 0, len(config.Canaries))
 	for _, canary := range config.Canaries {
-		operations = append(operations, PublicOperationStatus{OperationID: canary.OperationID, ObservationState: "not_observed", Availability: "unknown", Diagnosis: unknownPublicDiagnosis()})
+		operations = append(operations, PublicOperationStatus{OperationID: canary.OperationID, ObservationState: "not_observed", RawObservationState: "unknown", IncidentState: "unknown", ConsecutiveFailureThreshold: canary.ConsecutiveFailuresBeforeIncident, Availability: "unknown", Diagnosis: unknownPublicDiagnosis()})
 	}
 	return PublicStatusDocument{SchemaVersion: PublicStatusSchemaVersion, GeneratedAt: publicNow, DiagnosticRegistryRevision: AcceptedDiagnosticRegistryRevision, ObservationCatalogRevision: config.ConsumptionProvenance.RegistryDatasetRevision, Operations: operations}
 }
@@ -199,10 +199,10 @@ func TestPublicStatusSourceProjectsExactIdentityAndFreshness(t *testing.T) {
 	for _, operation := range document.Operations {
 		byID[operation.OperationID] = operation
 	}
-	if got := byID[config.Canaries[0].OperationID]; got.Availability != "operational" || got.ObservationState != "current" {
+	if got := byID[config.Canaries[0].OperationID]; got.Availability != "operational" || got.ObservationState != "current" || got.RawObservationState != "succeeded" || got.IncidentState != "operational" || got.PendingCount != 0 {
 		t.Fatalf("current=%+v", got)
 	}
-	if got := byID[config.Canaries[1].OperationID]; got.Availability != "unknown" || got.ObservationState != "stale" {
+	if got := byID[config.Canaries[1].OperationID]; got.Availability != "unknown" || got.ObservationState != "stale" || got.RawObservationState != "unknown" || got.IncidentState != "unknown" || got.PendingCount != 0 {
 		t.Fatalf("stale=%+v", got)
 	}
 	encoded, _ := json.Marshal(document)
@@ -211,6 +211,68 @@ func TestPublicStatusSourceProjectsExactIdentityAndFreshness(t *testing.T) {
 			t.Fatalf("forbidden %q projected", forbidden)
 		}
 	}
+}
+
+func TestPublicStatusSourceSeparatesRawObservationIncidentAndRecovery(t *testing.T) {
+	config, err := LoadCanaryConfig("../../config/canaries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		SchemaVersion      string `json:"schema_version"`
+		MissingCanaryIndex int    `json:"missing_canary_index"`
+		Cases              []struct {
+			CanaryIndex int                 `json:"canary_index"`
+			Results     []gatusPublicResult `json:"results"`
+			Expected    struct {
+				ObservationState    string `json:"observation_state"`
+				RawObservationState string `json:"raw_observation_state"`
+				IncidentState       string `json:"incident_state"`
+				PendingCount        int    `json:"pending_count"`
+				Availability        string `json:"availability"`
+			} `json:"expected"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(mustRead(t, "../../testdata/public-status/incident-policy-v1.json"), &fixture); err != nil || fixture.SchemaVersion != "datapan.health-public-status-incident-fixture.v1" || len(fixture.Cases) != 5 {
+		t.Fatalf("invalid fixture: %v", err)
+	}
+	upstream := make([]map[string]any, 0, len(fixture.Cases))
+	for _, testCase := range fixture.Cases {
+		upstream = append(upstream, map[string]any{"key": config.Canaries[testCase.CanaryIndex].GatusEndpointKey, "results": testCase.Results})
+	}
+	body, _ := json.Marshal(upstream)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+	source, err := NewGatusPublicStatusSource(server.URL, config, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.now = func() time.Time { return publicNow }
+	document, err := source.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]PublicOperationStatus{}
+	for _, operation := range document.Operations {
+		byID[operation.OperationID] = operation
+	}
+	for _, testCase := range fixture.Cases {
+		got := byID[config.Canaries[testCase.CanaryIndex].OperationID]
+		if got.ObservationState != testCase.Expected.ObservationState || got.RawObservationState != testCase.Expected.RawObservationState || got.IncidentState != testCase.Expected.IncidentState || got.PendingCount != testCase.Expected.PendingCount || got.Availability != testCase.Expected.Availability || !isUnknownPublicDiagnosis(got.Diagnosis) {
+			t.Fatalf("case %d=%+v", testCase.CanaryIndex, got)
+		}
+	}
+	missing := byID[config.Canaries[fixture.MissingCanaryIndex].OperationID]
+	if missing.ObservationState != "not_observed" || missing.RawObservationState != "unknown" || missing.IncidentState != "unknown" || missing.PendingCount != 0 || !isUnknownPublicDiagnosis(missing.Diagnosis) {
+		t.Fatalf("missing=%+v", missing)
+	}
+}
+
+func isUnknownPublicDiagnosis(diagnosis PublicDiagnosis) bool {
+	return diagnosis.Code == "unknown" && diagnosis.Determination == "unknown" && diagnosis.AccountableParty == "unknown" && len(diagnosis.RecommendedActionIDs) == 0 && len(diagnosis.AvoidActionIDs) == 0
 }
 
 func TestPublicStatusSourceRejectsUnsafeUpstream(t *testing.T) {
@@ -350,11 +412,14 @@ func TestDatapanStatusRoutesKeepServicesAndDependenciesSeparate(t *testing.T) {
 func TestExternalDependencyObservationCannotPromoteOwnedService(t *testing.T) {
 	document := testPublicDocument(t)
 	document.Operations[0] = PublicOperationStatus{
-		OperationID:      document.Operations[0].OperationID,
-		ObservedAt:       &publicNow,
-		ObservationState: "current",
-		Availability:     "operational",
-		Diagnosis:        unknownPublicDiagnosis(),
+		OperationID:                 document.Operations[0].OperationID,
+		ObservedAt:                  &publicNow,
+		ObservationState:            "current",
+		RawObservationState:         "succeeded",
+		IncidentState:               "operational",
+		ConsecutiveFailureThreshold: 2,
+		Availability:                "operational",
+		Diagnosis:                   unknownPublicDiagnosis(),
 	}
 	handler, err := NewPublicStatusHandler(staticPublicSource{document: document}, []string{"https://datapan.statpan.com"})
 	if err != nil {
@@ -511,6 +576,15 @@ func TestPublicStatusSchemaRejectsPrivateFields(t *testing.T) {
 	inconsistent, _ = json.Marshal(document)
 	if schemas.ValidateHealthPublicStatusV1(inconsistent) == nil {
 		t.Fatal("schema accepted operational availability from a stale observation")
+	}
+
+	document = testPublicDocument(t)
+	document.Operations[0].RawObservationState = "failed"
+	document.Operations[0].IncidentState = "confirmed"
+	document.Operations[0].PendingCount = 1
+	inconsistent, _ = json.Marshal(document)
+	if schemas.ValidateHealthPublicStatusV1(inconsistent) == nil {
+		t.Fatal("schema accepted pending count for a confirmed incident")
 	}
 
 	document = testPublicDocument(t)

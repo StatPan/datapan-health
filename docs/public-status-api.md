@@ -27,6 +27,25 @@ is `unknown`; it cannot promote an owned service. Diagnosis is projected only
 from a separately reviewed accepted input, otherwise it is `unknown` with no
 action IDs.
 
+## Dependency observation and incident meaning
+
+Each dependency operation keeps raw observation, incident, and diagnosis
+separate. `availability` is the latest raw observation: `operational`,
+`degraded`, or `unknown`. It is never a root-cause claim.
+
+- `raw_observation_state` is `succeeded`, `failed`, or `unknown`.
+- `incident_state` is `pending` after an isolated failure, `confirmed` after
+  the configured consecutive-failure threshold, `recovering` after the first
+  success following a confirmed incident, `operational` after the matching
+  consecutive-success threshold, or `unknown` when observation is stale or
+  missing.
+- `consecutive_failure_threshold` and `pending_count` expose the bounded
+  alert-state calculation without exposing provider requests or responses.
+
+The reviewed ten-canary `scope` remains explicit in every dependency response:
+it is neither whole-catalog coverage nor a data.go.kr/provider SLA. `observed_at`
+is per operation; stale and missing observations retain no incident claim.
+
 ## CORS and caching
 
 `PUBLIC_STATUS_ALLOWED_ORIGINS` is required and contains comma-separated exact

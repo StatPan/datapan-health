@@ -109,7 +109,7 @@ func TestCanaryMappingsMatchConfiguredGatusExternalEndpoints(t *testing.T) {
 		if len(parts) != 2 || !strings.Contains(gatus, "group: "+parts[0]) || !strings.Contains(gatus, "name: "+parts[1]) {
 			t.Fatalf("canary does not resolve to a configured Gatus endpoint: %q", canary.GatusEndpointKey)
 		}
-		if !strings.Contains(gatus, "interval: "+strconv.Itoa(canary.HeartbeatMinutes)+"m") || !strings.Contains(gatus, "failure-threshold: "+strconv.Itoa(canary.ConsecutiveFailuresBeforeIncident)) {
+		if !strings.Contains(gatus, "interval: "+strconv.Itoa(canary.HeartbeatMinutes)+"m") || !strings.Contains(gatus, "failure-threshold: "+strconv.Itoa(canary.ConsecutiveFailuresBeforeIncident)) || !strings.Contains(gatus, "success-threshold: "+strconv.Itoa(canary.ConsecutiveFailuresBeforeIncident)) {
 			t.Fatalf("Gatus cadence or incident threshold is missing for %q", canary.GatusEndpointKey)
 		}
 	}

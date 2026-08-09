@@ -19,7 +19,7 @@
   },
   "test_manifest": {
     "path": "diagnostic-test-manifest.json",
-    "sha256": "fa19d09bbe955595f0ee9bfe83767d11ffe3bcedcb91b758dcf068d429452852"
+    "sha256": "ab32650951a1811823d93171e9b25aab2bfd734ee8dbd796679f481448ec9680"
   },
   "fixture_directory": "diagnostic/fixtures"
 }

@@ -35,11 +35,15 @@ type PublicStatusDocument struct {
 }
 
 type PublicOperationStatus struct {
-	OperationID      string          `json:"operation_id"`
-	ObservedAt       *time.Time      `json:"observed_at,omitempty"`
-	ObservationState string          `json:"observation_state"`
-	Availability     string          `json:"availability"`
-	Diagnosis        PublicDiagnosis `json:"diagnosis"`
+	OperationID                 string          `json:"operation_id"`
+	ObservedAt                  *time.Time      `json:"observed_at,omitempty"`
+	ObservationState            string          `json:"observation_state"`
+	RawObservationState         string          `json:"raw_observation_state"`
+	IncidentState               string          `json:"incident_state"`
+	ConsecutiveFailureThreshold int             `json:"consecutive_failure_threshold"`
+	PendingCount                int             `json:"pending_count"`
+	Availability                string          `json:"availability"`
+	Diagnosis                   PublicDiagnosis `json:"diagnosis"`
 }
 
 type PublicDiagnosis struct {
@@ -183,18 +187,14 @@ func (s *GatusPublicStatusSource) Snapshot(ctx context.Context) (PublicStatusDoc
 	if err := json.Unmarshal(data, &endpoints); err != nil {
 		return PublicStatusDocument{}, errors.New("public status source unavailable")
 	}
-	latest := map[string]gatusPublicResult{}
+	resultsByKey := map[string][]gatusPublicResult{}
 	seen := map[string]bool{}
 	for _, endpoint := range endpoints {
 		if seen[endpoint.Key] {
 			return PublicStatusDocument{}, errors.New("public status source unavailable")
 		}
 		seen[endpoint.Key] = true
-		for _, result := range endpoint.Results {
-			if result.Timestamp.After(latest[endpoint.Key].Timestamp) {
-				latest[endpoint.Key] = result
-			}
-		}
+		resultsByKey[endpoint.Key] = append([]gatusPublicResult(nil), endpoint.Results...)
 	}
 	now := s.now().UTC()
 	if now.IsZero() || now.Year() < 2020 {
@@ -202,13 +202,15 @@ func (s *GatusPublicStatusSource) Snapshot(ctx context.Context) (PublicStatusDoc
 	}
 	operations := make([]PublicOperationStatus, 0, len(s.canaries.Canaries))
 	for _, canary := range s.canaries.Canaries {
-		operation := PublicOperationStatus{OperationID: canary.OperationID, ObservationState: "not_observed", Availability: "unknown", Diagnosis: unknownPublicDiagnosis()}
-		if result, ok := latest[canary.GatusEndpointKey]; ok && !result.Timestamp.IsZero() {
+		operation := PublicOperationStatus{OperationID: canary.OperationID, ObservationState: "not_observed", RawObservationState: "unknown", IncidentState: "unknown", ConsecutiveFailureThreshold: canary.ConsecutiveFailuresBeforeIncident, Availability: "unknown", Diagnosis: unknownPublicDiagnosis()}
+		results := resultsByKey[canary.GatusEndpointKey]
+		if result, ok := latestGatusPublicResult(results); ok {
 			observed := result.Timestamp.UTC()
 			operation.ObservedAt = &observed
 			age := now.Sub(observed)
 			if age >= -30*time.Second && age <= time.Duration(canary.HeartbeatMinutes)*time.Minute {
 				operation.ObservationState = "current"
+				operation.RawObservationState, operation.IncidentState, operation.PendingCount = projectIncidentState(results, canary.ConsecutiveFailuresBeforeIncident)
 				if result.Success {
 					operation.Availability = "operational"
 				} else {
@@ -227,6 +229,61 @@ func (s *GatusPublicStatusSource) Snapshot(ctx context.Context) (PublicStatusDoc
 		return PublicStatusDocument{}, errors.New("public status source unavailable")
 	}
 	return document, nil
+}
+
+func latestGatusPublicResult(results []gatusPublicResult) (gatusPublicResult, bool) {
+	var latest gatusPublicResult
+	for _, result := range results {
+		if !result.Timestamp.IsZero() && result.Timestamp.After(latest.Timestamp) {
+			latest = result
+		}
+	}
+	return latest, !latest.Timestamp.IsZero()
+}
+
+// projectIncidentState replays the most recent contiguous result runs against
+// the same threshold used by the pinned Gatus alert policy. A current failed
+// observation is pending until the failure threshold is met; a current
+// successful observation is recovering only when it follows a confirmed
+// failure run and has not yet met the matching success threshold.
+func projectIncidentState(results []gatusPublicResult, threshold int) (rawState, incidentState string, pendingCount int) {
+	ordered := make([]gatusPublicResult, 0, len(results))
+	for _, result := range results {
+		if !result.Timestamp.IsZero() {
+			ordered = append(ordered, result)
+		}
+	}
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Timestamp.After(ordered[j].Timestamp) })
+	if len(ordered) == 0 || threshold < 2 {
+		return "unknown", "unknown", 0
+	}
+	latest := ordered[0]
+	run := 0
+	for _, result := range ordered {
+		if result.Success != latest.Success {
+			break
+		}
+		run++
+	}
+	if !latest.Success {
+		if run >= threshold {
+			return "failed", "confirmed", 0
+		}
+		return "failed", "pending", run
+	}
+	if run < threshold && run < len(ordered) {
+		priorFailedRun := 0
+		for _, result := range ordered[run:] {
+			if result.Success {
+				break
+			}
+			priorFailedRun++
+		}
+		if priorFailedRun >= threshold {
+			return "succeeded", "recovering", 0
+		}
+	}
+	return "succeeded", "operational", 0
 }
 
 type PublicStatusHandler struct {

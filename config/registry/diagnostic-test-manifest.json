@@ -7,7 +7,7 @@
     },
     {
       "path": "internal/health/health_test.go",
-      "sha256": "4499f973248540f0cb0e805ff0a39ed2584e8626f8aa346bc2b37d2457267726"
+      "sha256": "06fa515c960e60b586f951584a11671146ab19ec32e08c0d4a0d16f4ef0ca8b2"
     }
   ],
   "tests": [
