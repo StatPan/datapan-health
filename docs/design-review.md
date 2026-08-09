@@ -8,11 +8,11 @@ Visual decision: Preserve the familiar Gatus status-page controls and cards, con
 
 Evidence:
 
-- [Desktop, 1440×1200](evidence/status-desktop.png)
+- [Desktop, 1280×1000](evidence/status-desktop.png)
 - [Mobile, 390×844](evidence/status-mobile.png)
-- Both viewports show the same vertical order, healthy and unhealthy badges, visible focus styling, and no text/image overlap.
-- Ticket #40 verified the updated upstream Gatus surface locally at 1280×1000 and 390×844 after synthetic healthy/unhealthy receipts. The sample-scope copy is visible at both widths; Korean wrapping remains readable with no overlap. The separate JSON adapter carries raw observation and confirmed-incident fields; those fields are intentionally not rendered by upstream Gatus.
-- Evidence was recaptured after ticket #3 from the ephemeral PostgreSQL-backed Compose stack after healthy and unhealthy CLI-style receipts were persisted for `holiday-emergency-clinics` and `qnet-practical-pass-rate`.
+- Both viewports show the same vertical order, healthy and unhealthy badges, visible focus styling, readable sample-scope copy, and no observed text/image overlap or horizontal overflow.
+- Ticket #40 recaptured the local Compose Gatus view at 1280×1000 and 390×844 after the honest 10-canary scope copy changed. The public JSON adapter remains a separate machine-readable surface; this upstream Gatus view does not render its incident fields.
+- The 2026-08-09 capture used the ephemeral PostgreSQL-backed Compose stack after healthy and unhealthy CLI-style receipts were persisted for `holiday-emergency-clinics` and `qnet-practical-pass-rate`. PNG SHA-256: desktop `637f4da25936b2b7070ef5fe9f2ea16eff20fa57dd26877c843e621079431587`; mobile `eb3d479962ca747b4e1be5dbd7f175f71c5bd2602732baab75c87ba1d082ad09`.
 - Gatus provides endpoint link accessibility names; icon controls retain upstream titles/labels.
 
 Open design risk: none. The remaining English filter labels are upstream Gatus controls and do not prevent the Korean Datapan status context; translating them would require a frontend fork, which is explicitly out of scope.
