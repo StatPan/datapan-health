@@ -105,6 +105,21 @@ validate the artifact bytes before relying on the receipt. It must independently
 inspect the GHCR package digest, architecture, and OCI revision label, and must
 reject stale, missing, mismatched, edited, or self-authored-only evidence.
 
+That publisher artifact has exactly four members:
+
+- `runtime-release-receipt.json`
+- `infra-image-inputs.env`
+- `sha256sums.txt`
+- `runtime.oci.tar`
+
+`runtime.oci.tar` is the publisher-created `linux/arm64` OCI layout. Its byte
+SHA-256 must equal both the `runtime.oci.tar` entry in `sha256sums.txt` and
+`local_release.runtime_oci_sha256` in the receipt. This archive SHA is distinct
+from the immutable GHCR OCI manifest digest in `package.digest`. The provider
+ZIP digest is not self-authored by the publisher: a consumer must obtain it
+from GitHub's artifact API while independently validating the exact four-member
+ZIP before staging the archive.
+
 The publication job does not start Compose, contact a runtime host, change
 DNS/Tunnel/Kong, or perform a runtime deployment. The `rollback_image` input
 is a declared handoff field, not evidence that it is current; Infra must

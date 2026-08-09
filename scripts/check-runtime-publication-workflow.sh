@@ -19,6 +19,21 @@ grep -Fq 'provenance: false' "$workflow"
 grep -Fq 'test "$digest" = "$local_runtime_digest"' "$workflow"
 grep -Fq 'org.opencontainers.image.revision' "$workflow"
 grep -Fq 'runtime-release-receipt.json' "$workflow"
+artifact_paths=$(awk '
+  /name: \$\{\{ env\.RELEASE_ARTIFACT \}\}/ { in_artifact=1; next }
+  in_artifact && /^[[:space:]]*path: \|[[:space:]]*$/ { in_paths=1; next }
+  in_paths && /^[[:space:]]*dist\/images\// {
+    sub(/^[[:space:]]*/, "")
+    print
+    next
+  }
+  in_paths { exit }
+' "$workflow")
+expected_artifact_paths='dist/images/runtime-release-receipt.json
+dist/images/infra-image-inputs.env
+dist/images/sha256sums.txt
+dist/images/runtime.oci.tar'
+test "$artifact_paths" = "$expected_artifact_paths"
 grep -Fq 'declared_rollback_image' "$workflow"
 grep -Fq 'RECEIPT_MAX_AGE_SECONDS: "900"' "$workflow"
 grep -Fq 'issued_at' "$workflow"
