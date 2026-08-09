@@ -165,3 +165,4 @@ jobs:
             dist/images/runtime-release-receipt.json
             dist/images/infra-image-inputs.env
             dist/images/sha256sums.txt
+            dist/images/runtime.oci.tar
