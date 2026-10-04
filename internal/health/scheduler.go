@@ -254,7 +254,7 @@ func (s *Scheduler) run(parent context.Context, canary Canary, entry CatalogEntr
 		}
 		receipt = fallback
 	}
-	if _, err := s.config.AdmitReceipt(receipt, time.Now().UTC(), started); err != nil {
+	if _, err := s.config.AdmitScheduledReceipt(receipt, canary, time.Now().UTC(), started); err != nil {
 		s.metrics.incAdmissionRejected(admissionReason(err))
 		s.recordProgress(canary.OperationID, "failed", admissionReason(err), time.Time{})
 		_ = cliErr // errors may contain provider details and are deliberately not logged.
