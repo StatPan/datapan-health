@@ -39,9 +39,17 @@ func TestAdapterRejectsBeforeArchiveAndGatus(t *testing.T) {
 	base.Registry = health.Registry{DatasetID: entry.Aliases.DatasetID, DatasetRevision: config.ConsumptionProvenance.RegistryDatasetRevision, RegistrySHA256: config.ConsumptionProvenance.SourceRegistrySHA256, ManifestSHA256: config.ConsumptionProvenance.ReleaseManifestSHA256}
 	base.Policy = &health.Policy{Key: entry.Policy.Key, Version: entry.Policy.Version, Authority: entry.Policy.Authority, MaxLevel: entry.Policy.MaxLevel}
 	var posts atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { posts.Add(1); w.WriteHeader(202) }))
+	var reject atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posts.Add(1)
+		if reject.Load() {
+			w.WriteHeader(503)
+		} else {
+			w.WriteHeader(202)
+		}
+	}))
 	defer server.Close()
-	for _, name := range []string{"registry", "policy", "stale", "future", "budget", "valid", "provider_timeout"} {
+	for _, name := range []string{"registry", "policy", "stale", "future", "budget", "valid", "provider_timeout", "delivery_failure"} {
 		t.Run(name, func(t *testing.T) {
 			r := base
 			r.ObservedAt = time.Now().UTC()
@@ -70,11 +78,26 @@ func TestAdapterRejectsBeforeArchiveAndGatus(t *testing.T) {
 			cmd := exec.Command(os.Args[0], "-test.run=^TestAdapterChild$")
 			cmd.Env = append(os.Environ(), "HEALTH_ADAPTER_TEST_CHILD=1", "HEALTH_ADAPTER_TEST_ARGS="+strings.Join([]string{"-receipt", path, "-archive", archive, "-canaries", cfg, "-gatus-url", server.URL, "-token", "synthetic-test-token"}, "\n"))
 			before := posts.Load()
+			reject.Store(name == "delivery_failure")
 			output, err := cmd.CombinedOutput()
 			valid := name == "valid" || name == "provider_timeout"
 			if valid {
 				if err != nil || posts.Load() != before+1 {
 					t.Fatalf("valid receipt failed: %s", output)
+				}
+				ack, err := os.ReadFile(archive + ".deliveries.jsonl")
+				if err != nil || !strings.Contains(string(ack), "not_checked") {
+					t.Fatal("delivery acknowledgement missing")
+				}
+			} else if name == "delivery_failure" {
+				if err == nil || posts.Load() != before+1 {
+					t.Fatal("Gatus failure was not reported")
+				}
+				if _, err := os.Stat(archive); err != nil {
+					t.Fatal("archive fixture not stored")
+				}
+				if _, err := os.Stat(archive + ".deliveries.jsonl"); !os.IsNotExist(err) {
+					t.Fatal("archive reported as delivery acknowledgement")
 				}
 			} else {
 				if err == nil || posts.Load() != before {

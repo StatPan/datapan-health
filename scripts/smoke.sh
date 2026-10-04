@@ -29,7 +29,7 @@ docker compose --profile fixtures run --rm runner-healthy
 python3 scripts/prepare-smoke-fixtures.py
 docker compose --profile fixtures run --rm runner-unhealthy
 curl --fail --silent http://127.0.0.1:8081/live >/dev/null
-curl --fail --silent http://127.0.0.1:8081/ready >/dev/null
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8081/ready)" = 503
 curl --fail --silent http://127.0.0.1:8081/metrics | grep -q 'datapan_health_scheduler_runs_started_total'
 public_status="$(curl --fail --silent -H 'Origin: https://datapan.statpan.com' -D "$public_headers" http://127.0.0.1:8082/datapan/v1/dependencies)"
 grep -qi '^Access-Control-Allow-Origin: https://datapan.statpan.com' "$public_headers"
