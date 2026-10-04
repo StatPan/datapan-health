@@ -17,7 +17,11 @@ func main() {
 	flag.StringVar(&token, "token", os.Getenv("GATUS_TOKEN"), "Gatus external-endpoint token")
 	flag.StringVar(&archivePath, "archive", env("RECEIPT_ARCHIVE", "data/receipts.jsonl"), "local redacted receipt archive")
 	flag.StringVar(&canaryPath, "canaries", env("CANARY_CONFIG", "config/canaries.json"), "public canary identity mapping")
+	journalPath := flag.String("delivery-journal", env("RECEIPT_DELIVERY_JOURNAL", ""), "private Gatus acceptance journal")
 	flag.Parse()
+	if *journalPath == "" {
+		*journalPath = archivePath + ".deliveries.jsonl"
+	}
 
 	if receiptPath == "" || token == "" {
 		fmt.Fprintln(os.Stderr, "receipt and token are required")
@@ -42,6 +46,10 @@ func main() {
 	pusher := health.NewGatusPusher(gatusURL, token, 10*time.Second)
 	if err := pusher.Push(context.Background(), health.Summarize(receipt, endpointKey)); err != nil {
 		fail(fmt.Errorf("push summary: %w", err))
+	}
+	canary, _ := canaries.CanaryFor(receipt)
+	if err := health.StoreDeliveryAcknowledgement(*journalPath, receipt, canary); err != nil {
+		fail(err)
 	}
 }
 

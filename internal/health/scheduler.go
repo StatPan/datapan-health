@@ -33,17 +33,21 @@ type ReceiptDeliverer interface {
 }
 
 type Scheduler struct {
-	config    CanaryConfig
-	runner    ProbeRunner
-	deliverer ReceiptDeliverer
-	coverage  *ScheduleCoverageLifecycle
-	statePath string
-	mu        sync.Mutex
-	state     scheduleState
-	active    map[string]bool
-	sem       chan struct{}
-	wg        sync.WaitGroup
-	metrics   SchedulerMetrics
+	config        CanaryConfig
+	runner        ProbeRunner
+	deliverer     ReceiptDeliverer
+	coverage      *ScheduleCoverageLifecycle
+	statePath     string
+	mu            sync.Mutex
+	state         scheduleState
+	active        map[string]bool
+	sem           chan struct{}
+	wg            sync.WaitGroup
+	metrics       SchedulerMetrics
+	progress      map[string]CanaryProgress
+	lastLoop      time.Time
+	loopFailure   bool
+	stateFailures uint64
 }
 
 type scheduleState struct {
@@ -94,7 +98,7 @@ func NewSchedulerWithCoverage(config CanaryConfig, statePath string, runner Prob
 	if err != nil {
 		return nil, err
 	}
-	return &Scheduler{config: config, statePath: statePath, runner: runner, deliverer: deliverer, coverage: coverage, state: state, active: map[string]bool{}, sem: make(chan struct{}, config.GlobalConcurrency)}, nil
+	return &Scheduler{config: config, statePath: statePath, runner: runner, deliverer: deliverer, coverage: coverage, state: state, progress: map[string]CanaryProgress{}, active: map[string]bool{}, sem: make(chan struct{}, config.GlobalConcurrency)}, nil
 }
 
 func loadScheduleState(path string) (scheduleState, error) {
@@ -147,7 +151,16 @@ func (s *Scheduler) saveLocked() error {
 // ProcessDue is clock-driven so tests can advance time without sleeping. It
 // claims a slot before execution; a crash may skip that slot but can never
 // replay it after restart, preventing catch-up storms and duplicate probes.
-func (s *Scheduler) ProcessDue(ctx context.Context, now time.Time) error {
+func (s *Scheduler) ProcessDue(ctx context.Context, now time.Time) (result error) {
+	defer func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.lastLoop = now.UTC()
+		s.loopFailure = result != nil
+		if result != nil {
+			s.stateFailures++
+		}
+	}()
 	now = now.UTC()
 	if s.coverage != nil {
 		if err := s.coverage.ProcessDue(now); err != nil {
@@ -199,6 +212,10 @@ func (s *Scheduler) claimAndStart(ctx context.Context, now time.Time, canary Can
 	s.active[canary.OperationID] = true
 	s.wg.Add(1)
 	s.metrics.incStarted()
+	p := s.progress[canary.OperationID]
+	startedAt := time.Now().UTC()
+	p.LastStarted = &startedAt
+	s.progress[canary.OperationID] = p
 	go func() {
 		defer func() { <-s.sem; s.mu.Lock(); delete(s.active, canary.OperationID); s.mu.Unlock(); s.wg.Done() }()
 		s.run(ctx, canary, entry)
@@ -213,6 +230,7 @@ func (s *Scheduler) run(parent context.Context, canary Canary, entry CatalogEntr
 		// a raw filesystem error. A failed metric is a bounded, redacted outcome
 		// and prevents an unavailable write boundary from causing provider work.
 		s.metrics.incFailed()
+		s.recordProgress(canary.OperationID, "failed", "receipt_storage_unavailable", time.Time{})
 		return
 	}
 	defer os.RemoveAll(dir)
@@ -224,30 +242,39 @@ func (s *Scheduler) run(parent context.Context, canary Canary, entry CatalogEntr
 	// still must exist and is the sole authority for the public projection.
 	cliErr := s.runner.Run(probeCtx, canary, entry, receiptPath)
 	receipt, receiptErr := ReadReceipt(receiptPath)
+	receiptless := receiptErr != nil
 	if receiptErr != nil {
 		// A receipt-less bounded child must replace, not leave behind, an older
 		// healthy status. This fallback never reads child output or request data.
 		fallback, err := s.receiptlessOutcome(entry, started, time.Now().UTC(), cliErr, probeCtx.Err())
 		if err != nil || writeReceipt(receiptPath, fallback) != nil {
 			s.metrics.incFailed()
+			s.recordProgress(canary.OperationID, "failed", "receipt_unavailable", time.Time{})
 			return
 		}
 		receipt = fallback
 	}
 	if _, err := s.config.AdmitScheduledReceipt(receipt, canary, time.Now().UTC(), started); err != nil {
 		s.metrics.incAdmissionRejected(admissionReason(err))
+		s.recordProgress(canary.OperationID, "failed", admissionReason(err), time.Time{})
 		_ = cliErr // errors may contain provider details and are deliberately not logged.
 		return
 	}
+	s.recordProgress(canary.OperationID, "accepted", "", receipt.ObservedAt)
 	// The CLI owns the execution ceiling. Delivery gets an independent short
 	// window so a timeout receipt can be projected after the probe deadline.
 	deliveryCtx, cancelDelivery := context.WithTimeout(parent, 10*time.Second)
 	defer cancelDelivery()
 	if err := s.deliverer.Deliver(deliveryCtx, receiptPath); err != nil {
 		s.metrics.incDeliveryFailed()
+		s.recordProgress(canary.OperationID, "failed", "delivery_failed", time.Time{})
 		return
 	}
 	s.metrics.incCompleted()
+	s.recordProgress(canary.OperationID, "delivered", "", time.Time{})
+	if receiptless {
+		s.recordProgress(canary.OperationID, "failed", "cli_receipt_missing", time.Time{})
+	}
 }
 
 func (s *Scheduler) receiptStagingDir() (string, error) {

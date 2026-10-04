@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -37,7 +38,7 @@ type GatusPusher struct {
 }
 
 func NewGatusPusher(baseURL, token string, timeout time.Duration) *GatusPusher {
-	return &GatusPusher{strings.TrimRight(baseURL, "/"), token, &http.Client{Timeout: timeout}}
+	return &GatusPusher{strings.TrimRight(baseURL, "/"), token, &http.Client{Timeout: timeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 
 func (p *GatusPusher) Push(ctx context.Context, summary Summary) error {
@@ -50,12 +51,12 @@ func (p *GatusPusher) Push(ctx context.Context, summary Summary) error {
 	endpoint := p.baseURL + "/api/v1/endpoints/" + url.PathEscape(summary.EndpointKey) + "/external?" + values.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
 	if err != nil {
-		return err
+		return errors.New("Gatus delivery unavailable")
 	}
 	req.Header.Set("Authorization", "Bearer "+p.token)
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return err
+		return errors.New("Gatus delivery unavailable")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

@@ -34,8 +34,8 @@ if tar -tf "$work/runtime.tar" | grep -Eq '(^|/)health-archive$|(^|/)hf$'; then
   exit 1
 fi
 
-# A ready scheduler proves its assigned executable starts without a provider,
-# archive image, or Hugging Face credential in the live role.
+# A live but unready scheduler without a CLI proves failure-aware startup.
+# No provider or publication work is allowed in this fixture.
 scheduler_id=$(docker run -d --entrypoint /health-scheduler -p 127.0.0.1::8081 \
   -e CANARY_CONFIG=/config/canaries.json \
   -e SCHEDULER_STATE=/data/scheduler-state.json \
@@ -44,10 +44,11 @@ scheduler_id=$(docker run -d --entrypoint /health-scheduler -p 127.0.0.1::8081 \
 port=$(docker port "$scheduler_id" 8081/tcp | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')
 ready=false
 for _ in $(seq 1 20); do
-  if curl --fail --silent "http://127.0.0.1:$port/ready" >/dev/null; then ready=true; break; fi
+  if curl --fail --silent "http://127.0.0.1:$port/live" >/dev/null; then ready=true; break; fi
   sleep 1
 done
 [ "$ready" = true ]
+[ "$(curl --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:$port/ready")" = 503 ]
 docker rm -f "$scheduler_id" >/dev/null
 scheduler_id=
 
