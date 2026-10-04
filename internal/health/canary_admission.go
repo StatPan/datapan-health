@@ -29,6 +29,16 @@ type AdmissionError string
 
 func (e AdmissionError) Error() string { return "canary admission rejected: " + string(e) }
 
+// AdmitScheduledReceipt also binds a child's result to the exact canary that
+// launched it. Admission to the catalog alone cannot prove invocation identity.
+func (c CanaryConfig) AdmitScheduledReceipt(r Receipt, expected Canary, now, started time.Time) (string, error) {
+	actual, err := c.CanaryFor(r)
+	if err != nil || actual.OperationID != expected.OperationID || actual.GatusEndpointKey != expected.GatusEndpointKey {
+		return "", AdmissionError("scheduled_identity")
+	}
+	return c.AdmitReceipt(r, now, started)
+}
+
 // AdmitReceipt is the only live canary admission boundary, shared by scheduler
 // and adapter. Historical schema decoding and archive identity mapping remain
 // separate; neither grants permission to publish a current observation.

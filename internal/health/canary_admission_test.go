@@ -112,3 +112,37 @@ func TestSchedulerRejectsBeforeDelivery(t *testing.T) {
 		t.Fatal("rejection did not stop delivery")
 	}
 }
+
+type wrongCanaryRunner struct{ entry CatalogEntry }
+
+func (r wrongCanaryRunner) Run(_ context.Context, _ Canary, _ CatalogEntry, path string) error {
+	raw, err := os.ReadFile("../../testdata/receipts/v1/healthy.json")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, fixtureForEntry(raw, r.entry), 0600)
+}
+
+func TestSchedulerRejectsAnotherAdmittedCanarysReceipt(t *testing.T) {
+	config := schedulerConfig(t, 1)
+	expected := config.Canaries[0]
+	expectedEntry, _ := config.Entry(expected)
+	otherEntry, _ := config.Entry(config.Canaries[1])
+	var other Receipt
+	if err := json.Unmarshal(fixtureForEntry(mustRead(t, "../../testdata/receipts/v1/healthy.json"), otherEntry), &other); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.AdmitReceipt(other, time.Now().UTC(), time.Time{}); err != nil {
+		t.Fatal("second canary must be independently admissible", err)
+	}
+	delivery := &fakeDeliverer{}
+	s, err := NewScheduler(config, filepath.Join(t.TempDir(), "state.json"), wrongCanaryRunner{entry: otherEntry}, delivery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.run(context.Background(), expected, expectedEntry)
+	m := s.Metrics()
+	if delivery.count() != 0 || m.AdmissionRejected != 1 || m.RunsCompleted != 0 || m.LastAdmissionReason != "scheduled_identity" {
+		t.Fatal("another canary's receipt advanced the scheduled invocation")
+	}
+}
