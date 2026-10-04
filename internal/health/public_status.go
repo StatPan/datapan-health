@@ -359,7 +359,7 @@ func (h *PublicStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 				err = errors.New("service status invalid")
 			}
 		}
-	case "/datapan/v1/dependencies", "/datapan/v1/status":
+	case "/datapan/v1/dependencies", "/datapan/v1/status", "/v1/status":
 		var document PublicStatusDocument
 		document, err = h.source.Snapshot(r.Context())
 		if err == nil && r.URL.Path == "/datapan/v1/dependencies" {
@@ -368,7 +368,7 @@ func (h *PublicStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 				err = errors.New("dependency status invalid")
 			}
 		}
-		if err == nil && r.URL.Path == "/datapan/v1/status" {
+		if err == nil && (r.URL.Path == "/datapan/v1/status" || r.URL.Path == "/v1/status") {
 			data, err = json.Marshal(legacyDependencyDocument(document))
 			if schemas.ValidateLegacyDependencyStatusV1(data) != nil {
 				err = errors.New("legacy dependency status invalid")
@@ -403,7 +403,10 @@ func (h *PublicStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 }
 
 func isDatapanJSONRoute(path string) bool {
-	return path == "/datapan/v1/services" || path == "/datapan/v1/dependencies" || path == "/datapan/v1/status"
+	// The installed Infra adapter strips /datapan before forwarding this
+	// existing status route. Keep that private contract on the same read-only
+	// handler and admission budget; public ingress still owns its allowlist.
+	return path == "/datapan/v1/services" || path == "/datapan/v1/dependencies" || path == "/datapan/v1/status" || path == "/v1/status"
 }
 
 func isDatapanHTMLRoute(path string) bool {
