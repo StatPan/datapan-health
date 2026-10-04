@@ -6,7 +6,7 @@
   "policy_binding": {
     "path": "drafts/operation-assertion-policies/operation-assertion-policies.v1.json",
     "policy_set_id": "datapan-health-canary-assertions",
-    "artifact_sha256": "cc5a88aafbddc76d3bf2b66f4f38efaf5a6341555dbf79dadb243233df01bba4",
+    "artifact_sha256": "7bbbdfea0952448fefb7f04d33a0c66c05a01309b4d97d00787efd3f055668e1",
     "policy_set_version": 1,
     "diagnostic_vocabulary_sha256": "aa03c42960a59725b829b934ad07548dacb8f149c7a920a35a9e32c0459b49fc"
   },
@@ -14,7 +14,7 @@
     "from": {
       "path": "drafts/operation-assertion-policies/operation-assertion-policies.v1.json",
       "policy_set_id": "datapan-health-canary-assertions",
-      "artifact_sha256": "cc5a88aafbddc76d3bf2b66f4f38efaf5a6341555dbf79dadb243233df01bba4",
+      "artifact_sha256": "7bbbdfea0952448fefb7f04d33a0c66c05a01309b4d97d00787efd3f055668e1",
       "policy_set_version": 1,
       "diagnostic_vocabulary_sha256": "aa03c42960a59725b829b934ad07548dacb8f149c7a920a35a9e32c0459b49fc"
     },
@@ -29,7 +29,7 @@
       "version": 2,
       "supersedes": {
         "policy_set_version": 1,
-        "artifact_sha256": "cc5a88aafbddc76d3bf2b66f4f38efaf5a6341555dbf79dadb243233df01bba4"
+        "artifact_sha256": "7bbbdfea0952448fefb7f04d33a0c66c05a01309b4d97d00787efd3f055668e1"
       }
     }
   },
@@ -104,7 +104,7 @@
       "policy_binding": {
         "path": "drafts/operation-assertion-policies/operation-assertion-policies.v1.json",
         "policy_set_id": "datapan-health-canary-assertions",
-        "artifact_sha256": "cc5a88aafbddc76d3bf2b66f4f38efaf5a6341555dbf79dadb243233df01bba4",
+        "artifact_sha256": "7bbbdfea0952448fefb7f04d33a0c66c05a01309b4d97d00787efd3f055668e1",
         "policy_set_version": 1,
         "diagnostic_vocabulary_sha256": "aa03c42960a59725b829b934ad07548dacb8f149c7a920a35a9e32c0459b49fc"
       },

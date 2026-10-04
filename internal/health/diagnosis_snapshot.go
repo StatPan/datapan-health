@@ -17,7 +17,7 @@ import (
 
 const (
 	DiagnosisSnapshotSchemaVersion    = "datapan.health-public-diagnosis-snapshot.v1"
-	DiagnosisSnapshotSchemaSHA256     = "b76a6f99862be6fab797a107d8a10e5786e3990c555e380b7ec1f6f88dd33e77"
+	DiagnosisSnapshotSchemaSHA256     = "1b2098448b4cba7debcf43297b3abd91fa1b649501c2fc86285b3a5623abb54b"
 	DiagnosisProjectionReceiptVersion = "datapan.health-diagnosis-projector-receipt.v1"
 	DiagnosisSnapshotDigestAlgorithm  = "sha256"
 	DiagnosisSnapshotCanonicalization = "json.marshal-indent.two-spaces+lf.v1"

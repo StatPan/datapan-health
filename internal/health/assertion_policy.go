@@ -19,12 +19,12 @@ const (
 	AssertionPolicyPinVersion                = "datapan.health-assertion-policy-contract-pin.v1"
 	AssertionPolicySchemaVersion             = "datapan.operation-assertion-policies.v1"
 	AssertionEvaluationSchemaVersion         = "datapan.health-assertion-evaluation.v1"
-	AcceptedAssertionRegistryRevision        = "849af2936a743573358820275df985b5809d0f7b"
+	AcceptedAssertionRegistryRevision        = "71bb7628daeed352b7a85cb013bc17e7a9eb7457"
 	AcceptedAssertionSchemaSHA256            = "a934fe244eeedbed23914ba1230d612b68656f9dc97803c747cf9f29c46c0446"
-	AcceptedAssertionPolicyFileSHA256        = "36fa8ded50415cf57f517760758d9235bf7744f322376ce98541147ab5dd0017"
-	AcceptedAssertionPolicyArtifactSHA256    = "cc5a88aafbddc76d3bf2b66f4f38efaf5a6341555dbf79dadb243233df01bba4"
-	AcceptedAssertionReferenceProofSHA256    = "4ee01bd854d450b9e9ac48fd15f50b2fa3defee2df5087e4906e86de729c8da3"
-	AcceptedAssertionReleaseCandidateSHA256  = "1adf5a7727dddb57910db925f58453e1ddd1b8757315367eeba25f0451b132a5"
+	AcceptedAssertionPolicyFileSHA256        = "371c12de273370c6e8da4acd46f10d7c0ba4715068df7cae851bc9acdff992aa"
+	AcceptedAssertionPolicyArtifactSHA256    = "7bbbdfea0952448fefb7f04d33a0c66c05a01309b4d97d00787efd3f055668e1"
+	AcceptedAssertionReferenceProofSHA256    = "3ab855d1e83fa8915a3975fefae9f114d658062b7f0c6af3a3fc637ec2852e3c"
+	AcceptedAssertionReleaseCandidateSHA256  = "87c783df673abc5a9a45137aec537b57596b526653e64eaf7679fca1a15a8661"
 	AcceptedAssertionDiagnosticVocabularySHA = "aa03c42960a59725b829b934ad07548dacb8f149c7a920a35a9e32c0459b49fc"
 	acceptedAssertionPolicyPath              = "drafts/operation-assertion-policies/operation-assertion-policies.v1.json"
 	acceptedAssertionPolicySetID             = "datapan-health-canary-assertions"
@@ -320,7 +320,7 @@ func validateAssertionReleaseCandidate(raw []byte) error {
 		"drafts/operation-assertion-policies/datapan.operation-assertion-policies.v1.schema.json": AcceptedAssertionSchemaSHA256,
 		acceptedAssertionPolicyPath: AcceptedAssertionPolicyFileSHA256,
 		"fixtures/operation-assertion-policies/datapan-health-consumer-proof.v1.json": AcceptedAssertionReferenceProofSHA256,
-		"drafts/operation-assertion-policies/release-manifest.v1.json":                "f6eff75f7fa8ad6daea4e3c9322db06e4b3e7c20853e0525d162e29ca94613a8",
+		"drafts/operation-assertion-policies/release-manifest.v1.json":                "3b0e016a4a104f5591f8aaec8f711654bb8058363f3067396bc85a165db078a6",
 	}
 	for _, binding := range candidate.Bindings {
 		if expected[binding.Path] != binding.SHA256 {

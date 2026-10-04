@@ -1,29 +1,32 @@
 # Pinned Registry probe catalog
 
 The live catalog is the exact anonymous readback from immutable Hugging Face
-Dataset payload revision `247975f0ba5872cb84d22f007fc4b8a934539b7b`.
-Registry PR #720 merged source `849af2936a743573358820275df985b5809d0f7b`;
-publication run [37213311774](https://github.com/StatPan/datapan-registry/actions/runs/37213311774)
+Dataset payload revision `1715bb67c11f97a601c85b9f2a3c45ff50968224`.
+Registry PR #727 merged source `71bb7628daeed352b7a85cb013bc17e7a9eb7457`;
+publication run [37231785611](https://github.com/StatPan/datapan-registry/actions/runs/37231785611)
 verified 196 artifacts and recorded exact source/workflow binding.
-The distribution pointer revision is `85ee3a5576f507b4ce07dd79b78e43e1cd7365e2`.
+The distribution pointer revision is `d7dba637a06e345cba7ae058cba96fe53d3e532b`.
 
-- Catalog SHA-256: `827433dec514fa10ebef780ff611f6314b6e1d7270acde81ce6d60ec7a46e27e`.
-- Release manifest SHA-256: `c40e661c4e3fa6dd2c9e43f6aca17e9544a09831d83300b624df14d68123d5d2`.
+- Catalog SHA-256: `0503ddd9c93c31781c7920ccccdaf55aa5f3ed7e8061cb7dd16f0d8eb95611d2`.
+- Release manifest SHA-256: `d63b22b378a3af30564fea5f8a39fcd96b2c4b4f76392ec0f7c191652a58d2b5`.
 - Canonical source SHA-256: `0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0`.
-- Distribution manifest SHA-256: `74d94d6d477517ff6cc2e2701619f5901eee2f3a3befde14984abd307a5c4355`.
+- Distribution manifest SHA-256: `5d0e6c7a7f2bb4069bf9eb46489764354974ba4ba11eac5943d48b5e552d6dbf`.
 
 Health consumes the published bytes and checks compiled admission pins; mutable
 configuration claims cannot promote another release. The HF install release tag
 is the exact payload revision, not an invented dated GitHub release tag.
 The ten operation IDs, schedules, budgets and credential policy remain bound to
 Registry authority. Endpoint scheme is explicit; KORAD's corrected method keeps
-its original source path and official specification provenance. The unresolved
-SISUL endpoint remains visible; [Registry #724](https://github.com/StatPan/datapan-registry/issues/724)
-owns lifecycle reconciliation against official portal metadata.
+its original source path and official specification provenance. SISUL policy
+version 2 selects current official gateway dataset 15158559, operation 69640.
+Registry #724/#727 records the exact static selection provenance and retains
+both canonical records and previous failures. This migration does not assert
+official retirement, service entitlement or live provider health; old-version
+observations cannot become current healthy evidence.
 
 The assertion policy, reference model and release candidate are exact bytes from
-the same merged Registry source. Their individual file and embedded policy
-identities are pinned by `assertion-policy-contract-pin.json` and compiled code.
+the same merged Registry source (not HF-published release artifacts). Their
+individual file and embedded policy identities are pinned by `assertion-policy-contract-pin.json` and compiled code.
 Correlation and diagnosis snapshot bindings use this new catalog/policy tuple;
 stale snapshots fail closed. This refresh grants no runtime deployment authority.
 The diagnostic inputs and operation-manifest receipt below retain their separate
@@ -44,7 +47,7 @@ schema, mapping, and consumer-packet SHA-256 values are respectively:
 
 `diagnostic-test-manifest.json` is a Health-owned, non-self-referential proof
 input with SHA-256
-`274d394133eb90fe5553bb47947644d45f338ad2e193345e13759f7bb9e2619b`.
+`ddad89eb4b32f4994093fb705cf6c6473ffe1887e5939c42872435e31c3382ab`.
 It pins the exact compatibility test names and the source digests for
 `internal/health/diagnostic_test.go` and the preserved v1 compatibility test in
 `internal/health/health_test.go`. The receipt generator validates those bytes

@@ -1,6 +1,6 @@
 {
   "schema_version": "datapan.health-probe-catalog.v1",
-  "generated_at": "2026-07-14T10:05:00Z",
+  "generated_at": "2026-10-04T19:24:11Z",
   "authority": "datapan-registry",
   "receipt_contract": {
     "schema": "https://schemas.datapan.dev/datapan.health-probe.v1.schema.json",
@@ -13,8 +13,8 @@
   },
   "summary": {
     "entries": 10,
-    "gateway_canaries": 5,
-    "external_adapter_canaries": 5
+    "gateway_canaries": 6,
+    "external_adapter_canaries": 4
   },
   "entries": [
     {
@@ -450,26 +450,26 @@
       "operation_id": "dpr-op-00000009",
       "policy": {
         "key": "dpr-op-00000009",
-        "version": 1,
+        "version": 2,
         "authority": "datapan-registry",
         "max_level": "L4"
       },
       "aliases": {
-        "dataset_id": "15109030",
+        "dataset_id": "15158559",
         "operation_name": "버스 차고지 현황 정보",
-        "upstream_operation_seq": "47278",
-        "cli_operation_key": "ea622246361f2f3efb93274772e327c1026ae0dc6c2cda6cd7af4426c771a5d7"
+        "upstream_operation_seq": "69640",
+        "cli_operation_key": "dfd0b8588fcd34217e7d7e08fb8510df92c5b65bb450b813ae7dc60456d72668"
       },
       "provider": "data.go.kr",
       "endpoint": {
-        "scheme": "http",
-        "host": "data.sisul.or.kr",
-        "path": "/AutoAPI/service/OpenDB/Publicgarage/getPublicgarageQry",
-        "dependency_class": "external_endpoint"
+        "scheme": "https",
+        "host": "apis.data.go.kr",
+        "path": "/B553774/Publicgarage/getPublicgarageQry",
+        "dependency_class": "data_go_kr_gateway"
       },
       "eligibility": {
         "status": "credential_required",
-        "reason_code": "registered_external_adapter_service_key_required"
+        "reason_code": "data_go_kr_service_key_required"
       },
       "credential_requirement": {
         "required": true,

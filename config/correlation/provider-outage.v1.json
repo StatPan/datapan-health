@@ -4,7 +4,7 @@
   "version": 1,
   "provider": "data.go.kr",
   "registry_revision": "8c5d397f13929ec2b85e63e4ca600887f37929b8",
-  "catalog_sha256": "827433dec514fa10ebef780ff611f6314b6e1d7270acde81ce6d60ec7a46e27e",
+  "catalog_sha256": "0503ddd9c93c31781c7920ccccdaf55aa5f3ed7e8061cb7dd16f0d8eb95611d2",
   "window_seconds": 900,
   "future_skew_seconds": 30,
   "notice_max_age_seconds": 86400,

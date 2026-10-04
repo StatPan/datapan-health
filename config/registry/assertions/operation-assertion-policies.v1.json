@@ -5,7 +5,7 @@
     "version": 1,
     "supersedes": null
   },
-  "generated_at": "2026-07-14T10:05:00Z",
+  "generated_at": "2026-10-04T19:24:11Z",
   "authority": "datapan-registry",
   "diagnostic_vocabulary": {
     "schema_version": "datapan.diagnostic-cause-action-vocabulary.v1",
@@ -19,10 +19,10 @@
     },
     "health_probe_catalog": {
       "path": "reports/health-probe-catalog.json",
-      "sha256": "827433dec514fa10ebef780ff611f6314b6e1d7270acde81ce6d60ec7a46e27e"
+      "sha256": "0503ddd9c93c31781c7920ccccdaf55aa5f3ed7e8061cb7dd16f0d8eb95611d2"
     }
   },
-  "artifact_sha256": "cc5a88aafbddc76d3bf2b66f4f38efaf5a6341555dbf79dadb243233df01bba4",
+  "artifact_sha256": "7bbbdfea0952448fefb7f04d33a0c66c05a01309b4d97d00787efd3f055668e1",
   "operations": [
     {
       "operation_id": "dpr-op-00000001",
@@ -486,7 +486,7 @@
     },
     {
       "operation_id": "dpr-op-00000009",
-      "operation_revision_sha256": "afa85cdf55050d4a8aa9e662f4f46a689574ceac261d899136bd16370f377bf2",
+      "operation_revision_sha256": "cca92e6f24671780df62f0a5326aaaba64b1bf5a45a7f098681e0fe73f08de18",
       "dimensions": {
         "transport": {
           "state": "not_asserted",
@@ -498,20 +498,8 @@
           "assertion_type": "declared_response_field_vocabulary",
           "projection_input": "normalized_leaf_field_names",
           "declared_response_fields": [
-            "building",
-            "cng",
-            "cnt",
-            "green",
-            "location",
-            "name",
-            "num",
-            "numOfRows",
-            "pageNo",
-            "parking",
-            "resultCode",
-            "resultMsg",
-            "tel",
-            "totalCount"
+            "body",
+            "header"
           ],
           "unknown_field_policy": "fail",
           "empty_payload_policy": "not_observed",
@@ -521,9 +509,9 @@
             "path": "data/data-go-kr.registry.json",
             "sha256": "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0",
             "selector": {
-              "dataset_id": "15109030",
+              "dataset_id": "15158559",
               "operation_name": "버스 차고지 현황 정보",
-              "upstream_operation_seq": "47278"
+              "upstream_operation_seq": "69640"
             }
           }
         },

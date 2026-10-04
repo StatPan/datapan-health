@@ -8,15 +8,15 @@ import (
 // These pins are compiled into the reviewed consumer image. A mutable mounted
 // configuration cannot promote a Registry release by changing its claims.
 // Promotion requires review of Registry release evidence and a new image.
-const acceptedCanaryCatalogSHA256 = "827433dec514fa10ebef780ff611f6314b6e1d7270acde81ce6d60ec7a46e27e"
+const acceptedCanaryCatalogSHA256 = "0503ddd9c93c31781c7920ccccdaf55aa5f3ed7e8061cb7dd16f0d8eb95611d2"
 const acceptedRegistryDatasetID = "StatPan/datapan-registry"
 
 func acceptedCanaryProvenance() ConsumptionProvenance {
 	return ConsumptionProvenance{
-		RegistryDatasetRevision: "247975f0ba5872cb84d22f007fc4b8a934539b7b",
+		RegistryDatasetRevision: "1715bb67c11f97a601c85b9f2a3c45ff50968224",
 		SourceRegistrySHA256:    "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0",
-		ReleaseTag:              "247975f0ba5872cb84d22f007fc4b8a934539b7b",
-		ReleaseManifestSHA256:   "c40e661c4e3fa6dd2c9e43f6aca17e9544a09831d83300b624df14d68123d5d2",
+		ReleaseTag:              "1715bb67c11f97a601c85b9f2a3c45ff50968224",
+		ReleaseManifestSHA256:   "d63b22b378a3af30564fea5f8a39fcd96b2c4b4f76392ec0f7c191652a58d2b5",
 	}
 }
 

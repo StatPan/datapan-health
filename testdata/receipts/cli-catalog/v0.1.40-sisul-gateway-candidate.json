@@ -1,14 +1,14 @@
 {
   "schema_version": "datapan.health-probe.v1",
-  "probe_id": "75ed5549-2efc-4e8b-9ef7-31bd3fd28303",
+  "probe_id": "d2d01067-38c4-4cb8-bb58-70e9bcc91b25",
   "observed_at": "2026-10-04T20:40:03Z",
   "operation": {
-    "operation_key": "472283c645233f09e0285a651fecc659dcbc70d09095e7c20fe590389df5af4d",
-    "dataset_id": "15000480",
-    "operation_name": "명절 비상진료기관 FullData 내려받기목록정보 조회",
+    "operation_key": "dfd0b8588fcd34217e7d7e08fb8510df92c5b65bb450b813ae7dc60456d72668",
+    "dataset_id": "15158559",
+    "operation_name": "버스 차고지 현황 정보",
     "provider": "data.go.kr",
     "endpoint_host": "apis.data.go.kr",
-    "endpoint_path": "/B552657/HolidyEmgncClnicInsttInfoInqireService/getHolidyClnicPosblEgytFullDown",
+    "endpoint_path": "/B553774/Publicgarage/getPublicgarageQry",
     "dependency_class": "data_go_kr_gateway"
   },
   "registry": {
@@ -18,8 +18,8 @@
     "manifest_sha256": "d63b22b378a3af30564fea5f8a39fcd96b2c4b4f76392ec0f7c191652a58d2b5"
   },
   "policy": {
-    "key": "dpr-op-00000001",
-    "version": 1,
+    "key": "dpr-op-00000009",
+    "version": 2,
     "authority": "datapan-registry",
     "max_level": "L4"
   },

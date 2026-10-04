@@ -21,7 +21,7 @@ const (
 	HealthObservationSchemaVersion  = "datapan.health-observation.v1"
 	ProviderNoticeSchemaVersion     = "datapan.provider-notice-projection.v1"
 	AcceptedCorrelationRuleID       = "data-go-kr-provider-outage-bounded-v1"
-	AcceptedCorrelationRuleSHA256   = "8f279cd68f3c38dbcb56fd55f2ff374c6c20ac0ef6e3503021e36bff7b8c0938"
+	AcceptedCorrelationRuleSHA256   = "6908467b6b42cbbcc65fbcf3bd2a6e5fd4e925202e10a00c68455d43bf40ee09"
 	AcceptedCanaryScopeAlias        = "datapan-health-public-canary-v1"
 	maxCorrelationReplayBytes       = 1024 * 1024
 )

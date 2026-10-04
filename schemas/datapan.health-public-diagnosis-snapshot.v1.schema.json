@@ -8,7 +8,7 @@
   "properties": {
     "schema_version": {"const": "datapan.health-public-diagnosis-snapshot.v1"},
     "generated_at": {"type": "string", "format": "date-time"},
-    "registry_revision": {"const": "849af2936a743573358820275df985b5809d0f7b"},
+    "registry_revision": {"const": "71bb7628daeed352b7a85cb013bc17e7a9eb7457"},
     "diagnostic_vocabulary_sha256": {"const": "aa03c42960a59725b829b934ad07548dacb8f149c7a920a35a9e32c0459b49fc"},
     "correlation_rule": {
       "type": "object", "additionalProperties": false,
@@ -16,7 +16,7 @@
       "properties": {
         "rule_id": {"const": "data-go-kr-provider-outage-bounded-v1"},
         "version": {"const": 1},
-        "sha256": {"const": "8f279cd68f3c38dbcb56fd55f2ff374c6c20ac0ef6e3503021e36bff7b8c0938"}
+        "sha256": {"const": "6908467b6b42cbbcc65fbcf3bd2a6e5fd4e925202e10a00c68455d43bf40ee09"}
       }
     },
     "assertion_policy": {
@@ -25,7 +25,7 @@
       "properties": {
         "path": {"const": "drafts/operation-assertion-policies/operation-assertion-policies.v1.json"},
         "policy_set_id": {"const": "datapan-health-canary-assertions"},
-        "artifact_sha256": {"const": "cc5a88aafbddc76d3bf2b66f4f38efaf5a6341555dbf79dadb243233df01bba4"},
+        "artifact_sha256": {"const": "7bbbdfea0952448fefb7f04d33a0c66c05a01309b4d97d00787efd3f055668e1"},
         "policy_set_version": {"const": 1},
         "diagnostic_vocabulary_sha256": {"const": "aa03c42960a59725b829b934ad07548dacb8f149c7a920a35a9e32c0459b49fc"}
       }

@@ -492,7 +492,7 @@ func TestSchedulerFailsWithoutProviderWorkWhenReceiptBoundaryIsUnavailable(t *te
 
 func TestReviewedCatalogContainsTenBoundedCanaries(t *testing.T) {
 	config := schedulerConfig(t, 2)
-	if config.ConsumptionProvenance.RegistryDatasetRevision != "247975f0ba5872cb84d22f007fc4b8a934539b7b" || config.ConsumptionProvenance.SourceRegistrySHA256 != "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0" || config.ConsumptionProvenance.ReleaseTag != "247975f0ba5872cb84d22f007fc4b8a934539b7b" || config.ConsumptionProvenance.ReleaseManifestSHA256 != "c40e661c4e3fa6dd2c9e43f6aca17e9544a09831d83300b624df14d68123d5d2" {
+	if config.ConsumptionProvenance.RegistryDatasetRevision != "1715bb67c11f97a601c85b9f2a3c45ff50968224" || config.ConsumptionProvenance.SourceRegistrySHA256 != "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0" || config.ConsumptionProvenance.ReleaseTag != "1715bb67c11f97a601c85b9f2a3c45ff50968224" || config.ConsumptionProvenance.ReleaseManifestSHA256 != "d63b22b378a3af30564fea5f8a39fcd96b2c4b4f76392ec0f7c191652a58d2b5" {
 		t.Fatalf("immutable Registry consumption provenance changed: %#v", config.ConsumptionProvenance)
 	}
 	if config.ConsumptionProvenance.SourceRegistrySHA256 != config.catalog.SourceRegistry.SHA256 || config.ConsumptionProvenance.RegistryDatasetRevision == config.ConsumptionProvenance.SourceRegistrySHA256 {
@@ -509,7 +509,7 @@ func TestReviewedCatalogContainsTenBoundedCanaries(t *testing.T) {
 		}
 		classes[entry.Endpoint.DependencyClass]++
 	}
-	if classes["data_go_kr_gateway"] != 5 || classes["external_endpoint"] != 5 {
+	if classes["data_go_kr_gateway"] != 6 || classes["external_endpoint"] != 4 {
 		t.Fatalf("routing coverage changed: %#v", classes)
 	}
 }
