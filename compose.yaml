@@ -2,7 +2,7 @@ services:
   gatus:
     image: ghcr.io/twin/gatus:v5.36.0@sha256:c5f210d095fa78e6efaa20ffeb14803f2ba4f10615e16a6d12087697149617f0
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       GATUS_TOKEN: ${GATUS_TOKEN:-local-synthetic-token}
       GATUS_DATABASE_URL: ${GATUS_DATABASE_URL:-postgres://datapan_health:local-dev-only@postgres:5432/datapan_health?sslmode=disable}
@@ -79,7 +79,7 @@ services:
       - ./config:/config:ro
       - scheduler-data:/data
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
 
   public-status:
     profiles: ["public-status"]
@@ -93,7 +93,7 @@ services:
     volumes:
       - ./config:/config:ro
     ports:
-      - "8082:8082"
+      - "127.0.0.1:8082:8082"
     depends_on:
       gatus:
         condition: service_started
