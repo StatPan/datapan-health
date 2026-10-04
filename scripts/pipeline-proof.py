@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Local container proof only: synthetic CLI -> real adapter/Gatus -> public GET.
 Run with a built RUNTIME_IMAGE and local Compose Gatus/public-status running.
+The fake CLI profile explicitly disables image-bundle preflight; the separate
+verify-runtime-dependencies.sh proof checks the real immutable dependency bundle.
 Print aggregate receipts only; never print provider requests, targets or rows.
 """
 import datetime
@@ -57,7 +59,7 @@ with tempfile.TemporaryDirectory(prefix='health-pipeline-proof-') as directory:
         phase_start = datetime.datetime.fromisoformat(at).replace(microsecond=0)
         cid = command('docker', 'run', '-d', '--read-only', '--user', str(os.getuid()) + ':' + str(os.getgid()), '--network', project + '_default', '-p', '127.0.0.1::8081', '--entrypoint', '/health-scheduler',
             '-v', str(root / 'config') + ':/config:ro', '-v', directory + ':/proof',
-            '-e', 'CANARY_CONFIG=/config/canaries.json', '-e', 'DATAPAN_BIN=/proof/fake-cli', '-e', 'HEALTH_RUNNER_BIN=/health-runner',
+            '-e', 'RUNTIME_DEPENDENCY_LOCK=', '-e', 'CANARY_CONFIG=/config/canaries.json', '-e', 'DATAPAN_BIN=/proof/fake-cli', '-e', 'HEALTH_RUNNER_BIN=/health-runner',
             '-e', 'CLI_RUNTIME_ENV=CANARY_CONFIG,SMOKE_CONTROL_FILE', '-e', 'SMOKE_CONTROL_FILE=/proof/mode',
             '-e', 'SCHEDULER_STATE=/proof/state.json', '-e', 'RECEIPT_ARCHIVE=/proof/receipts.jsonl', '-e', 'RECEIPT_DELIVERY_JOURNAL=/proof/deliveries.jsonl',
             '-e', 'GATUS_URL=http://gatus:8080', '-e', 'GATUS_TOKEN=' + token, image)

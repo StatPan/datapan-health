@@ -5,7 +5,8 @@ ARG LIVE_GO_IMAGE=golang:1.26.4-alpine3.22@sha256:727cfc3c40be55cd1bc9a4a059406b
 ARG ARCHIVE_GO_IMAGE=golang:1.26.4-bookworm@sha256:b305420a68d0f229d91eb3b3ed9e519fcf2cf5461da4bef997bf927e8c0bfd2b
 ARG HF_IMAGE=python:3.13-slim-bookworm@sha256:fcbd8dfc2605ba7c2eca646846c5e892b2931e41f6227985154a596f26ab8ed7
 
-FROM ${LIVE_GO_IMAGE} AS live-build
+FROM --platform=$BUILDPLATFORM ${LIVE_GO_IMAGE} AS live-build
+ARG TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -15,9 +16,16 @@ COPY schemas ./schemas
 
 # The live processes must not pull archive's CGO/DuckDB or Python dependency
 # graph into their final image.
-RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-runner ./cmd/health-runner \
- && CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-scheduler ./cmd/health-scheduler \
- && CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-public ./cmd/health-public
+RUN CGO_ENABLED=0 GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-runner ./cmd/health-runner \
+ && CGO_ENABLED=0 GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-scheduler ./cmd/health-scheduler \
+ && CGO_ENABLED=0 GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-public ./cmd/health-public \
+ && CGO_ENABLED=0 GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-runtime-dependencies ./cmd/health-runtime-dependencies \
+ && CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w' -o /dependency-installer ./cmd/health-runtime-dependencies
+
+FROM live-build AS runtime-inputs
+ARG TARGETARCH
+COPY config/runtime-dependencies.json /runtime-dependencies.json
+RUN /dependency-installer -lock /runtime-dependencies.json -arch "$TARGETARCH" -directory /runtime-cli
 
 FROM ${ARCHIVE_GO_IMAGE} AS archive-build
 WORKDIR /src
@@ -39,8 +47,16 @@ LABEL org.opencontainers.image.title="Datapan Health runtime" \
 COPY --from=live-build /health-runner /health-runner
 COPY --from=live-build /health-scheduler /health-scheduler
 COPY --from=live-build /health-public /health-public
-# The mounted static datapan CLI performs HTTPS provider probes. A scratch
-# runtime has no trust store unless it is copied explicitly.
+COPY --from=live-build /health-runtime-dependencies /health-runtime-dependencies
+COPY --from=runtime-inputs /runtime-cli /opt/datapan-cli
+COPY config /opt/datapan-health/config
+ENV DATAPAN_BIN=/opt/datapan-cli/datapan \
+    HEALTH_RUNNER_BIN=/health-runner \
+    CANARY_CONFIG=/opt/datapan-health/config/canaries.json \
+    ASSERTION_POLICY_PIN=/opt/datapan-health/config/registry/assertion-policy-contract-pin.json \
+    RUNTIME_DEPENDENCY_LOCK=/opt/datapan-health/config/runtime-dependencies.json
+WORKDIR /opt/datapan-cli
+# The image-owned static CLI performs HTTPS provider probes.
 COPY --from=live-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 ENTRYPOINT ["/health-runner"]
 

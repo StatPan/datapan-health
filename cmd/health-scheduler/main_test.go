@@ -70,3 +70,31 @@ func TestSelfHTTPDistinguishesLiveReadyAndSafeStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestImageBundleFailureKeepsReadinessClosed(t *testing.T) {
+	config, err := health.LoadCanaryConfig("../../config/canaries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RUNTIME_DEPENDENCY_LOCK", filepath.Join(t.TempDir(), "missing-lock.json"))
+	runner := health.CLIProcess{Path: "/opt/datapan-cli/datapan"}
+	reason := runtimeDependencyPreflight(config, runner)
+	if reason != "runtime_dependencies_unavailable" {
+		t.Fatal("missing bundle did not block provider execution")
+	}
+	s, err := health.NewScheduler(config, filepath.Join(t.TempDir(), "state.json"), runner, health.AdapterProcess{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := healthSchedulerHandler(s, func() string { return reason })
+	for _, test := range []struct {
+		path   string
+		status int
+	}{{"/live", 200}, {"/ready", 503}, {"/status", 503}} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", test.path, nil))
+		if w.Code != test.status || strings.Contains(w.Body.String(), "missing-lock") {
+			t.Fatal("bundle failure readiness or redaction regressed")
+		}
+	}
+}

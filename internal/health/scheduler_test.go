@@ -492,7 +492,7 @@ func TestSchedulerFailsWithoutProviderWorkWhenReceiptBoundaryIsUnavailable(t *te
 
 func TestReviewedCatalogContainsTenBoundedCanaries(t *testing.T) {
 	config := schedulerConfig(t, 2)
-	if config.ConsumptionProvenance.RegistryDatasetRevision != "10f375182f992bc700468dd9d6e2930acd3bf8e8" || config.ConsumptionProvenance.SourceRegistrySHA256 != "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644" || config.ConsumptionProvenance.ReleaseTag != "v2026.07.14" || config.ConsumptionProvenance.ReleaseManifestSHA256 != "0b78c286b8cfa889ddccf51f83a9d8adc4eac8617ea6d9fd2d66d1fcf668281f" {
+	if config.ConsumptionProvenance.RegistryDatasetRevision != "247975f0ba5872cb84d22f007fc4b8a934539b7b" || config.ConsumptionProvenance.SourceRegistrySHA256 != "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0" || config.ConsumptionProvenance.ReleaseTag != "247975f0ba5872cb84d22f007fc4b8a934539b7b" || config.ConsumptionProvenance.ReleaseManifestSHA256 != "c40e661c4e3fa6dd2c9e43f6aca17e9544a09831d83300b624df14d68123d5d2" {
 		t.Fatalf("immutable Registry consumption provenance changed: %#v", config.ConsumptionProvenance)
 	}
 	if config.ConsumptionProvenance.SourceRegistrySHA256 != config.catalog.SourceRegistry.SHA256 || config.ConsumptionProvenance.RegistryDatasetRevision == config.ConsumptionProvenance.SourceRegistrySHA256 {

@@ -10,12 +10,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/StatPan/datapan-health/internal/health"
+	"github.com/StatPan/datapan-health/internal/runtimebundle"
 )
 
 func main() {
@@ -39,8 +41,14 @@ func main() {
 	if err != nil {
 		log.Fatal("scheduler state is not ready")
 	}
+	// Image-owned inputs are immutable during a run. Verify their complete
+	// binding once before serving readiness or launching any provider request.
+	dependencyReason := runtimeDependencyPreflight(config, runner)
 
 	preflight := func() string {
+		if dependencyReason != "" {
+			return dependencyReason
+		}
 		if !health.CheckExecutable(runner.Path) {
 			return "cli_unavailable"
 		}
@@ -106,6 +114,22 @@ func main() {
 			return
 		}
 	}
+}
+
+func runtimeDependencyPreflight(config health.CanaryConfig, runner health.CLIProcess) string {
+	lockPath := os.Getenv("RUNTIME_DEPENDENCY_LOCK")
+	if lockPath == "" {
+		return "" // Local fixture profiles do not carry a production bundle.
+	}
+	lock, err := runtimebundle.ReadLock(lockPath)
+	p := config.ConsumptionProvenance
+	if err != nil || lock.Registry.DatasetRevision != p.RegistryDatasetRevision || lock.Registry.SourceRegistrySHA256 != p.SourceRegistrySHA256 || lock.Registry.ManifestSHA256 != p.ReleaseManifestSHA256 || lock.Registry.ReleaseTag != p.ReleaseTag || lock.Registry.CatalogSHA256 != config.CatalogSHA256 || !filepath.IsAbs(runner.Path) {
+		return "runtime_dependencies_unavailable"
+	}
+	if runtimebundle.VerifyLocal(lock, runtime.GOARCH, filepath.Dir(runner.Path)) != nil || filepath.Base(runner.Path) != "datapan" {
+		return "runtime_dependencies_unavailable"
+	}
+	return ""
 }
 
 func healthSchedulerHandler(s *health.Scheduler, preflight func() string) http.Handler {

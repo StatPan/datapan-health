@@ -1,22 +1,34 @@
 # Pinned Registry probe catalog
 
-This is the signed, manifest-bound `datapan.health-probe-catalog.v1` artifact
-from `StatPan/datapan-registry` release `v2026.07.14`, tag commit
-`d4171c303aa57845f6d6764c192e746bde7401e3` (catalog source commit
-`b49d66b97d8155c34649f4dd2040b884c4212d64`). The release zip SHA-256 is
-`f6aec27c5a73cd9087bdf620d49d3a2ede5f47838effe8d736672ebf504c06e2` and
-the immutable Dataset revision is `10f375182f992bc700468dd9d6e2930acd3bf8e8`.
+The live catalog is the exact anonymous readback from immutable Hugging Face
+Dataset payload revision `247975f0ba5872cb84d22f007fc4b8a934539b7b`.
+Registry PR #720 merged source `849af2936a743573358820275df985b5809d0f7b`;
+publication run [37213311774](https://github.com/StatPan/datapan-registry/actions/runs/37213311774)
+verified 196 artifacts and recorded exact source/workflow binding.
+The distribution pointer revision is `85ee3a5576f507b4ce07dd79b78e43e1cd7365e2`.
 
-The scheduler verifies the vendored artifact SHA-256 from `config/canaries.json`
-before it starts. The local artifact SHA-256 is
-`e84f0da2f532a32833def1118a4610bf2322f370783d120b84cf85306d244840`; this
-pin deliberately covers the exact reviewed projection.
-`config/canaries.json` separately pins the immutable Dataset revision, source
-Registry SHA-256, release tag and release-manifest SHA-256. These identifiers
-must not be collapsed: public archive `registry_revision` is the Dataset
-revision, while the source SHA is only the signed catalog-input identity.
-It only uses operation identity and policy metadata from this artifact; no
-credential value, query value, response row, or mutable receipt is vendored.
+- Catalog SHA-256: `827433dec514fa10ebef780ff611f6314b6e1d7270acde81ce6d60ec7a46e27e`.
+- Release manifest SHA-256: `c40e661c4e3fa6dd2c9e43f6aca17e9544a09831d83300b624df14d68123d5d2`.
+- Canonical source SHA-256: `0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0`.
+- Distribution manifest SHA-256: `74d94d6d477517ff6cc2e2701619f5901eee2f3a3befde14984abd307a5c4355`.
+
+Health consumes the published bytes and checks compiled admission pins; mutable
+configuration claims cannot promote another release. The HF install release tag
+is the exact payload revision, not an invented dated GitHub release tag.
+The ten operation IDs, schedules, budgets and credential policy remain bound to
+Registry authority. Endpoint scheme is explicit; KORAD's corrected method keeps
+its original source path and official specification provenance. The unresolved
+SISUL endpoint remains visible; [Registry #724](https://github.com/StatPan/datapan-registry/issues/724)
+owns lifecycle reconciliation against official portal metadata.
+
+The assertion policy, reference model and release candidate are exact bytes from
+the same merged Registry source. Their individual file and embedded policy
+identities are pinned by `assertion-policy-contract-pin.json` and compiled code.
+Correlation and diagnosis snapshot bindings use this new catalog/policy tuple;
+stale snapshots fail closed. This refresh grants no runtime deployment authority.
+The diagnostic inputs and operation-manifest receipt below retain their separate
+historical compatibility/denominator authority; this rollout does not promote a
+new full-population manifest or change archive publication.
 
 ## M003 diagnostic compatibility inputs
 

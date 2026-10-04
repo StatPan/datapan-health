@@ -15,18 +15,18 @@
   "bindings": {
     "registry": {
       "path": "data/data-go-kr.registry.json",
-      "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644"
+      "sha256": "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0"
     },
     "health_probe_catalog": {
       "path": "reports/health-probe-catalog.json",
-      "sha256": "e84f0da2f532a32833def1118a4610bf2322f370783d120b84cf85306d244840"
+      "sha256": "827433dec514fa10ebef780ff611f6314b6e1d7270acde81ce6d60ec7a46e27e"
     }
   },
-  "artifact_sha256": "d9b39f40e2068180cf46ebf8eca2037aeff19523b76f648bb06666758ed8c1d3",
+  "artifact_sha256": "cc5a88aafbddc76d3bf2b66f4f38efaf5a6341555dbf79dadb243233df01bba4",
   "operations": [
     {
       "operation_id": "dpr-op-00000001",
-      "operation_revision_sha256": "3ef6296cd2e2c0d568523f0474f8806cd607b8b6e4fd605ef491af78700793a4",
+      "operation_revision_sha256": "23609debca35ce3b447b5da7e6b56a0cbe00bc8df9c59d12a4c4db2c1d120ef1",
       "dimensions": {
         "transport": {
           "state": "not_asserted",
@@ -78,7 +78,7 @@
             "kind": "registry_operation_contract",
             "rationale_code": "registry_declares_normalized_response_field_vocabulary",
             "path": "data/data-go-kr.registry.json",
-            "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+            "sha256": "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0",
             "selector": {
               "dataset_id": "15000480",
               "operation_name": "명절 비상진료기관 FullData 내려받기목록정보 조회",
@@ -105,7 +105,7 @@
     },
     {
       "operation_id": "dpr-op-00000002",
-      "operation_revision_sha256": "d29c2d35cc18133ff57b038e9b884ea937b70e4728abab6b60a0aa08843cc64e",
+      "operation_revision_sha256": "a821cab3fff959a5677c4b3eb0740e42d6b8effd12e9606c6d738c080dff1042",
       "dimensions": {
         "transport": {
           "state": "not_asserted",
@@ -134,7 +134,7 @@
             "kind": "registry_operation_contract",
             "rationale_code": "registry_declares_normalized_response_field_vocabulary",
             "path": "data/data-go-kr.registry.json",
-            "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+            "sha256": "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0",
             "selector": {
               "dataset_id": "15000897",
               "operation_name": "선거코드",
@@ -161,7 +161,7 @@
     },
     {
       "operation_id": "dpr-op-00000003",
-      "operation_revision_sha256": "52bd065f6864415ffd3285047f228e28535d50cf2ece3b4a0ed7ee4793979856",
+      "operation_revision_sha256": "c3ad5d55a1fb6d4f9f99fcfcb862d9c0d9974b0b56ba0267343aa2a0684f9668",
       "dimensions": {
         "transport": {
           "state": "not_asserted",
@@ -187,7 +187,7 @@
             "kind": "registry_operation_contract",
             "rationale_code": "registry_declares_normalized_response_field_vocabulary",
             "path": "data/data-go-kr.registry.json",
-            "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+            "sha256": "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0",
             "selector": {
               "dataset_id": "15001697",
               "operation_name": "의료기관종별코드조회",
@@ -246,7 +246,7 @@
             "kind": "registry_operation_contract",
             "rationale_code": "registry_declares_normalized_response_field_vocabulary",
             "path": "data/data-go-kr.registry.json",
-            "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+            "sha256": "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0",
             "selector": {
               "dataset_id": "15001839",
               "operation_name": "민간 자원별 제공서비스 정보 조회",
@@ -273,7 +273,7 @@
     },
     {
       "operation_id": "dpr-op-00000005",
-      "operation_revision_sha256": "358c3262914382daa5a9757c58e16b1cf710590c33187058e903216b874984d1",
+      "operation_revision_sha256": "151b836e075558d191d21cb6be520850a99e2f645c90efb8f4805e9951429e86",
       "dimensions": {
         "transport": {
           "state": "not_asserted",
@@ -294,7 +294,7 @@
             "kind": "registry_operation_contract",
             "rationale_code": "registry_declares_normalized_response_field_vocabulary",
             "path": "data/data-go-kr.registry.json",
-            "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+            "sha256": "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0",
             "selector": {
               "dataset_id": "15000863",
               "operation_name": "문화시설 식당 상세 정보를 조회",
@@ -321,7 +321,7 @@
     },
     {
       "operation_id": "dpr-op-00000006",
-      "operation_revision_sha256": "26700302f8fa3482158b9bbcc93c00e34170df46f8bc4b77d3167df4d77ee337",
+      "operation_revision_sha256": "ca714d3324208bb37b1a9a1f052a8448d479506b2a81fbda090897e976a7c1ac",
       "dimensions": {
         "transport": {
           "state": "not_asserted",
@@ -347,7 +347,7 @@
             "kind": "registry_operation_contract",
             "rationale_code": "registry_declares_normalized_response_field_vocabulary",
             "path": "data/data-go-kr.registry.json",
-            "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+            "sha256": "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0",
             "selector": {
               "dataset_id": "15025329",
               "operation_name": "연도별 등급별 실기 합격률 조회",
@@ -402,7 +402,7 @@
             "kind": "registry_operation_contract",
             "rationale_code": "registry_declares_normalized_response_field_vocabulary",
             "path": "data/data-go-kr.registry.json",
-            "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+            "sha256": "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0",
             "selector": {
               "dataset_id": "15004206",
               "operation_name": "주변지역 기상정보 실시간 데이터 조회",
@@ -429,7 +429,7 @@
     },
     {
       "operation_id": "dpr-op-00000008",
-      "operation_revision_sha256": "17705e953c7f29dbde15221fdb4ef5f0d7f4ec73f3c749b770894421345380c7",
+      "operation_revision_sha256": "d6d8dbb28dacec2198a5bc3036ff5996d3deac3463dc7fb1d018beb1bea80197",
       "dimensions": {
         "transport": {
           "state": "not_asserted",
@@ -459,7 +459,7 @@
             "kind": "registry_operation_contract",
             "rationale_code": "registry_declares_normalized_response_field_vocabulary",
             "path": "data/data-go-kr.registry.json",
-            "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+            "sha256": "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0",
             "selector": {
               "dataset_id": "15052669",
               "operation_name": "교통카드충전소정보 조회",
@@ -519,7 +519,7 @@
             "kind": "registry_operation_contract",
             "rationale_code": "registry_declares_normalized_response_field_vocabulary",
             "path": "data/data-go-kr.registry.json",
-            "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+            "sha256": "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0",
             "selector": {
               "dataset_id": "15109030",
               "operation_name": "버스 차고지 현황 정보",
@@ -546,7 +546,7 @@
     },
     {
       "operation_id": "dpr-op-00000010",
-      "operation_revision_sha256": "36f6e3980fcb02ad91cbc37f79b876a8b356bee3d942e29c75df8c98d85dac22",
+      "operation_revision_sha256": "847cdbdc269d39272dd2125cae1cd4910d27a7a22c7003c4466f69bdc05c4b22",
       "dimensions": {
         "transport": {
           "state": "not_asserted",
@@ -571,7 +571,7 @@
             "kind": "registry_operation_contract",
             "rationale_code": "registry_declares_normalized_response_field_vocabulary",
             "path": "data/data-go-kr.registry.json",
-            "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+            "sha256": "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0",
             "selector": {
               "dataset_id": "15029006",
               "operation_name": "대학별 학과정보 조회",

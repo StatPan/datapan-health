@@ -11,7 +11,7 @@
     "version": 1,
     "supersedes": null
   },
-  "artifact_sha256": "d9b39f40e2068180cf46ebf8eca2037aeff19523b76f648bb06666758ed8c1d3",
+  "artifact_sha256": "cc5a88aafbddc76d3bf2b66f4f38efaf5a6341555dbf79dadb243233df01bba4",
   "bindings": [
     {
       "path": "drafts/operation-assertion-policies/datapan.operation-assertion-policies.v1.schema.json",
@@ -19,15 +19,15 @@
     },
     {
       "path": "drafts/operation-assertion-policies/operation-assertion-policies.v1.json",
-      "sha256": "62d54df23a55dc529b60947c944bebef82f6697f44472ae0f20c2a06781704e6"
+      "sha256": "36fa8ded50415cf57f517760758d9235bf7744f322376ce98541147ab5dd0017"
     },
     {
       "path": "fixtures/operation-assertion-policies/datapan-health-consumer-proof.v1.json",
-      "sha256": "edd7ab5c63c39c30801bd145e5dfc521f9910542da2f3b766ef2928e1a5841d2"
+      "sha256": "4ee01bd854d450b9e9ac48fd15f50b2fa3defee2df5087e4906e86de729c8da3"
     },
     {
       "path": "drafts/operation-assertion-policies/release-manifest.v1.json",
-      "sha256": "282b17459c91c9c3a921eaed3eebf85c59bfca02057e44f36269ba3c59545338"
+      "sha256": "f6eff75f7fa8ad6daea4e3c9322db06e4b3e7c20853e0525d162e29ca94613a8"
     }
   ],
   "reference_model": {

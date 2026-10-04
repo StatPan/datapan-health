@@ -9,7 +9,7 @@
   },
   "source_registry": {
     "path": "data/data-go-kr.registry.json",
-    "sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644"
+    "sha256": "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0"
   },
   "summary": {
     "entries": 10,
@@ -33,6 +33,7 @@
       },
       "provider": "data.go.kr",
       "endpoint": {
+        "scheme": "https",
         "host": "apis.data.go.kr",
         "path": "/B552657/HolidyEmgncClnicInsttInfoInqireService/getHolidyClnicPosblEgytFullDown",
         "dependency_class": "data_go_kr_gateway"
@@ -86,6 +87,7 @@
       },
       "provider": "data.go.kr",
       "endpoint": {
+        "scheme": "https",
         "host": "apis.data.go.kr",
         "path": "/9760000/CommonCodeService/getCommonSgCodeList",
         "dependency_class": "data_go_kr_gateway"
@@ -139,6 +141,7 @@
       },
       "provider": "data.go.kr",
       "endpoint": {
+        "scheme": "https",
         "host": "apis.data.go.kr",
         "path": "/B551182/codeInfoService/getMedicInsttClassesCodeList",
         "dependency_class": "data_go_kr_gateway"
@@ -192,6 +195,7 @@
       },
       "provider": "data.go.kr",
       "endpoint": {
+        "scheme": "http",
         "host": "apis.data.go.kr",
         "path": "/B554287/resrceInfoInqireService/getPrvateResrcByProvdServiceInfoInqire",
         "dependency_class": "data_go_kr_gateway"
@@ -245,6 +249,7 @@
       },
       "provider": "data.go.kr",
       "endpoint": {
+        "scheme": "https",
         "host": "apis.data.go.kr",
         "path": "/6300000/openapi2022/restrnt/getrestrnt",
         "dependency_class": "data_go_kr_gateway"
@@ -298,6 +303,7 @@
       },
       "provider": "data.go.kr",
       "endpoint": {
+        "scheme": "http",
         "host": "openapi.q-net.or.kr",
         "path": "/api/service/rest/InquiryStatSVC/getGradSiPassList",
         "dependency_class": "external_endpoint"
@@ -342,12 +348,15 @@
         "dataset_id": "15004206",
         "operation_name": "주변지역 기상정보 실시간 데이터 조회",
         "upstream_operation_seq": "6836",
-        "cli_operation_key": "c42a347c1c1970a581081f7969cd7c9afec452b9f68390b945a58acdecf93431"
+        "cli_operation_key": "c7d137aa1fce136a0ee2b455f41c1b699b8f51be691edb7d54db5ae1e589fc4a"
       },
       "provider": "data.go.kr",
       "endpoint": {
+        "scheme": "http",
         "host": "www.korad.or.kr",
-        "path": "/openapi/service/weatherMoniterSvc",
+        "path": "/openapi/service/weatherMoniterSvc/getWeatherMoniterDataList",
+        "source_path": "/openapi/service/weatherMoniterSvc",
+        "correction_source": "https://www.data.go.kr/data/15004206/openapi.do",
         "dependency_class": "external_endpoint"
       },
       "eligibility": {
@@ -399,6 +408,7 @@
       },
       "provider": "data.go.kr",
       "endpoint": {
+        "scheme": "http",
         "host": "openapi.its.ulsan.kr",
         "path": "/UlsanAPI/TCardStoreInfo.xo",
         "dependency_class": "external_endpoint"
@@ -452,6 +462,7 @@
       },
       "provider": "data.go.kr",
       "endpoint": {
+        "scheme": "http",
         "host": "data.sisul.or.kr",
         "path": "/AutoAPI/service/OpenDB/Publicgarage/getPublicgarageQry",
         "dependency_class": "external_endpoint"
@@ -505,6 +516,7 @@
       },
       "provider": "data.go.kr",
       "endpoint": {
+        "scheme": "http",
         "host": "openapi.q-net.or.kr",
         "path": "/api/service/rest/InquiryUnivUdeptSVC/getList",
         "dependency_class": "external_endpoint"

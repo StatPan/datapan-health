@@ -89,7 +89,7 @@ func LoadCanaryConfig(path string) (CanaryConfig, error) {
 }
 
 func validConsumptionProvenance(provenance ConsumptionProvenance) bool {
-	return commitPattern.MatchString(provenance.RegistryDatasetRevision) && sha256Pattern.MatchString(provenance.SourceRegistrySHA256) && releaseTagPattern.MatchString(provenance.ReleaseTag) && sha256Pattern.MatchString(provenance.ReleaseManifestSHA256)
+	return commitPattern.MatchString(provenance.RegistryDatasetRevision) && sha256Pattern.MatchString(provenance.SourceRegistrySHA256) && (releaseTagPattern.MatchString(provenance.ReleaseTag) || provenance.ReleaseTag == provenance.RegistryDatasetRevision) && sha256Pattern.MatchString(provenance.ReleaseManifestSHA256)
 }
 
 func validCadence(canary Canary) bool {

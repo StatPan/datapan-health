@@ -19,6 +19,11 @@ grep -Fq 'provenance: false' "$workflow"
 grep -Fq 'test "$digest" = "$local_runtime_digest"' "$workflow"
 grep -Fq 'org.opencontainers.image.revision' "$workflow"
 grep -Fq 'runtime-release-receipt.json' "$workflow"
+grep -Fq 'statpan.datapan-health-runtime-release.v2' "$workflow"
+grep -Fq './scripts/verify-runtime-dependencies.sh "$image"' "$workflow"
+grep -Fq 'dependency_lock_sha256' "$workflow"
+grep -Fq 'cli_binary_sha256:$dependency_lock[0].cli.linux_binaries.arm64.binary_sha256' "$workflow"
+grep -Fq 'gatus_config_sha256' "$workflow"
 artifact_paths=$(awk '
   /name: \$\{\{ env\.RELEASE_ARTIFACT \}\}/ { in_artifact=1; next }
   in_artifact && /^[[:space:]]*path: \|[[:space:]]*$/ { in_paths=1; next }
