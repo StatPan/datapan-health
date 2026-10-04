@@ -199,6 +199,123 @@ func TestArchiveIncrementalExportRetainsMixedCatalogBindings(t *testing.T) {
 	}
 }
 
+func TestArchivePreservesExactHistoricalReceiptlessFailure(t *testing.T) {
+	for _, category := range []string{"timeout", "indeterminate"} {
+		t.Run(category, func(t *testing.T) {
+			input := historicalFallbackFixture(t, category)
+			root := t.TempDir()
+			manifest, err := Export(context.Background(), writeInput(t, []string{input}), root, "../../config/archive.json", "../../config/canaries.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows, err := readObservations(filepath.Join(root, "observations", "date=2026-10-04", "part-00000.parquet"))
+			if err != nil || len(rows) != 1 || rows[0].Outcome != "indeterminate" || rows[0].Category != category || rows[0].RegistryRevision != acceptedHistoricalCatalogs()[0].RegistryDatasetRevision || len(manifest.InputCatalogs) != 1 {
+				t.Fatalf("historical fallback failure was not preserved: %v", err)
+			}
+		})
+	}
+}
+
+func TestHistoricalProviderAliasDoesNotPermitAnotherProducerOrHealthyData(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*health.Receipt)
+	}{
+		{"cli_producer", func(r *health.Receipt) { r.Execution.CLIVersion = "v0.1.39" }},
+		{"healthy", func(r *health.Receipt) {
+			r.Assessment.Outcome, r.Assessment.Category, r.Assessment.ReasonCode = "healthy", "healthy", "provider_ok"
+		}},
+		{"missing_policy", func(r *health.Receipt) { r.Policy = nil }},
+		{"unreviewed_reason", func(r *health.Receipt) { r.Assessment.ReasonCode = "other_failure" }},
+		{"observed_data", func(r *health.Receipt) { r.Observation.DataPresence = "present" }},
+		{"parameter_drift", func(r *health.Receipt) { r.Execution.SafeParameterNames = []string{"pageNo"} }},
+		{"wrong_alias", func(r *health.Receipt) { r.Registry.DatasetID = "another_api" }},
+		{"wrong_budget", func(r *health.Receipt) { r.Execution.RequestBudget = 2 }},
+		{"wrong_policy", func(r *health.Receipt) { r.Policy.Version = 2 }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			receipt, err := health.DecodeReceipt(strings.NewReader(historicalFallbackFixture(t, "timeout")))
+			if err != nil {
+				t.Fatal(err)
+			}
+			test.mutate(&receipt)
+			data, err := json.Marshal(receipt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			root := filepath.Join(t.TempDir(), "must-not-exist")
+			if _, err := Export(context.Background(), writeInput(t, []string{string(data)}), root, "../../config/archive.json", "../../config/canaries.json"); err == nil {
+				t.Fatal("unreviewed provider-ID receipt was accepted")
+			}
+			if _, err := os.Stat(root); !os.IsNotExist(err) {
+				t.Fatal("rejected fallback wrote output")
+			}
+		})
+	}
+	// The same original fallback shape cannot cross the release boundary even
+	// when every operation field matches that other release's reviewed catalog.
+	legacy, err := health.DecodeReceipt(strings.NewReader(historicalFallbackFixture(t, "timeout")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []string{historicalSISULFixture(t, 1), currentSISULReceipt(t)} {
+		receipt, err := health.DecodeReceipt(strings.NewReader(input))
+		if err != nil {
+			t.Fatal(err)
+		}
+		receipt.Registry.DatasetID = receipt.Operation.DatasetID
+		receipt.Execution = legacy.Execution
+		receipt.Observation = legacy.Observation
+		receipt.Assessment = legacy.Assessment
+		data, err := json.Marshal(receipt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Export(context.Background(), writeInput(t, []string{string(data)}), t.TempDir(), "../../config/archive.json", "../../config/canaries.json"); err == nil {
+			t.Fatal("historical provider-ID fallback was accepted for another release")
+		}
+	}
+}
+
+// Synthetic reproduction of the exact original Health8707 fallback constructor.
+// Actual unmodified retained receipts are additionally checked in private QA.
+func historicalFallbackFixture(t *testing.T, category string) string {
+	t.Helper()
+	receipt, err := health.DecodeReceipt(strings.NewReader(historicalSISULFixture(t, 0)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := acceptedHistoricalCatalogs()[0]
+	catalog, err := health.LoadCatalog(filepath.Join("../../config", record.Path), record.CatalogSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range catalog.Entries {
+		if entry.OperationID != "dpr-op-00000009" {
+			continue
+		}
+		names := make([]string, 0, len(entry.Execution.SafeParameters))
+		for _, parameter := range entry.Execution.SafeParameters {
+			names = append(names, parameter.Name)
+		}
+		receipt.Registry.DatasetID = entry.Aliases.DatasetID
+		receipt.Execution = health.Execution{CLIVersion: "scheduler-receiptless-fallback", Attempted: true, TimeoutMS: int64(entry.Execution.TimeoutCeilingMS), RequestBudget: entry.Execution.RequestBudget, SafeParameterNames: names}
+		receipt.Observation = health.Observation{MaxLevel: entry.Policy.MaxLevel, LatencyMS: 20000, ProviderMessageClass: "not_observed", DataPresence: "not_observed", SchemaStatus: "not_observed", FreshnessStatus: "not_observed"}
+		reason := "cli_receipt_missing"
+		if category == "timeout" {
+			reason = "scheduler_timeout_without_cli_receipt"
+		}
+		receipt.Assessment = health.Assessment{Outcome: "indeterminate", Category: category, Retryable: category == "timeout", ReasonCode: reason, NextActions: []string{"review scheduler and provider evidence"}}
+		data, err := json.Marshal(receipt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	t.Fatal("historical SISUL operation missing")
+	return ""
+}
+
 func TestArchiveCheckpointDoesNotReuseOldProvenance(t *testing.T) {
 	input := writeInput(t, []string{currentSISULReceipt(t)})
 	root := t.TempDir()

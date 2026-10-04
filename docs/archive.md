@@ -60,6 +60,15 @@ their observation revision stays historical. This archive-only mapping never
 permits old receipts in live Gatus admission and never alters the detailed private
 receipt stream or expands the public observation schema.
 
+The original Health scheduler source `8707dd99…` mislabeled
+`registry.dataset_id` with the provider API ID only in its receiptless fallback
+records. Export accepts that exact legacy shape only for the reviewed `10f37518…`
+tuple, the `scheduler-receiptless-fallback` marker, matching operation alias,
+present policy, original execution limits/parameters, and the original
+indeterminate missing-receipt/timeout observation. It cannot accept healthy data,
+CLI records with provider IDs, or another release through this exception. Detailed
+original records stay untouched; the safe public projection preserves the failure.
+
 The dataset card is [dataset-card/README.md](../dataset-card/README.md).
 
 ## Publishing
