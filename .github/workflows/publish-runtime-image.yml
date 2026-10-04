@@ -146,12 +146,11 @@ jobs:
             --arg platform linux/arm64 \
             --arg governance_bundle_sha256 "$(sha256sum dist/images/governance-bundle.tar | awk '{print $1}')" \
             --arg runtime_oci_sha256 "$(sha256sum dist/images/runtime.oci.tar | awk '{print $1}')" \
-            --arg reconciled "${{ steps.existing.outputs.publish }}" \
             --arg issued_at "$issued_at" \
             --arg expires_at "$expires_at" \
             --argjson max_age_seconds "$RECEIPT_MAX_AGE_SECONDS" \
             --arg artifact_name "$RELEASE_ARTIFACT" \
-            '{schema_version:$schema,issued_at:$issued_at,expires_at:$expires_at,max_age_seconds:$max_age_seconds,github:{repository:$repository,workflow_path:$workflow_path,workflow_ref:$workflow_ref,run_id:$run_id,source_revision:$source_sha,conclusion:"success",artifact_name:$artifact_name},package:{image:$image,digest:$digest,platform:$platform,oci_revision_label:$source_sha},local_release:{oci_manifest_digest:$local_digest,governance_bundle_sha256:$governance_bundle_sha256,runtime_oci_sha256:$runtime_oci_sha256},declared_rollback_image:$rollback_image,published:($reconciled == "true")}' \
+            '{schema_version:$schema,issued_at:$issued_at,expires_at:$expires_at,max_age_seconds:$max_age_seconds,github:{repository:$repository,workflow_path:$workflow_path,workflow_ref:$workflow_ref,run_id:$run_id,source_revision:$source_sha,conclusion:"success",artifact_name:$artifact_name},package:{image:$image,digest:$digest,platform:$platform,oci_revision_label:$source_sha},local_release:{oci_manifest_digest:$local_digest,governance_bundle_sha256:$governance_bundle_sha256,runtime_oci_sha256:$runtime_oci_sha256},declared_rollback_image:$rollback_image,published:true}' \
             > dist/images/runtime-release-receipt.json
           jq -e '(.github.repository == "StatPan/datapan-health") and (.github.workflow_path == ".github/workflows/publish-runtime-image.yml") and (.github.source_revision == .package.oci_revision_label) and (.github.conclusion == "success") and (.github.artifact_name != "") and (.package.image | test("^ghcr\\.io/statpan/datapan-health-runtime@sha256:[0-9a-f]{64}$")) and (.package.digest == .local_release.oci_manifest_digest) and (.package.platform == "linux/arm64") and (.max_age_seconds == 900)' dist/images/runtime-release-receipt.json
 
