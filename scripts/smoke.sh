@@ -24,7 +24,9 @@ if [ "$ready" != true ]; then
   echo "Gatus did not become ready" >&2
   exit 1
 fi
+python3 scripts/prepare-smoke-fixtures.py
 docker compose --profile fixtures run --rm runner-healthy
+python3 scripts/prepare-smoke-fixtures.py
 docker compose --profile fixtures run --rm runner-unhealthy
 curl --fail --silent http://127.0.0.1:8081/live >/dev/null
 curl --fail --silent http://127.0.0.1:8081/ready >/dev/null

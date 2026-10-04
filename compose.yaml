@@ -37,10 +37,10 @@ services:
       RECEIPT_ARCHIVE: /data/receipts.jsonl
       CANARY_CONFIG: /config/canaries.json
     volumes:
-      - ./testdata:/fixtures:ro
+      - ./out/smoke-fixtures:/fixtures:ro
       - ./config:/config:ro
       - receipt-data:/data
-    command: ["-receipt", "/fixtures/receipts/v1/healthy.json"]
+    command: ["-receipt", "/fixtures/healthy.json"]
     depends_on:
       gatus:
         condition: service_started
@@ -55,10 +55,10 @@ services:
       RECEIPT_ARCHIVE: /data/receipts.jsonl
       CANARY_CONFIG: /config/canaries.json
     volumes:
-      - ./testdata:/fixtures:ro
+      - ./out/smoke-fixtures:/fixtures:ro
       - ./config:/config:ro
       - receipt-data:/data
-    command: ["-receipt", "/fixtures/receipts/v1/unhealthy.json"]
+    command: ["-receipt", "/fixtures/unhealthy.json"]
     depends_on:
       gatus:
         condition: service_started
