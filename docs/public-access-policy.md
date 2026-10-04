@@ -46,3 +46,9 @@ If the selected product policy is login-only or permitted-network access,
 apply that policy at the owned edge with real account/CIDR inputs before
 claiming restricted use. This PR provides bounded public reads and an Infra
 handoff; it does not fabricate users, credentials, allowlists or edge rollout.
+
+Local reproduction: build the runtime image, then run
+RUNTIME_IMAGE=datapan-health-runtime:test python3 scripts/public-access-proof.py.
+The synthetic private source and real read-only runtime container verify a
+100-reader burst, coalescing, upstream outage/recovery and forbidden requests;
+aggregate-only evidence is saved in out/access-proof.json.
