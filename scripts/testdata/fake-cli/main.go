@@ -46,7 +46,7 @@ func main() {
 			r.Observation.DataPresence = "not_observed"
 			r.Assessment = health.Assessment{Outcome: "unhealthy", Category: "timeout", ReasonCode: "timeout", Retryable: true}
 		}
-		if mode == "bad_registry" {
+		if mode == "bad_registry" || (mode == "one_valid" && canary.OperationID != "dpr-op-00000001") {
 			r.Registry.DatasetRevision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		}
 		raw, _ := json.Marshal(r)

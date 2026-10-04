@@ -38,6 +38,7 @@ with tempfile.TemporaryDirectory(prefix='health-pipeline-proof-') as directory:
     archive, journal = work / 'receipts.jsonl', work / 'deliveries.jsonl'
     for phase, mode, token, ready_expected in (
         ('normal', 'healthy', 'local-synthetic-token', True),
+        ('partial_admission_failure', 'one_valid', 'local-synthetic-token', False),
         ('admission_failure', 'bad_registry', 'local-synthetic-token', False),
         ('delivery_failure_after_archive', 'healthy', 'invalid-synthetic-token', False),
         ('provider_timeout_1', 'provider_timeout', 'local-synthetic-token', True),
@@ -51,6 +52,9 @@ with tempfile.TemporaryDirectory(prefix='health-pipeline-proof-') as directory:
         state = {'version': 1, 'slots': {c['operation_id']: {'last_claimed_slot': 0, 'next_due': at} for c in config['canaries']}}
         (work / 'state.json').write_text(json.dumps(state))
         before_archive, before_journal = lines(archive), lines(journal)
+        _, before_public = get('http://127.0.0.1:8082/datapan/v1/dependencies')
+        before_times = {o['operation_id']: o.get('observed_at') for o in before_public['operations']}
+        phase_start = datetime.datetime.fromisoformat(at).replace(microsecond=0)
         cid = command('docker', 'run', '-d', '--read-only', '--user', str(os.getuid()) + ':' + str(os.getgid()), '--network', project + '_default', '-p', '127.0.0.1::8081', '--entrypoint', '/health-scheduler',
             '-v', str(root / 'config') + ':/config:ro', '-v', directory + ':/proof',
             '-e', 'CANARY_CONFIG=/config/canaries.json', '-e', 'DATAPAN_BIN=/proof/fake-cli', '-e', 'HEALTH_RUNNER_BIN=/health-runner',
@@ -78,13 +82,27 @@ with tempfile.TemporaryDirectory(prefix='health-pipeline-proof-') as directory:
                 raise RuntimeError('incorrect readiness: ' + phase)
             stored = lines(archive) - before_archive
             accepted = lines(journal) - before_journal
+            if phase == 'partial_admission_failure' and (stored != 1 or accepted != 1):
+                raise RuntimeError('one working canary concealed nine rejections')
             if phase == 'admission_failure' and (stored or accepted):
                 raise RuntimeError('invalid evidence entered a sink')
             if phase == 'delivery_failure_after_archive' and (stored != 10 or accepted):
                 raise RuntimeError('archive concealed failed delivery')
             if ready_expected and (stored != 10 or accepted != 10):
                 raise RuntimeError('healthy pipeline incomplete')
-            public_code, public = get('http://127.0.0.1:8082/datapan/v1/dependencies')
+            public_deadline = time.monotonic() + 20
+            while True:
+                public_code, public = get('http://127.0.0.1:8082/datapan/v1/dependencies')
+                read_times = {o['operation_id']: o.get('observed_at') for o in public.get('operations', [])}
+                delivered_ids = {c['operation_id'] for c in report['canaries'] if c.get('last_delivered')}
+                current = len(read_times) == 10 and all(read_times.get(key) and datetime.datetime.fromisoformat(read_times[key].replace('Z', '+00:00')) >= phase_start for key in delivered_ids)
+                if not accepted or current:
+                    break
+                if time.monotonic() > public_deadline:
+                    raise RuntimeError('acknowledged observations absent from public readback: ' + phase)
+                time.sleep(0.2)
+            if any(value != before_times.get(key) for key, value in read_times.items() if key not in delivered_ids):
+                raise RuntimeError('rejected/undelivered observation changed public status')
             if public_code != 200 or len(public['operations']) != 10:
                 raise RuntimeError('public readback unavailable')
             observed_states = {}
@@ -95,10 +113,10 @@ with tempfile.TemporaryDirectory(prefix='health-pipeline-proof-') as directory:
                 raise RuntimeError('provider failure not visible through Gatus')
             if phase == 'recovery_2' and observed_states != {'succeeded': 10}:
                 raise RuntimeError('public recovery did not complete')
-            proof.append(dict(phase=phase, self_http=code, archive_delta=stored, gatus_ack_delta=accepted, public_http=public_code, public_canaries=10, public_observation_states=observed_states))
+            proof.append(dict(phase=phase, self_http=code, archive_delta=stored, gatus_ack_delta=accepted, public_http=public_code, public_canaries=10, public_observation_time_binding='current_phase' if accepted else 'unchanged', public_observation_states=observed_states))
         finally:
             command('docker', 'rm', '-f', cid)
 output = root / 'out/pipeline-proof.json'
 output.parent.mkdir(parents=True, exist_ok=True)
-output.write_text(json.dumps(dict(schema_version='datapan.health-local-pipeline-proof.v1', scope='synthetic_local_containers', image=image, phases=proof), indent=2) + '\n')
+output.write_text(json.dumps(dict(schema_version='datapan.health-local-pipeline-proof.v1', scope='synthetic_local_containers', source_head=command('git', 'rev-parse', 'HEAD'), runtime_image_id=command('docker', 'image', 'inspect', '--format', '{{.Id}}', image), image=image, phases=proof), indent=2) + '\n')
 print(json.dumps(dict(output=str(output), phases=len(proof), result='passed')))
