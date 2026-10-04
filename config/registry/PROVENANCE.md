@@ -33,6 +33,14 @@ The diagnostic inputs and operation-manifest receipt below retain their separate
 historical compatibility/denominator authority; this rollout does not promote a
 new full-population manifest or change archive publication.
 
+## Archive-only historical catalogs
+
+archive-history/health-probe-catalog-10f37518.json retains the exact original catalog bytes (SHA-256 e84f0da2f532a32833def1118a4610bf2322f370783d120b84cf85306d244840), bound to Registry payload 10f375182f992bc700468dd9d6e2930acd3bf8e8 and manifest 0b78c286b8cfa889ddccf51f83a9d8adc4eac8617ea6d9fd2d66d1fcf668281f.
+
+archive-history/health-probe-catalog-247975f0.json retains the previous published catalog bytes (SHA-256 827433dec514fa10ebef780ff611f6314b6e1d7270acde81ce6d60ec7a46e27e), bound to Registry payload 247975f0ba5872cb84d22f007fc4b8a934539b7b and manifest c40e661c4e3fa6dd2c9e43f6aca17e9544a09831d83300b624df14d68123d5d2.
+
+config/archive.json and compiled archive mapping bind both complete release tuples, their paths and byte digests. They permit asynchronous export of retained historical receipts only; the current live catalog, policy and admission pins stay authoritative for Gatus. Canonical CLI #150 and Registry #557 schema/catalog contract metadata remains historical, separate from active_registry and the input_catalogs emitted by the archive.
+
 ## M003 diagnostic compatibility inputs
 
 `diagnostic-contract-pin.json` pins the exact Registry #566/#567 consumer-proof

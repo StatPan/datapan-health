@@ -4,6 +4,7 @@ package archive
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -23,9 +24,11 @@ import (
 const SchemaVersion = "datapan.health-archive.v1"
 
 type Config struct {
-	SchemaVersion string `json:"schema_version"`
-	DatasetRepo   string `json:"dataset_repo"`
-	DatapanCLI    struct {
+	SchemaVersion              string              `json:"schema_version"`
+	DatasetRepo                string              `json:"dataset_repo"`
+	ActiveRegistry             RegistryBinding     `json:"active_registry"`
+	HistoricalRegistryCatalogs []HistoricalCatalog `json:"historical_registry_catalogs"`
+	DatapanCLI                 struct {
 		Issue               string `json:"issue"`
 		Commit              string `json:"commit"`
 		ReceiptSchemaSHA256 string `json:"receipt_schema_sha256"`
@@ -89,6 +92,7 @@ type Manifest struct {
 	BatchID       string            `json:"batch_id"`
 	CreatedAt     time.Time         `json:"created_at"`
 	Provenance    Config            `json:"provenance"`
+	InputCatalogs []RegistryBinding `json:"input_catalogs"`
 	Files         map[string]string `json:"files"`
 }
 
@@ -107,7 +111,9 @@ func LoadConfig(path string) (Config, error) {
 	if err := json.Unmarshal(data, &config); err != nil {
 		return Config{}, errors.New("invalid archive configuration")
 	}
-	if config.SchemaVersion != SchemaVersion || config.DatasetRepo == "" || len(config.DatapanCLI.Commit) != 40 || len(config.DatapanCLI.ReceiptSchemaSHA256) != 64 || len(config.DatapanRegistry.CatalogRevision) != 40 || len(config.DatapanRegistry.CatalogSHA256) != 64 {
+	if config.SchemaVersion != SchemaVersion || config.DatasetRepo == "" ||
+		config.DatapanCLI.Issue != "https://github.com/StatPan/datapan-cli/pull/150" || config.DatapanCLI.Commit != "2fc8343993b7704b50f7d50fcba2642fca439c7f" || config.DatapanCLI.ReceiptSchemaSHA256 != "b755a5af33152bcb36dc7c2382b94857953d0a9359b6b77cd8b2cb093d0a820d" ||
+		config.DatapanRegistry.Issue != "https://github.com/StatPan/datapan-registry/issues/557" || config.DatapanRegistry.CatalogRevision != "b49d66b97d8155c34649f4dd2040b884c4212d64" || config.DatapanRegistry.CatalogSHA256 != "e84f0da2f532a32833def1118a4610bf2322f370783d120b84cf85306d244840" {
 		return Config{}, errors.New("invalid archive provenance")
 	}
 	return config, nil
@@ -122,31 +128,57 @@ func Export(ctx context.Context, inputPath, outputDir, configPath, canaryPath st
 	if err != nil {
 		return Manifest{}, err
 	}
-	observations, err := projectInput(ctx, inputPath, canaries)
+	mapper, err := loadArchiveMapper(config, configPath, canaries)
 	if err != nil {
 		return Manifest{}, err
 	}
-	batchID := hashObservations(observations)
-	checkpointPath := filepath.Join(outputDir, "checkpoints", batchID+".json")
-	if checkpoint, err := loadCheckpoint(checkpointPath); err == nil && checkpoint.Done && filesMatch(outputDir, checkpoint.Files) {
-		return Manifest{SchemaVersion: SchemaVersion, BatchID: batchID, Provenance: config, Files: checkpoint.Files}, nil
-	}
-	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+	observations, err := projectInput(ctx, inputPath, mapper)
+	if err != nil {
 		return Manifest{}, err
 	}
-	files := map[string]string{}
+	services := servicesFor(canaries, config)
 	byDate := map[string][]Observation{}
 	for _, observation := range observations {
 		date := observation.ObservedAt.UTC().Format("2006-01-02")
 		byDate[date] = append(byDate[date], observation)
 	}
+	var batchRows []Observation
 	for date, current := range byDate {
 		path := filepath.Join(outputDir, "observations", "date="+date, "part-00000.parquet")
 		existing, err := readObservations(path)
 		if err != nil && !os.IsNotExist(err) {
 			return Manifest{}, err
 		}
+		for _, row := range existing {
+			encoded, err := json.Marshal(row)
+			if err != nil || schemas.ValidateHealthArchiveV1(encoded) != nil || row.ObservedAt.UTC().Format("2006-01-02") != date {
+				return Manifest{}, errors.New("archive retained projection is invalid")
+			}
+			if err := mapper.retainProjection(row); err != nil {
+				return Manifest{}, err
+			}
+		}
 		merged := dedupeObservations(append(existing, current...))
+		byDate[date] = merged
+		batchRows = append(batchRows, merged...)
+	}
+	inputCatalogs := mapper.inputCatalogs()
+	batchID := hashArchiveBatch(dedupeObservations(batchRows), config, services, inputCatalogs)
+	checkpointPath := filepath.Join(outputDir, "checkpoints", batchID+".json")
+	if checkpoint, err := loadCheckpoint(checkpointPath); err == nil && checkpoint.Done && filesMatch(outputDir, checkpoint.Files) {
+		data, err := os.ReadFile(filepath.Join(outputDir, "manifest.json"))
+		var persisted Manifest
+		if err == nil && json.Unmarshal(data, &persisted) == nil && persisted.SchemaVersion == SchemaVersion && persisted.BatchID == batchID && !persisted.CreatedAt.IsZero() && sameJSON(persisted.Provenance, config) && sameJSON(persisted.InputCatalogs, inputCatalogs) {
+			persisted.Files = checkpoint.Files
+			return persisted, nil
+		}
+	}
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		return Manifest{}, err
+	}
+	files := map[string]string{}
+	for date, merged := range byDate {
+		path := filepath.Join(outputDir, "observations", "date="+date, "part-00000.parquet")
 		if err := writeParquet(path, merged); err != nil {
 			return Manifest{}, err
 		}
@@ -164,13 +196,12 @@ func Export(ctx context.Context, inputPath, outputDir, configPath, canaryPath st
 		}
 		files[relative(outputDir, rollupPath)] = fileDigest(rollupPath)
 	}
-	services := servicesFor(canaries, config)
 	servicePath := filepath.Join(outputDir, "services", "services.parquet")
 	if err := writeParquet(servicePath, services); err != nil {
 		return Manifest{}, err
 	}
 	files[relative(outputDir, servicePath)] = fileDigest(servicePath)
-	manifest := Manifest{SchemaVersion: SchemaVersion, BatchID: batchID, CreatedAt: time.Now().UTC(), Provenance: config, Files: files}
+	manifest := Manifest{SchemaVersion: SchemaVersion, BatchID: batchID, CreatedAt: time.Now().UTC(), Provenance: config, InputCatalogs: inputCatalogs, Files: files}
 	if err := writeJSONAtomic(filepath.Join(outputDir, "manifest.json"), manifest); err != nil {
 		return Manifest{}, err
 	}
@@ -182,7 +213,16 @@ func Export(ctx context.Context, inputPath, outputDir, configPath, canaryPath st
 	return manifest, nil
 }
 
-func projectInput(ctx context.Context, path string, canaries health.CanaryConfig) ([]Observation, error) {
+func sameJSON(left, right any) bool {
+	a, err := json.Marshal(left)
+	if err != nil {
+		return false
+	}
+	b, err := json.Marshal(right)
+	return err == nil && bytes.Equal(a, b)
+}
+
+func projectInput(ctx context.Context, path string, mapper *archiveMapper) ([]Observation, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -199,7 +239,7 @@ func projectInput(ctx context.Context, path string, canaries health.CanaryConfig
 		if err != nil {
 			return nil, errors.New("archive input contains invalid health receipt")
 		}
-		canary, err := canaries.CanaryFor(receipt)
+		canary, err := mapper.canaryFor(receipt)
 		if err != nil {
 			return nil, err
 		}
@@ -222,8 +262,14 @@ func observationID(row Observation) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
-func hashObservations(rows []Observation) string {
-	data, _ := json.Marshal(rows)
+func hashArchiveBatch(rows []Observation, config Config, services []Service, inputs []RegistryBinding) string {
+	data, _ := json.Marshal(struct {
+		Transform     string            `json:"transform"`
+		Config        Config            `json:"config"`
+		Services      []Service         `json:"services"`
+		InputCatalogs []RegistryBinding `json:"input_catalogs"`
+		Observations  []Observation     `json:"observations"`
+	}{"datapan.health-archive-transform.v2", config, services, inputs, rows})
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
@@ -262,7 +308,7 @@ func incidentsFor(rows []Observation) []Incident {
 func servicesFor(config health.CanaryConfig, archive Config) []Service {
 	result := make([]Service, 0, len(config.Canaries))
 	for _, c := range config.Canaries {
-		result = append(result, Service{c.GatusEndpointKey, c.OperationID, archive.DatapanRegistry.CatalogRevision, c.Tier, int64(c.IntervalMinutes), int64(c.HeartbeatMinutes), int64(c.ConsecutiveFailuresBeforeIncident)})
+		result = append(result, Service{c.GatusEndpointKey, c.OperationID, archive.ActiveRegistry.RegistryDatasetRevision, c.Tier, int64(c.IntervalMinutes), int64(c.HeartbeatMinutes), int64(c.ConsecutiveFailuresBeforeIncident)})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ServiceID < result[j].ServiceID })
 	return result

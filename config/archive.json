@@ -10,5 +10,30 @@
     "issue": "https://github.com/StatPan/datapan-registry/issues/557",
     "catalog_revision": "b49d66b97d8155c34649f4dd2040b884c4212d64",
     "catalog_sha256": "e84f0da2f532a32833def1118a4610bf2322f370783d120b84cf85306d244840"
-  }
+  },
+  "active_registry": {
+    "registry_dataset_revision": "1715bb67c11f97a601c85b9f2a3c45ff50968224",
+    "source_registry_sha256": "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0",
+    "release_tag": "1715bb67c11f97a601c85b9f2a3c45ff50968224",
+    "release_manifest_sha256": "d63b22b378a3af30564fea5f8a39fcd96b2c4b4f76392ec0f7c191652a58d2b5",
+    "catalog_sha256": "0503ddd9c93c31781c7920ccccdaf55aa5f3ed7e8061cb7dd16f0d8eb95611d2"
+  },
+  "historical_registry_catalogs": [
+    {
+      "registry_dataset_revision": "10f375182f992bc700468dd9d6e2930acd3bf8e8",
+      "source_registry_sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+      "release_tag": "v2026.07.14",
+      "release_manifest_sha256": "0b78c286b8cfa889ddccf51f83a9d8adc4eac8617ea6d9fd2d66d1fcf668281f",
+      "catalog_sha256": "e84f0da2f532a32833def1118a4610bf2322f370783d120b84cf85306d244840",
+      "path": "registry/archive-history/health-probe-catalog-10f37518.json"
+    },
+    {
+      "registry_dataset_revision": "247975f0ba5872cb84d22f007fc4b8a934539b7b",
+      "source_registry_sha256": "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0",
+      "release_tag": "247975f0ba5872cb84d22f007fc4b8a934539b7b",
+      "release_manifest_sha256": "c40e661c4e3fa6dd2c9e43f6aca17e9544a09831d83300b624df14d68123d5d2",
+      "catalog_sha256": "827433dec514fa10ebef780ff611f6314b6e1d7270acde81ce6d60ec7a46e27e",
+      "path": "registry/archive-history/health-probe-catalog-247975f0.json"
+    }
+  ]
 }
