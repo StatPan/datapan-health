@@ -271,9 +271,33 @@ func cliStyleRows(t *testing.T) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	healthy = legacyArchiveFixture(t, healthy)
+	unhealthy = legacyArchiveFixture(t, unhealthy)
 	indeterminate := mutateAssessment(t, string(healthy), "indeterminate", "indeterminate", "7b8ce434-e662-4f17-a239-0b8ad0d6a29d")
 	skipped := mutateAssessment(t, string(healthy), "skipped", "skipped", "7b8ce434-e662-4f17-a239-0b8ad0d6a29c")
 	return []string{string(healthy), string(unhealthy), indeterminate, skipped}
+}
+
+// The v1 schema fixtures have deliberately synthetic Registry values. Export
+// tests bind those synthetic records to the reviewed historical input release;
+// the original compatibility fixture files remain unmodified.
+func legacyArchiveFixture(t *testing.T, raw []byte) []byte {
+	t.Helper()
+	var document map[string]any
+	if err := json.Unmarshal(raw, &document); err != nil {
+		t.Fatal(err)
+	}
+	document["registry"] = map[string]any{
+		"dataset_id":       "StatPan/datapan-registry",
+		"dataset_revision": "10f375182f992bc700468dd9d6e2930acd3bf8e8",
+		"registry_sha256":  "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
+		"manifest_sha256":  "0b78c286b8cfa889ddccf51f83a9d8adc4eac8617ea6d9fd2d66d1fcf668281f",
+	}
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
 }
 
 func mutateAssessment(t *testing.T, receipt, outcome, category, probeID string) string {

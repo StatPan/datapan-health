@@ -59,7 +59,9 @@ done
 docker rm -f "$scheduler_id" >/dev/null
 scheduler_id=
 
-jq -c . "$root/testdata/receipts/v1/healthy.json" > "$work/receipts.jsonl"
+# Use an unmodified real CLI producer fixture for the active Registry release;
+# schema fixtures carry synthetic pins and are not export provenance evidence.
+jq -c . "$root/testdata/receipts/cli-catalog/v0.1.40-sisul-gateway-candidate.json" > "$work/receipts.jsonl"
 docker run --rm \
   -e "HF_TOKEN=$synthetic_token" \
   -e "PATH=/tmp/fake:/usr/local/bin:/usr/bin:/bin" \
