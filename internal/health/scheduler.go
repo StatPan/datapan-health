@@ -63,6 +63,8 @@ type SchedulerMetrics struct {
 	RunsSkippedCapacity uint64
 	DeliveryFailed      uint64
 	LastCompleted       time.Time
+	AdmissionRejected   uint64
+	LastAdmissionReason string
 }
 
 type MetricsSnapshot struct {
@@ -72,6 +74,8 @@ type MetricsSnapshot struct {
 	RunsSkippedCapacity uint64
 	DeliveryFailed      uint64
 	LastCompleted       time.Time
+	AdmissionRejected   uint64
+	LastAdmissionReason string
 }
 
 func NewScheduler(config CanaryConfig, statePath string, runner ProbeRunner, deliverer ReceiptDeliverer) (*Scheduler, error) {
@@ -230,8 +234,8 @@ func (s *Scheduler) run(parent context.Context, canary Canary, entry CatalogEntr
 		}
 		receipt = fallback
 	}
-	if validateCatalogReceipt(receipt, entry) != nil {
-		s.metrics.incFailed()
+	if _, err := s.config.AdmitReceipt(receipt, time.Now().UTC(), started); err != nil {
+		s.metrics.incAdmissionRejected(admissionReason(err))
 		_ = cliErr // errors may contain provider details and are deliberately not logged.
 		return
 	}
@@ -373,7 +377,7 @@ func (s *Scheduler) Wait() { s.wg.Wait() }
 func (s *Scheduler) Metrics() MetricsSnapshot {
 	s.metrics.mu.Lock()
 	defer s.metrics.mu.Unlock()
-	return MetricsSnapshot{RunsStarted: s.metrics.RunsStarted, RunsCompleted: s.metrics.RunsCompleted, RunsFailed: s.metrics.RunsFailed, RunsSkippedCapacity: s.metrics.RunsSkippedCapacity, DeliveryFailed: s.metrics.DeliveryFailed, LastCompleted: s.metrics.LastCompleted}
+	return MetricsSnapshot{RunsStarted: s.metrics.RunsStarted, RunsCompleted: s.metrics.RunsCompleted, RunsFailed: s.metrics.RunsFailed, RunsSkippedCapacity: s.metrics.RunsSkippedCapacity, DeliveryFailed: s.metrics.DeliveryFailed, LastCompleted: s.metrics.LastCompleted, AdmissionRejected: s.metrics.AdmissionRejected, LastAdmissionReason: s.metrics.LastAdmissionReason}
 }
 func (m *SchedulerMetrics) incStarted() { m.mu.Lock(); m.RunsStarted++; m.mu.Unlock() }
 func (m *SchedulerMetrics) incCompleted() {
@@ -388,4 +392,12 @@ func (m *SchedulerMetrics) incDeliveryFailed()  { m.mu.Lock(); m.DeliveryFailed+
 
 func (s *Scheduler) String() string {
 	return fmt.Sprintf("scheduler(canaries=%d)", len(s.config.Canaries))
+}
+
+func (m *SchedulerMetrics) incAdmissionRejected(reason string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.RunsFailed++
+	m.AdmissionRejected++
+	m.LastAdmissionReason = reason
 }

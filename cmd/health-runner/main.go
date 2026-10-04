@@ -31,7 +31,7 @@ func main() {
 	if err != nil {
 		fail(fmt.Errorf("load canaries: %w", err))
 	}
-	endpointKey, err := canaries.Resolve(receipt)
+	endpointKey, err := canaries.AdmitReceipt(receipt, time.Now().UTC(), time.Time{})
 	if err != nil {
 		fail(err)
 	}

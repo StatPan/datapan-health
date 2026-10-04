@@ -62,6 +62,9 @@ func fixtureForEntry(raw []byte, entry CatalogEntry) []byte {
 	if err := json.Unmarshal(raw, &receipt); err != nil {
 		panic(err)
 	}
+	receipt.ObservedAt = time.Now().UTC()
+	receipt.Registry = Registry{DatasetID: entry.Aliases.DatasetID, DatasetRevision: acceptedCanaryProvenance().RegistryDatasetRevision, RegistrySHA256: acceptedCanaryProvenance().SourceRegistrySHA256, ManifestSHA256: acceptedCanaryProvenance().ReleaseManifestSHA256}
+	receipt.Policy = &Policy{Key: entry.Policy.Key, Version: entry.Policy.Version, Authority: entry.Policy.Authority, MaxLevel: entry.Policy.MaxLevel}
 	receipt.Operation.OperationKey = entry.Aliases.CLIOperationKey
 	receipt.Operation.DatasetID = entry.Aliases.DatasetID
 	receipt.Operation.OperationName = entry.Aliases.OperationName

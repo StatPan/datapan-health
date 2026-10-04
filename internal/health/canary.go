@@ -67,7 +67,7 @@ func LoadCanaryConfig(path string) (CanaryConfig, error) {
 	if err != nil {
 		return CanaryConfig{}, errors.New("invalid canary configuration")
 	}
-	if config.ConsumptionProvenance.SourceRegistrySHA256 != catalog.SourceRegistry.SHA256 {
+	if config.CatalogSHA256 != acceptedCanaryCatalogSHA256 || config.ConsumptionProvenance != acceptedCanaryProvenance() || config.ConsumptionProvenance.SourceRegistrySHA256 != catalog.SourceRegistry.SHA256 {
 		return CanaryConfig{}, errors.New("invalid canary configuration")
 	}
 	seen := map[string]bool{}
