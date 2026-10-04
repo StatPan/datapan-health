@@ -75,6 +75,26 @@ func TestReadinessTracksStateFailureAndRecovery(t *testing.T) {
 	}
 }
 
+func TestWrongCanaryReceiptCannotAdvanceReadiness(t *testing.T) {
+	config := schedulerConfig(t, 1)
+	expected := config.Canaries[0]
+	entry, _ := config.Entry(expected)
+	other, _ := config.Entry(config.Canaries[1])
+	s, err := NewScheduler(config, filepath.Join(t.TempDir(), "state.json"), wrongCanaryRunner{entry: other}, &fakeDeliverer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.run(context.Background(), expected, entry)
+	for _, progress := range s.Readiness(time.Now().UTC()).Canaries {
+		if progress.LastAccepted != nil || progress.LastDelivered != nil || progress.OriginalObservedAt != nil {
+			t.Fatal("wrong invocation generated progress evidence")
+		}
+		if progress.OperationID == expected.OperationID && progress.Reason != "scheduled_identity" {
+			t.Fatal("wrong invocation did not degrade the scheduled canary")
+		}
+	}
+}
+
 func TestReadinessSeparatesDeliveryFailureFromProviderFailure(t *testing.T) {
 	config := schedulerConfig(t, 1)
 	config.Canaries = config.Canaries[:1]
