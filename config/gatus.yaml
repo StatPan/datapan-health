@@ -32,6 +32,9 @@ ui:
     .dashboard-container .grid.gap-3 { grid-template-columns: minmax(0, 1fr) !important; }
     h1, h2 { letter-spacing: -0.025em; }
     a:focus-visible, button:focus-visible { outline: 3px solid var(--datapan-blue); outline-offset: 3px; }
+    @media (max-width: 840px) {
+      #social { display: none; }
+    }
 
 # Gatus requires one native endpoint even when all product checks are pushed.
 endpoints:
