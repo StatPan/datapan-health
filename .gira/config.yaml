@@ -1,4 +1,5 @@
 repo: StatPan/datapan-health
+finish_review_policy: none
 profiles:
   default:
     labels:
