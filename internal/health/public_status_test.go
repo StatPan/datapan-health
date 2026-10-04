@@ -84,6 +84,82 @@ func TestPublicStatusHandlerBrowserAndCacheContract(t *testing.T) {
 	}
 }
 
+func TestInstalledProxyStatusAliasPreservesHTTPContract(t *testing.T) {
+	handler, err := NewPublicStatusHandler(staticPublicSource{document: testPublicDocument(t)}, []string{"https://datapan.statpan.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodPost} {
+		t.Run(method, func(t *testing.T) {
+			var canonical *httptest.ResponseRecorder
+			for _, path := range []string{"/datapan/v1/status", "/v1/status"} {
+				r := httptest.NewRequest(method, path, nil)
+				r.Header.Set("Origin", "https://datapan.statpan.com")
+				r.Header.Set("Access-Control-Request-Method", "GET")
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, r)
+				if canonical == nil {
+					canonical = response
+					continue
+				}
+				if response.Code != canonical.Code || response.Body.String() != canonical.Body.String() {
+					t.Fatal("private proxy alias changed status representation")
+				}
+				for _, header := range []string{"Content-Type", "Content-Length", "Cache-Control", "ETag", "Vary", "Deprecation", "Sunset", "Link", "Access-Control-Allow-Origin", "Access-Control-Allow-Methods"} {
+					if response.Header().Get(header) != canonical.Header().Get(header) {
+						t.Fatalf("private proxy alias changed %s", header)
+					}
+				}
+			}
+		})
+	}
+	for _, path := range []string{"/v1/status?run=1", "/v1/services", "/v1/dependencies", "/v1/execute"} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusNotFound {
+			t.Fatal("private alias opened another path or query")
+		}
+	}
+	denied := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	denied.Header.Set("Origin", "https://unapproved.example")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, denied)
+	if response.Code != http.StatusForbidden {
+		t.Fatal("private alias bypassed origin policy")
+	}
+	get := httptest.NewRecorder()
+	handler.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/v1/status", nil))
+	conditional := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	conditional.Header.Set("If-None-Match", get.Header().Get("ETag"))
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, conditional)
+	if get.Code != http.StatusOK || response.Code != http.StatusNotModified || response.Body.Len() != 0 {
+		t.Fatal("private alias lost conditional status semantics")
+	}
+}
+
+func TestInstalledProxyAliasSharesPublicAdmission(t *testing.T) {
+	handler, err := NewPublicStatusHandler(staticPublicSource{document: testPublicDocument(t)}, []string{"https://datapan.statpan.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard, err := NewPublicReadGuard(handler, PublicReadLimits{RequestsPerSecond: 1, Burst: 1, MaxConcurrent: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard.now = func() time.Time { return guard.updated }
+	canonical := httptest.NewRecorder()
+	guard.ServeHTTP(canonical, httptest.NewRequest(http.MethodGet, "/datapan/v1/status", nil))
+	alias := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	alias.Header.Set("Origin", "https://datapan.statpan.com")
+	alias.Header.Set("X-Forwarded-For", "new-client")
+	response := httptest.NewRecorder()
+	guard.ServeHTTP(response, alias)
+	if canonical.Code != http.StatusOK || response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "1" || response.Header().Get("Cache-Control") != "no-store" || response.Header().Get("Access-Control-Allow-Origin") != "https://datapan.statpan.com" {
+		t.Fatal("private alias expanded the shared budget or changed overload policy")
+	}
+}
+
 func TestPublicStatusHandlerCORSMatrix(t *testing.T) {
 	handler, err := NewPublicStatusHandler(staticPublicSource{document: testPublicDocument(t)}, []string{"https://datapan.statpan.com"})
 	if err != nil {
