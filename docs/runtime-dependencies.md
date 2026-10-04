@@ -7,6 +7,11 @@ exact install provenance, and agreement with compiled canary pins before any
 provider request. A mismatch keeps `/live` available and `/ready` at 503.
 Runtime deployments must preserve the image's dependency/config paths.
 
+In a CLI receipt, `registry.dataset_id` identifies the immutable distribution
+(`StatPan/datapan-registry`), while `operation.dataset_id` identifies the
+individual provider API dataset. Live admission validates these identities
+separately together with the pinned revision, manifest and catalog hashes.
+
 `config/runtime-dependencies.json` records both published Linux CLI archives and
 binary digests, exact CLI source/release, Registry source and immutable Dataset
 payload/pointer identities. The builder downloads only fixed official GitHub/HF

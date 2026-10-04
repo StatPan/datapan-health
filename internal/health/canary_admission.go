@@ -9,6 +9,7 @@ import (
 // configuration cannot promote a Registry release by changing its claims.
 // Promotion requires review of Registry release evidence and a new image.
 const acceptedCanaryCatalogSHA256 = "827433dec514fa10ebef780ff611f6314b6e1d7270acde81ce6d60ec7a46e27e"
+const acceptedRegistryDatasetID = "StatPan/datapan-registry"
 
 func acceptedCanaryProvenance() ConsumptionProvenance {
 	return ConsumptionProvenance{
@@ -57,7 +58,7 @@ func (c CanaryConfig) AdmitReceipt(r Receipt, now, started time.Time) (string, e
 		return "", AdmissionError("catalog_identity")
 	}
 	p := c.ConsumptionProvenance
-	if r.Registry.DatasetID != entry.Aliases.DatasetID || r.Registry.DatasetRevision != p.RegistryDatasetRevision || r.Registry.RegistrySHA256 != p.SourceRegistrySHA256 || r.Registry.ManifestSHA256 != p.ReleaseManifestSHA256 {
+	if r.Registry.DatasetID != acceptedRegistryDatasetID || r.Registry.DatasetRevision != p.RegistryDatasetRevision || r.Registry.RegistrySHA256 != p.SourceRegistrySHA256 || r.Registry.ManifestSHA256 != p.ReleaseManifestSHA256 {
 		return "", AdmissionError("registry_identity")
 	}
 	if r.Policy == nil || r.Policy.Key != entry.Policy.Key || r.Policy.Version != entry.Policy.Version || r.Policy.Authority != entry.Policy.Authority || r.Policy.MaxLevel != entry.Policy.MaxLevel {

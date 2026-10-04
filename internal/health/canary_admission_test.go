@@ -59,6 +59,34 @@ func TestLiveCanaryAdmissionRejectsMismatchedEvidence(t *testing.T) {
 	}
 }
 
+func TestLiveAdmissionPreservesActualCLIDatasetIdentities(t *testing.T) {
+	config := schedulerConfig(t, 1)
+	var receipt Receipt
+	if err := json.Unmarshal(mustRead(t, "../../testdata/receipts/cli-catalog/v0.1.40-candidate.json"), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	// This unmodified producer receipt uses the distribution identity for
+	// registry.dataset_id and the API identity for operation.dataset_id.
+	if receipt.Registry.DatasetID != "StatPan/datapan-registry" || receipt.Operation.DatasetID == receipt.Registry.DatasetID {
+		t.Fatal("producer fixture no longer distinguishes dataset identities")
+	}
+	if _, err := config.AdmitReceipt(receipt, receipt.ObservedAt, receipt.ObservedAt); err != nil {
+		t.Fatal("actual CLI receipt rejected", err)
+	}
+	for _, wrong := range []string{receipt.Operation.DatasetID, "other/datapan-registry"} {
+		invalid := receipt
+		invalid.Registry.DatasetID = wrong
+		if _, err := config.AdmitReceipt(invalid, receipt.ObservedAt, receipt.ObservedAt); err != AdmissionError("registry_identity") {
+			t.Fatal("incorrect Registry distribution identity admitted", err)
+		}
+	}
+	invalid := receipt
+	invalid.Operation.DatasetID = receipt.Registry.DatasetID
+	if _, err := config.AdmitReceipt(invalid, receipt.ObservedAt, receipt.ObservedAt); err == nil {
+		t.Fatal("Registry identity admitted as a provider operation")
+	}
+}
+
 func TestCanaryConfigRejectsMountedReleaseClaimChanges(t *testing.T) {
 	original := mustRead(t, "../../config/canaries.json")
 	for _, field := range []string{"registry_dataset_revision", "source_registry_sha256", "release_manifest_sha256", "release_tag"} {
