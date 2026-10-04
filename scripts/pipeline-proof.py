@@ -51,7 +51,7 @@ with tempfile.TemporaryDirectory(prefix='health-pipeline-proof-') as directory:
         state = {'version': 1, 'slots': {c['operation_id']: {'last_claimed_slot': 0, 'next_due': at} for c in config['canaries']}}
         (work / 'state.json').write_text(json.dumps(state))
         before_archive, before_journal = lines(archive), lines(journal)
-        cid = command('docker', 'run', '-d', '--read-only', '--network', project + '_default', '-p', '127.0.0.1::8081', '--entrypoint', '/health-scheduler',
+        cid = command('docker', 'run', '-d', '--read-only', '--user', str(os.getuid()) + ':' + str(os.getgid()), '--network', project + '_default', '-p', '127.0.0.1::8081', '--entrypoint', '/health-scheduler',
             '-v', str(root / 'config') + ':/config:ro', '-v', directory + ':/proof',
             '-e', 'CANARY_CONFIG=/config/canaries.json', '-e', 'DATAPAN_BIN=/proof/fake-cli', '-e', 'HEALTH_RUNNER_BIN=/health-runner',
             '-e', 'CLI_RUNTIME_ENV=CANARY_CONFIG,SMOKE_CONTROL_FILE', '-e', 'SMOKE_CONTROL_FILE=/proof/mode',
