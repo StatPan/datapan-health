@@ -94,12 +94,15 @@ func loadArchiveMapper(config Config, configPath string, canaries health.CanaryC
 // never calls live admission or rewrites a receipt to the active release.
 func (m *archiveMapper) canaryFor(receipt health.Receipt) (health.Canary, error) {
 	catalog, known := m.catalogs[receipt.Registry.DatasetRevision]
-	if !known || receipt.Registry.DatasetID != "StatPan/datapan-registry" || receipt.Registry.RegistrySHA256 != catalog.binding.SourceRegistrySHA256 || receipt.Registry.ManifestSHA256 != catalog.binding.ReleaseManifestSHA256 {
+	if !known || receipt.Registry.RegistrySHA256 != catalog.binding.SourceRegistrySHA256 || receipt.Registry.ManifestSHA256 != catalog.binding.ReleaseManifestSHA256 {
 		return health.Canary{}, errors.New("archive receipt Registry identity is not reviewed")
 	}
 	entry, known := catalog.entries[receipt.Operation.OperationKey]
 	if !known || receipt.Operation.DatasetID != entry.Aliases.DatasetID || receipt.Operation.OperationName != entry.Aliases.OperationName || receipt.Operation.Provider != entry.Provider || receipt.Operation.EndpointHost != entry.Endpoint.Host || receipt.Operation.EndpointPath != entry.Endpoint.Path || receipt.Operation.DependencyClass != entry.Endpoint.DependencyClass {
 		return health.Canary{}, errors.New("archive receipt operation identity is not reviewed")
+	}
+	if receipt.Registry.DatasetID != "StatPan/datapan-registry" && !historicalFallback(receipt, entry) {
+		return health.Canary{}, errors.New("archive receipt Registry identity is not reviewed")
 	}
 	if receipt.Policy == nil {
 		// The original v1 contract predates policy fields. Only its exact reviewed
@@ -116,6 +119,38 @@ func (m *archiveMapper) canaryFor(receipt health.Receipt) (health.Canary, error)
 	}
 	m.used[receipt.Registry.DatasetRevision] = catalog.binding
 	return canary, nil
+}
+
+// Health source 8707dd9955b5e5e031b7757d0f8d4cf13d634b4f used the provider
+// alias as registry.dataset_id only in its receiptless fallback constructor.
+// Preserve that exact original failure evidence without rewriting the record or
+// permitting a provider alias for CLI receipts, another release, or healthy data.
+func historicalFallback(receipt health.Receipt, entry health.CatalogEntry) bool {
+	if receipt.Registry.DatasetRevision != "10f375182f992bc700468dd9d6e2930acd3bf8e8" || receipt.Registry.DatasetID != entry.Aliases.DatasetID || receipt.Execution.CLIVersion != "scheduler-receiptless-fallback" || receipt.Policy == nil || !receipt.Execution.Attempted || receipt.Execution.TimeoutMS != int64(entry.Execution.TimeoutCeilingMS) || receipt.Execution.RequestBudget != entry.Execution.RequestBudget {
+		return false
+	}
+	if receipt.Observation.MaxLevel != entry.Policy.MaxLevel || receipt.Observation.HTTPStatus != 0 || receipt.Observation.ProviderCode != "" || receipt.Observation.ProviderMessageClass != "not_observed" || receipt.Observation.SemanticStatus != "" || receipt.Observation.BodyShape != "" || receipt.Observation.DataPresence != "not_observed" || receipt.Observation.SchemaStatus != "not_observed" || receipt.Observation.FreshnessStatus != "not_observed" || receipt.Assessment.Outcome != "indeterminate" || len(receipt.Assessment.NextActions) != 1 || receipt.Assessment.NextActions[0] != "review scheduler and provider evidence" {
+		return false
+	}
+	if !((receipt.Assessment.Category == "timeout" && receipt.Assessment.ReasonCode == "scheduler_timeout_without_cli_receipt" && receipt.Assessment.Retryable) || (receipt.Assessment.Category == "indeterminate" && receipt.Assessment.ReasonCode == "cli_receipt_missing" && !receipt.Assessment.Retryable)) {
+		return false
+	}
+	names := make([]string, 0, len(entry.Execution.SafeParameters))
+	for _, parameter := range entry.Execution.SafeParameters {
+		names = append(names, parameter.Name)
+	}
+	sort.Strings(names)
+	actual := append([]string(nil), receipt.Execution.SafeParameterNames...)
+	sort.Strings(actual)
+	if len(names) != len(actual) {
+		return false
+	}
+	for index, name := range names {
+		if actual[index] != name {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *archiveMapper) inputCatalogs() []RegistryBinding {
