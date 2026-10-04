@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,6 +24,9 @@ func main() {
 	scheduleCoverageMaxAge := flag.Duration("schedule-coverage-max-age", 20*time.Minute, "maximum accepted age for schedule coverage receipt in doctor mode")
 	scheduleCoverageReferenceAt := flag.String("schedule-coverage-reference-at", "", "optional RFC3339 doctor reference time")
 	originList := flag.String("allowed-origins", os.Getenv("PUBLIC_STATUS_ALLOWED_ORIGINS"), "comma-separated exact HTTPS browser origins")
+	readRate := flag.Int("read-rate", envInt("PUBLIC_STATUS_READ_RATE", 20), "global read requests per second")
+	readBurst := flag.Int("read-burst", envInt("PUBLIC_STATUS_READ_BURST", 40), "global read burst")
+	readConcurrent := flag.Int("read-concurrent", envInt("PUBLIC_STATUS_READ_CONCURRENT", 16), "maximum concurrent reads")
 	doctor := flag.Bool("doctor", false, "print value-free service/dependency readiness report and exit")
 	flag.Parse()
 
@@ -59,12 +63,20 @@ func main() {
 		fatal()
 	}
 	origins := splitOrigins(*originList)
-	handler, err := health.NewPublicStatusHandler(publicSource, origins)
+	cachedSource, err := health.NewCachedPublicStatusSource(publicSource, 5*time.Second, 5*time.Second)
+	if err != nil {
+		fatal()
+	}
+	handler, err := health.NewPublicStatusHandler(cachedSource, origins)
 	if err != nil {
 		fatal()
 	}
 
-	server := &http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 * 1024}
+	guard, err := health.NewPublicReadGuard(handler, health.PublicReadLimits{RequestsPerSecond: *readRate, Burst: *readBurst, MaxConcurrent: *readConcurrent})
+	if err != nil {
+		fatal()
+	}
+	server := &http.Server{Addr: *listen, Handler: guard, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 * 1024}
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fatal()
 	}
@@ -91,4 +103,16 @@ func env(key, fallback string) string {
 func fatal() {
 	fmt.Fprintln(os.Stderr, "public status service failed")
 	os.Exit(1)
+}
+
+func envInt(key string, fallback int) int {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		fatal()
+	}
+	return value
 }
