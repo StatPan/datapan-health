@@ -1,0 +1,28 @@
+{
+  "schema_version": "datapan.health-runtime-dependencies.v1",
+  "cli": {
+    "source_sha": "2c6e9842c1b50c901a2361b03dfa445923a13528",
+    "release": "v0.1.40",
+    "linux_binaries": {
+      "amd64": {
+        "archive_sha256": "5e513a99565421efee02def5481bc2b7c0f4cd724ca6e264ca67ac8036372e5a",
+        "binary_sha256": "3f36987e6b4baf3fabec027a7292593eb08009d1bf827e73dad888f29951560a"
+      },
+      "arm64": {
+        "archive_sha256": "1fe9209a0ba251910073197c34cad0623c9f01e0d995ad115b536ad4ac3a5bb0",
+        "binary_sha256": "bb0b60a75a0769dfbe2108721ff49b9c318a3c9861062d9144236562c5fa6b29"
+      }
+    }
+  },
+  "registry": {
+    "dataset_revision": "1715bb67c11f97a601c85b9f2a3c45ff50968224",
+    "distribution_revision": "d7dba637a06e345cba7ae058cba96fe53d3e532b",
+    "distribution_manifest_sha256": "5d0e6c7a7f2bb4069bf9eb46489764354974ba4ba11eac5943d48b5e552d6dbf",
+    "source_sha": "71bb7628daeed352b7a85cb013bc17e7a9eb7457",
+    "source_registry_sha256": "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0",
+    "manifest_sha256": "d63b22b378a3af30564fea5f8a39fcd96b2c4b4f76392ec0f7c191652a58d2b5",
+    "catalog_sha256": "0503ddd9c93c31781c7920ccccdaf55aa5f3ed7e8061cb7dd16f0d8eb95611d2",
+    "release_tag": "1715bb67c11f97a601c85b9f2a3c45ff50968224",
+    "acquired_at": "2026-10-05T23:01:57Z"
+  }
+}
