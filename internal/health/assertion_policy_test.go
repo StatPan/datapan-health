@@ -11,7 +11,7 @@ import (
 )
 
 const assertionPolicyPinPath = "../../config/registry/assertion-policy-contract-pin.json"
-const assertionPolicyOperationOneRevision = "3ef6296cd2e2c0d568523f0474f8806cd607b8b6e4fd605ef491af78700793a4"
+const assertionPolicyOperationOneRevision = "23609debca35ce3b447b5da7e6b56a0cbe00bc8df9c59d12a4c4db2c1d120ef1"
 
 var assertionPolicyAssessedAt = time.Date(2026, 7, 17, 0, 15, 0, 0, time.UTC)
 

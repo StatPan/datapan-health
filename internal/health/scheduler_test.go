@@ -63,7 +63,7 @@ func fixtureForEntry(raw []byte, entry CatalogEntry) []byte {
 		panic(err)
 	}
 	receipt.ObservedAt = time.Now().UTC()
-	receipt.Registry = Registry{DatasetID: entry.Aliases.DatasetID, DatasetRevision: acceptedCanaryProvenance().RegistryDatasetRevision, RegistrySHA256: acceptedCanaryProvenance().SourceRegistrySHA256, ManifestSHA256: acceptedCanaryProvenance().ReleaseManifestSHA256}
+	receipt.Registry = Registry{DatasetID: "StatPan/datapan-registry", DatasetRevision: acceptedCanaryProvenance().RegistryDatasetRevision, RegistrySHA256: acceptedCanaryProvenance().SourceRegistrySHA256, ManifestSHA256: acceptedCanaryProvenance().ReleaseManifestSHA256}
 	receipt.Policy = &Policy{Key: entry.Policy.Key, Version: entry.Policy.Version, Authority: entry.Policy.Authority, MaxLevel: entry.Policy.MaxLevel}
 	receipt.Operation.OperationKey = entry.Aliases.CLIOperationKey
 	receipt.Operation.DatasetID = entry.Aliases.DatasetID
@@ -492,7 +492,7 @@ func TestSchedulerFailsWithoutProviderWorkWhenReceiptBoundaryIsUnavailable(t *te
 
 func TestReviewedCatalogContainsTenBoundedCanaries(t *testing.T) {
 	config := schedulerConfig(t, 2)
-	if config.ConsumptionProvenance.RegistryDatasetRevision != "10f375182f992bc700468dd9d6e2930acd3bf8e8" || config.ConsumptionProvenance.SourceRegistrySHA256 != "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644" || config.ConsumptionProvenance.ReleaseTag != "v2026.07.14" || config.ConsumptionProvenance.ReleaseManifestSHA256 != "0b78c286b8cfa889ddccf51f83a9d8adc4eac8617ea6d9fd2d66d1fcf668281f" {
+	if config.ConsumptionProvenance.RegistryDatasetRevision != "1715bb67c11f97a601c85b9f2a3c45ff50968224" || config.ConsumptionProvenance.SourceRegistrySHA256 != "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0" || config.ConsumptionProvenance.ReleaseTag != "1715bb67c11f97a601c85b9f2a3c45ff50968224" || config.ConsumptionProvenance.ReleaseManifestSHA256 != "d63b22b378a3af30564fea5f8a39fcd96b2c4b4f76392ec0f7c191652a58d2b5" {
 		t.Fatalf("immutable Registry consumption provenance changed: %#v", config.ConsumptionProvenance)
 	}
 	if config.ConsumptionProvenance.SourceRegistrySHA256 != config.catalog.SourceRegistry.SHA256 || config.ConsumptionProvenance.RegistryDatasetRevision == config.ConsumptionProvenance.SourceRegistrySHA256 {
@@ -509,7 +509,7 @@ func TestReviewedCatalogContainsTenBoundedCanaries(t *testing.T) {
 		}
 		classes[entry.Endpoint.DependencyClass]++
 	}
-	if classes["data_go_kr_gateway"] != 5 || classes["external_endpoint"] != 5 {
+	if classes["data_go_kr_gateway"] != 6 || classes["external_endpoint"] != 4 {
 		t.Fatalf("routing coverage changed: %#v", classes)
 	}
 }

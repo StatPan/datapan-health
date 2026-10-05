@@ -36,7 +36,7 @@ func TestAdapterRejectsBeforeArchiveAndGatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	base.Registry = health.Registry{DatasetID: entry.Aliases.DatasetID, DatasetRevision: config.ConsumptionProvenance.RegistryDatasetRevision, RegistrySHA256: config.ConsumptionProvenance.SourceRegistrySHA256, ManifestSHA256: config.ConsumptionProvenance.ReleaseManifestSHA256}
+	base.Registry = health.Registry{DatasetID: "StatPan/datapan-registry", DatasetRevision: config.ConsumptionProvenance.RegistryDatasetRevision, RegistrySHA256: config.ConsumptionProvenance.SourceRegistrySHA256, ManifestSHA256: config.ConsumptionProvenance.ReleaseManifestSHA256}
 	base.Policy = &health.Policy{Key: entry.Policy.Key, Version: entry.Policy.Version, Authority: entry.Policy.Authority, MaxLevel: entry.Policy.MaxLevel}
 	var posts atomic.Int32
 	var reject atomic.Bool

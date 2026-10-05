@@ -8,14 +8,15 @@ import (
 // These pins are compiled into the reviewed consumer image. A mutable mounted
 // configuration cannot promote a Registry release by changing its claims.
 // Promotion requires review of Registry release evidence and a new image.
-const acceptedCanaryCatalogSHA256 = "e84f0da2f532a32833def1118a4610bf2322f370783d120b84cf85306d244840"
+const acceptedCanaryCatalogSHA256 = "0503ddd9c93c31781c7920ccccdaf55aa5f3ed7e8061cb7dd16f0d8eb95611d2"
+const acceptedRegistryDatasetID = "StatPan/datapan-registry"
 
 func acceptedCanaryProvenance() ConsumptionProvenance {
 	return ConsumptionProvenance{
-		RegistryDatasetRevision: "10f375182f992bc700468dd9d6e2930acd3bf8e8",
-		SourceRegistrySHA256:    "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
-		ReleaseTag:              "v2026.07.14",
-		ReleaseManifestSHA256:   "0b78c286b8cfa889ddccf51f83a9d8adc4eac8617ea6d9fd2d66d1fcf668281f",
+		RegistryDatasetRevision: "1715bb67c11f97a601c85b9f2a3c45ff50968224",
+		SourceRegistrySHA256:    "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0",
+		ReleaseTag:              "1715bb67c11f97a601c85b9f2a3c45ff50968224",
+		ReleaseManifestSHA256:   "d63b22b378a3af30564fea5f8a39fcd96b2c4b4f76392ec0f7c191652a58d2b5",
 	}
 }
 
@@ -57,7 +58,7 @@ func (c CanaryConfig) AdmitReceipt(r Receipt, now, started time.Time) (string, e
 		return "", AdmissionError("catalog_identity")
 	}
 	p := c.ConsumptionProvenance
-	if r.Registry.DatasetID != entry.Aliases.DatasetID || r.Registry.DatasetRevision != p.RegistryDatasetRevision || r.Registry.RegistrySHA256 != p.SourceRegistrySHA256 || r.Registry.ManifestSHA256 != p.ReleaseManifestSHA256 {
+	if r.Registry.DatasetID != acceptedRegistryDatasetID || r.Registry.DatasetRevision != p.RegistryDatasetRevision || r.Registry.RegistrySHA256 != p.SourceRegistrySHA256 || r.Registry.ManifestSHA256 != p.ReleaseManifestSHA256 {
 		return "", AdmissionError("registry_identity")
 	}
 	if r.Policy == nil || r.Policy.Key != entry.Policy.Key || r.Policy.Version != entry.Policy.Version || r.Policy.Authority != entry.Policy.Authority || r.Policy.MaxLevel != entry.Policy.MaxLevel {

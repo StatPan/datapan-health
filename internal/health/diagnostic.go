@@ -24,8 +24,8 @@ const (
 	AcceptedDiagnosticSchemaSHA256       = "da254b40947462347fcda90fdd7686b6632c76943b438f2046a28f079f33e403"
 	AcceptedDiagnosticMappingSHA256      = "da55d52d2ee1f197969ac63a1d5ab5b98e3b88fd65f90d6a48800d2e3c522d33"
 	AcceptedDiagnosticConsumerSHA256     = "e831df46e50107c116132f423525af5b1ea8c9743c014956a2fc3732077db70c"
-	AcceptedDiagnosticTestManifestSHA256 = "ab32650951a1811823d93171e9b25aab2bfd734ee8dbd796679f481448ec9680"
-	AcceptedHealthProbeCatalogSHA256     = "e84f0da2f532a32833def1118a4610bf2322f370783d120b84cf85306d244840"
+	AcceptedDiagnosticTestManifestSHA256 = "ddad89eb4b32f4994093fb705cf6c6473ffe1887e5939c42872435e31c3382ab"
+	AcceptedHealthProbeCatalogSHA256     = "0503ddd9c93c31781c7920ccccdaf55aa5f3ed7e8061cb7dd16f0d8eb95611d2"
 	maxDiagnosticEnvelopeBytes           = 256 * 1024
 	mappingSchemaVersion                 = "datapan.data-go-kr-diagnostic-evidence-mapping.v1"
 	consumerCompatibilitySchemaVersion   = "datapan.diagnostic-consumer-compatibility.v1"

@@ -59,6 +59,67 @@ func TestLiveCanaryAdmissionRejectsMismatchedEvidence(t *testing.T) {
 	}
 }
 
+func TestLiveAdmissionPreservesActualCLIDatasetIdentities(t *testing.T) {
+	config := schedulerConfig(t, 1)
+	var receipt Receipt
+	if err := json.Unmarshal(mustRead(t, "../../testdata/receipts/cli-catalog/v0.1.40-candidate.json"), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	// This unmodified producer receipt uses the distribution identity for
+	// registry.dataset_id and the API identity for operation.dataset_id.
+	if receipt.Registry.DatasetID != "StatPan/datapan-registry" || receipt.Operation.DatasetID == receipt.Registry.DatasetID {
+		t.Fatal("producer fixture no longer distinguishes dataset identities")
+	}
+	if _, err := config.AdmitReceipt(receipt, receipt.ObservedAt, receipt.ObservedAt); err != nil {
+		t.Fatal("actual CLI receipt rejected", err)
+	}
+	for _, wrong := range []string{receipt.Operation.DatasetID, "other/datapan-registry"} {
+		invalid := receipt
+		invalid.Registry.DatasetID = wrong
+		if _, err := config.AdmitReceipt(invalid, receipt.ObservedAt, receipt.ObservedAt); err != AdmissionError("registry_identity") {
+			t.Fatal("incorrect Registry distribution identity admitted", err)
+		}
+	}
+	invalid := receipt
+	invalid.Operation.DatasetID = receipt.Registry.DatasetID
+	if _, err := config.AdmitReceipt(invalid, receipt.ObservedAt, receipt.ObservedAt); err == nil {
+		t.Fatal("Registry identity admitted as a provider operation")
+	}
+}
+
+func TestSISULGatewayAdmissionPreservesVersionedSelection(t *testing.T) {
+	config := schedulerConfig(t, 10)
+	var receipt Receipt
+	if err := json.Unmarshal(mustRead(t, "../../testdata/receipts/cli-catalog/v0.1.40-sisul-gateway-candidate.json"), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	canary, err := config.CanaryFor(receipt)
+	if err != nil || canary.OperationID != "dpr-op-00000009" || receipt.Policy == nil || receipt.Policy.Version != 2 || receipt.Operation.DatasetID != "15158559" {
+		t.Fatal("producer fixture does not identify the reviewed SISUL gateway selection")
+	}
+	if _, err := config.AdmitReceipt(receipt, receipt.ObservedAt, receipt.ObservedAt); err != nil {
+		t.Fatal("actual gateway producer receipt rejected", err)
+	}
+	for _, priorIdentity := range []string{"policy_version", "api_dataset", "registry_revision"} {
+		t.Run(priorIdentity, func(t *testing.T) {
+			invalid := receipt
+			policy := *receipt.Policy
+			invalid.Policy = &policy
+			switch priorIdentity {
+			case "policy_version":
+				invalid.Policy.Version = 1
+			case "api_dataset":
+				invalid.Operation.DatasetID = "15109030"
+			case "registry_revision":
+				invalid.Registry.DatasetRevision = "247975f0ba5872cb84d22f007fc4b8a934539b7b"
+			}
+			if _, err := config.AdmitReceipt(invalid, invalid.ObservedAt, invalid.ObservedAt); err == nil {
+				t.Fatal("previous selection accepted as a current gateway result")
+			}
+		})
+	}
+}
+
 func TestCanaryConfigRejectsMountedReleaseClaimChanges(t *testing.T) {
 	original := mustRead(t, "../../config/canaries.json")
 	for _, field := range []string{"registry_dataset_revision", "source_registry_sha256", "release_manifest_sha256", "release_tag"} {

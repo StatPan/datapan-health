@@ -19,12 +19,12 @@ const (
 	AssertionPolicyPinVersion                = "datapan.health-assertion-policy-contract-pin.v1"
 	AssertionPolicySchemaVersion             = "datapan.operation-assertion-policies.v1"
 	AssertionEvaluationSchemaVersion         = "datapan.health-assertion-evaluation.v1"
-	AcceptedAssertionRegistryRevision        = "f90d2d62258e50d562ff08b993c75bc0a4dad6fa"
+	AcceptedAssertionRegistryRevision        = "71bb7628daeed352b7a85cb013bc17e7a9eb7457"
 	AcceptedAssertionSchemaSHA256            = "a934fe244eeedbed23914ba1230d612b68656f9dc97803c747cf9f29c46c0446"
-	AcceptedAssertionPolicyFileSHA256        = "62d54df23a55dc529b60947c944bebef82f6697f44472ae0f20c2a06781704e6"
-	AcceptedAssertionPolicyArtifactSHA256    = "d9b39f40e2068180cf46ebf8eca2037aeff19523b76f648bb06666758ed8c1d3"
-	AcceptedAssertionReferenceProofSHA256    = "edd7ab5c63c39c30801bd145e5dfc521f9910542da2f3b766ef2928e1a5841d2"
-	AcceptedAssertionReleaseCandidateSHA256  = "82bc523016abfa356f931e5786af9714ca544d83a26a515830471f242705a466"
+	AcceptedAssertionPolicyFileSHA256        = "371c12de273370c6e8da4acd46f10d7c0ba4715068df7cae851bc9acdff992aa"
+	AcceptedAssertionPolicyArtifactSHA256    = "7bbbdfea0952448fefb7f04d33a0c66c05a01309b4d97d00787efd3f055668e1"
+	AcceptedAssertionReferenceProofSHA256    = "3ab855d1e83fa8915a3975fefae9f114d658062b7f0c6af3a3fc637ec2852e3c"
+	AcceptedAssertionReleaseCandidateSHA256  = "87c783df673abc5a9a45137aec537b57596b526653e64eaf7679fca1a15a8661"
 	AcceptedAssertionDiagnosticVocabularySHA = "aa03c42960a59725b829b934ad07548dacb8f149c7a920a35a9e32c0459b49fc"
 	acceptedAssertionPolicyPath              = "drafts/operation-assertion-policies/operation-assertion-policies.v1.json"
 	acceptedAssertionPolicySetID             = "datapan-health-canary-assertions"
@@ -230,7 +230,7 @@ func LoadAssertionPolicyContract(path string, canaries CanaryConfig) (AssertionP
 }
 
 func validateAssertionPolicyDocument(policy assertionPolicyDocument, canaries CanaryConfig) error {
-	if policy.SchemaVersion != AssertionPolicySchemaVersion || policy.Authority != "datapan-registry" || policy.ArtifactSHA256 != AcceptedAssertionPolicyArtifactSHA256 || policy.PolicySet.ID != acceptedAssertionPolicySetID || policy.PolicySet.Version != acceptedAssertionPolicySetVersion || policy.PolicySet.Supersedes != nil || policy.Bindings.Registry.SHA256 != "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644" || policy.Bindings.HealthProbeCatalog.SHA256 != AcceptedHealthProbeCatalogSHA256 || policy.Bindings.HealthProbeCatalog.SHA256 != canaries.CatalogSHA256 || policy.DiagnosticVocabulary.SHA256 != AcceptedAssertionDiagnosticVocabularySHA {
+	if policy.SchemaVersion != AssertionPolicySchemaVersion || policy.Authority != "datapan-registry" || policy.ArtifactSHA256 != AcceptedAssertionPolicyArtifactSHA256 || policy.PolicySet.ID != acceptedAssertionPolicySetID || policy.PolicySet.Version != acceptedAssertionPolicySetVersion || policy.PolicySet.Supersedes != nil || policy.Bindings.Registry.SHA256 != "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0" || policy.Bindings.HealthProbeCatalog.SHA256 != AcceptedHealthProbeCatalogSHA256 || policy.Bindings.HealthProbeCatalog.SHA256 != canaries.CatalogSHA256 || policy.DiagnosticVocabulary.SHA256 != AcceptedAssertionDiagnosticVocabularySHA {
 		return errors.New("unsupported assertion policy document")
 	}
 	if len(policy.Operations) != len(canaries.Canaries) {
@@ -282,7 +282,7 @@ func validAssertionDimensions(dimensions struct {
 	if contract.State != "asserted" || contract.AssertionType != "declared_response_field_vocabulary" || contract.ProjectionInput != "normalized_leaf_field_names" || contract.UnknownFieldPolicy != "fail" || contract.EmptyPayloadPolicy != "not_observed" || len(contract.DeclaredResponseFields) == 0 || contract.Evidence == nil {
 		return false
 	}
-	if contract.Evidence.Kind != "registry_operation_contract" || contract.Evidence.Path != "data/data-go-kr.registry.json" || contract.Evidence.SHA256 != "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644" || contract.Evidence.Selector.DatasetID != entry.Aliases.DatasetID || contract.Evidence.Selector.OperationName != entry.Aliases.OperationName {
+	if contract.Evidence.Kind != "registry_operation_contract" || contract.Evidence.Path != "data/data-go-kr.registry.json" || contract.Evidence.SHA256 != "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0" || contract.Evidence.Selector.DatasetID != entry.Aliases.DatasetID || contract.Evidence.Selector.OperationName != entry.Aliases.OperationName {
 		return false
 	}
 	return uniqueSafeFields(contract.DeclaredResponseFields)
@@ -320,7 +320,7 @@ func validateAssertionReleaseCandidate(raw []byte) error {
 		"drafts/operation-assertion-policies/datapan.operation-assertion-policies.v1.schema.json": AcceptedAssertionSchemaSHA256,
 		acceptedAssertionPolicyPath: AcceptedAssertionPolicyFileSHA256,
 		"fixtures/operation-assertion-policies/datapan-health-consumer-proof.v1.json": AcceptedAssertionReferenceProofSHA256,
-		"drafts/operation-assertion-policies/release-manifest.v1.json":                "282b17459c91c9c3a921eaed3eebf85c59bfca02057e44f36269ba3c59545338",
+		"drafts/operation-assertion-policies/release-manifest.v1.json":                "3b0e016a4a104f5591f8aaec8f711654bb8058363f3067396bc85a165db078a6",
 	}
 	for _, binding := range candidate.Bindings {
 		if expected[binding.Path] != binding.SHA256 {

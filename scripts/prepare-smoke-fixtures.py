@@ -13,7 +13,7 @@ for name in ('healthy.json', 'unhealthy.json'):
     receipt = json.loads((root / 'testdata/receipts/v1' / name).read_text())
     entry = next(item for item in catalog['entries'] if item['aliases']['cli_operation_key'] == receipt['operation']['operation_key'])
     provenance = config['consumption_provenance']
-    receipt['registry'] = dict(dataset_id=entry['aliases']['dataset_id'], dataset_revision=provenance['registry_dataset_revision'], registry_sha256=provenance['source_registry_sha256'], manifest_sha256=provenance['release_manifest_sha256'])
+    receipt['registry'] = dict(dataset_id='StatPan/datapan-registry', dataset_revision=provenance['registry_dataset_revision'], registry_sha256=provenance['source_registry_sha256'], manifest_sha256=provenance['release_manifest_sha256'])
     receipt['policy'] = entry['policy']
     receipt['observed_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     (output / name).write_text(json.dumps(receipt))

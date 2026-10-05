@@ -151,8 +151,8 @@ func TestSignedTenCanaryReleaseHasExactPublicMappingAndCadence(t *testing.T) {
 		}
 		classes[entry.Endpoint.DependencyClass]++
 	}
-	if classes["data_go_kr_gateway"] != 5 || classes["external_endpoint"] != 5 {
-		t.Fatalf("expected five gateway and five external adapter canaries: %#v", classes)
+	if classes["data_go_kr_gateway"] != 6 || classes["external_endpoint"] != 4 {
+		t.Fatalf("expected six gateway and four external adapter canaries: %#v", classes)
 	}
 }
 

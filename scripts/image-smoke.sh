@@ -21,20 +21,27 @@ docker run --rm --entrypoint /health-runner "$runtime_image" -h >/dev/null
 docker run --rm --entrypoint /health-public "$runtime_image" -h >/dev/null
 docker run --rm --entrypoint /health-archive "$archive_image" -h >/dev/null
 docker run --rm --entrypoint hf "$archive_image" --help >/dev/null
+"$root/scripts/verify-runtime-dependencies.sh" "$runtime_image"
 
-# Live image inventory is intentionally limited to the two live binaries.
+# Live inventory includes the reviewed minimal CLI bundle and verifier.
 runtime_container=$(docker create "$runtime_image")
 docker export "$runtime_container" > "$work/runtime.tar"
 docker rm "$runtime_container" >/dev/null
 tar -tf "$work/runtime.tar" | grep -qx 'health-runner'
 tar -tf "$work/runtime.tar" | grep -qx 'health-scheduler'
 tar -tf "$work/runtime.tar" | grep -qx 'health-public'
+tar -tf "$work/runtime.tar" | grep -qx 'health-runtime-dependencies'
+tar -tf "$work/runtime.tar" | grep -qx 'opt/datapan-cli/datapan'
+if tar -tf "$work/runtime.tar" | grep -Eq '^opt/datapan-cli/\.datapan/data-go-kr\.registry\.json$'; then
+  echo "canonical source snapshot must not enter the live image" >&2
+  exit 1
+fi
 if tar -tf "$work/runtime.tar" | grep -Eq '(^|/)health-archive$|(^|/)hf$'; then
   echo "archive publication tooling leaked into the live image" >&2
   exit 1
 fi
 
-# A live but unready scheduler without a CLI proves failure-aware startup.
+# A live but unready scheduler without delivery credentials proves startup.
 # No provider or publication work is allowed in this fixture.
 scheduler_id=$(docker run -d --entrypoint /health-scheduler -p 127.0.0.1::8081 \
   -e CANARY_CONFIG=/config/canaries.json \

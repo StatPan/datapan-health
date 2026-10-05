@@ -1,11 +1,11 @@
 {
   "catalog_path": "registry/health-probe-catalog.json",
-  "catalog_sha256": "e84f0da2f532a32833def1118a4610bf2322f370783d120b84cf85306d244840",
+  "catalog_sha256": "0503ddd9c93c31781c7920ccccdaf55aa5f3ed7e8061cb7dd16f0d8eb95611d2",
   "consumption_provenance": {
-    "registry_dataset_revision": "10f375182f992bc700468dd9d6e2930acd3bf8e8",
-    "source_registry_sha256": "eeda72ee8590f458de8d75703662578e80edf3e61282f0e5e67547c4f6e5f644",
-    "release_tag": "v2026.07.14",
-    "release_manifest_sha256": "0b78c286b8cfa889ddccf51f83a9d8adc4eac8617ea6d9fd2d66d1fcf668281f"
+    "registry_dataset_revision": "1715bb67c11f97a601c85b9f2a3c45ff50968224",
+    "source_registry_sha256": "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0",
+    "release_tag": "1715bb67c11f97a601c85b9f2a3c45ff50968224",
+    "release_manifest_sha256": "d63b22b378a3af30564fea5f8a39fcd96b2c4b4f76392ec0f7c191652a58d2b5"
   },
   "global_concurrency": 2,
   "jitter_seconds": 30,

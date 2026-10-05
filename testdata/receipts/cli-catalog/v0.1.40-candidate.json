@@ -1,0 +1,59 @@
+{
+  "schema_version": "datapan.health-probe.v1",
+  "probe_id": "75ed5549-2efc-4e8b-9ef7-31bd3fd28303",
+  "observed_at": "2026-10-04T20:40:03Z",
+  "operation": {
+    "operation_key": "472283c645233f09e0285a651fecc659dcbc70d09095e7c20fe590389df5af4d",
+    "dataset_id": "15000480",
+    "operation_name": "명절 비상진료기관 FullData 내려받기목록정보 조회",
+    "provider": "data.go.kr",
+    "endpoint_host": "apis.data.go.kr",
+    "endpoint_path": "/B552657/HolidyEmgncClnicInsttInfoInqireService/getHolidyClnicPosblEgytFullDown",
+    "dependency_class": "data_go_kr_gateway"
+  },
+  "registry": {
+    "dataset_id": "StatPan/datapan-registry",
+    "dataset_revision": "1715bb67c11f97a601c85b9f2a3c45ff50968224",
+    "registry_sha256": "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0",
+    "manifest_sha256": "d63b22b378a3af30564fea5f8a39fcd96b2c4b4f76392ec0f7c191652a58d2b5"
+  },
+  "policy": {
+    "key": "dpr-op-00000001",
+    "version": 1,
+    "authority": "datapan-registry",
+    "max_level": "L4"
+  },
+  "execution": {
+    "cli_version": "v0.1.40",
+    "attempted": true,
+    "timeout_ms": 10000,
+    "request_budget": 1,
+    "safe_parameter_names": [
+      "numOfRows",
+      "pageNo"
+    ]
+  },
+  "observation": {
+    "max_level": "L4",
+    "latency_ms": 2,
+    "http_status": 200,
+    "provider_code": "00",
+    "provider_message_class": "resultCode/resultMsg",
+    "semantic_status": "provider_ok",
+    "body_shape": "xml",
+    "data_presence": "indeterminate",
+    "schema_status": "not_observed",
+    "freshness_status": "not_observed"
+  },
+  "assessment": {
+    "outcome": "healthy",
+    "category": "healthy",
+    "retryable": false,
+    "reason_code": "provider_ok"
+  },
+  "redaction": {
+    "credentials_removed": true,
+    "query_values_removed": true,
+    "response_rows_removed": true
+  }
+}

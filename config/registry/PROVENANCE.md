@@ -1,22 +1,37 @@
 # Pinned Registry probe catalog
 
-This is the signed, manifest-bound `datapan.health-probe-catalog.v1` artifact
-from `StatPan/datapan-registry` release `v2026.07.14`, tag commit
-`d4171c303aa57845f6d6764c192e746bde7401e3` (catalog source commit
-`b49d66b97d8155c34649f4dd2040b884c4212d64`). The release zip SHA-256 is
-`f6aec27c5a73cd9087bdf620d49d3a2ede5f47838effe8d736672ebf504c06e2` and
-the immutable Dataset revision is `10f375182f992bc700468dd9d6e2930acd3bf8e8`.
+The live catalog is the exact anonymous readback from immutable Hugging Face
+Dataset payload revision `1715bb67c11f97a601c85b9f2a3c45ff50968224`.
+Registry PR #727 merged source `71bb7628daeed352b7a85cb013bc17e7a9eb7457`;
+publication run [37231785611](https://github.com/StatPan/datapan-registry/actions/runs/37231785611)
+verified 196 artifacts and recorded exact source/workflow binding.
+The distribution pointer revision is `d7dba637a06e345cba7ae058cba96fe53d3e532b`.
 
-The scheduler verifies the vendored artifact SHA-256 from `config/canaries.json`
-before it starts. The local artifact SHA-256 is
-`e84f0da2f532a32833def1118a4610bf2322f370783d120b84cf85306d244840`; this
-pin deliberately covers the exact reviewed projection.
-`config/canaries.json` separately pins the immutable Dataset revision, source
-Registry SHA-256, release tag and release-manifest SHA-256. These identifiers
-must not be collapsed: public archive `registry_revision` is the Dataset
-revision, while the source SHA is only the signed catalog-input identity.
-It only uses operation identity and policy metadata from this artifact; no
-credential value, query value, response row, or mutable receipt is vendored.
+- Catalog SHA-256: `0503ddd9c93c31781c7920ccccdaf55aa5f3ed7e8061cb7dd16f0d8eb95611d2`.
+- Release manifest SHA-256: `d63b22b378a3af30564fea5f8a39fcd96b2c4b4f76392ec0f7c191652a58d2b5`.
+- Canonical source SHA-256: `0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0`.
+- Distribution manifest SHA-256: `5d0e6c7a7f2bb4069bf9eb46489764354974ba4ba11eac5943d48b5e552d6dbf`.
+
+Health consumes the published bytes and checks compiled admission pins; mutable
+configuration claims cannot promote another release. The HF install release tag
+is the exact payload revision, not an invented dated GitHub release tag.
+The ten operation IDs, schedules, budgets and credential policy remain bound to
+Registry authority. Endpoint scheme is explicit; KORAD's corrected method keeps
+its original source path and official specification provenance. SISUL policy
+version 2 selects current official gateway dataset 15158559, operation 69640.
+Registry #724/#727 records the exact static selection provenance and retains
+both canonical records and previous failures. This migration does not assert
+official retirement, service entitlement or live provider health; old-version
+observations cannot become current healthy evidence.
+
+The assertion policy, reference model and release candidate are exact bytes from
+the same merged Registry source (not HF-published release artifacts). Their
+individual file and embedded policy identities are pinned by `assertion-policy-contract-pin.json` and compiled code.
+Correlation and diagnosis snapshot bindings use this new catalog/policy tuple;
+stale snapshots fail closed. This refresh grants no runtime deployment authority.
+The diagnostic inputs and operation-manifest receipt below retain their separate
+historical compatibility/denominator authority; this rollout does not promote a
+new full-population manifest or change archive publication.
 
 ## M003 diagnostic compatibility inputs
 
@@ -32,7 +47,7 @@ schema, mapping, and consumer-packet SHA-256 values are respectively:
 
 `diagnostic-test-manifest.json` is a Health-owned, non-self-referential proof
 input with SHA-256
-`274d394133eb90fe5553bb47947644d45f338ad2e193345e13759f7bb9e2619b`.
+`ddad89eb4b32f4994093fb705cf6c6473ffe1887e5939c42872435e31c3382ab`.
 It pins the exact compatibility test names and the source digests for
 `internal/health/diagnostic_test.go` and the preserved v1 compatibility test in
 `internal/health/health_test.go`. The receipt generator validates those bytes
