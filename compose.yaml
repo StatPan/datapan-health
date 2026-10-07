@@ -71,6 +71,7 @@ services:
     environment:
       CANARY_CONFIG: /config/canaries.json
       SCHEDULER_STATE: /data/scheduler-state.json
+      HEALTH_OPERATION_ATTEMPT_STATE: /operation-attempts
       # Local smoke deliberately has no CLI credentials or executable. It only
       # checks startup/readiness; it can never call a real provider.
       DATAPAN_BIN: /not-a-cli
@@ -78,6 +79,7 @@ services:
     volumes:
       - ./config:/config:ro
       - scheduler-data:/data
+      - operation-attempt-data:/operation-attempts
     ports:
       - "127.0.0.1:8081:8081"
 
@@ -92,9 +94,11 @@ services:
       REGISTRY_API_METADATA_PIN: /config/registry/api-metadata-source-pin.v1.json
       GATUS_STATUS_URL: http://gatus:8080/api/v1/endpoints/statuses
       HEALTH_SELF_READINESS_URL: http://scheduler:8081/status
+      HEALTH_OPERATION_ATTEMPT_STATE: /operation-attempts
       PUBLIC_STATUS_ALLOWED_ORIGINS: https://datapan.statpan.com
     volumes:
       - ./config:/config:ro
+      - operation-attempt-data:/operation-attempts:ro
     ports:
       - "127.0.0.1:8082:8082"
     depends_on:
@@ -104,3 +108,4 @@ services:
 volumes:
   receipt-data:
   scheduler-data:
+  operation-attempt-data:
