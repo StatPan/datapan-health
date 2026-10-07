@@ -80,7 +80,26 @@ type OperationHistoryRecord struct {
 // OperationHistoryReservation is an opaque capability returned by Reserve.
 // It reserves worst-case record capacity before provider dispatch; callers
 // must not derive or persist their own token values.
-type OperationHistoryReservation string
+type OperationHistoryReservation struct {
+	identityID string
+}
+
+func (reservation OperationHistoryReservation) Matches(identity OperationHistoryIdentity) bool {
+	identityID, err := operationHistoryIdentityKey(identity)
+	return err == nil && reservation.identityID != "" && reservation.identityID == identityID
+}
+
+func operationHistoryIdentityKey(identity OperationHistoryIdentity) (string, error) {
+	if err := identity.Validate(); err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(identity)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:]), nil
+}
 
 type OperationHistoryRecordRef struct {
 	RecordID   string    `json:"record_id"`
@@ -90,13 +109,15 @@ type OperationHistoryRecordRef struct {
 
 // OperationHistoryAppender separates the synchronous local durability gate
 // from later asynchronous archive publication. Reserve must run after the
-// attempt generation is known and before provider dispatch. AppendValidated
-// is called only after strict CLI receipt validation succeeds. Cancel is safe
-// only when no provider request was started.
+// attempt generation is known and before provider dispatch. If Reserve returns
+// an error with a nonzero token, the caller must not dispatch and may cancel
+// that pre-dispatch reservation. AppendValidated is called only after strict
+// CLI receipt validation succeeds. Cancel is safe only when no provider
+// request was started.
 type OperationHistoryAppender interface {
 	Reserve(context.Context, OperationHistoryIdentity) (OperationHistoryReservation, error)
 	AppendValidated(context.Context, OperationHistoryReservation, OperationHistoryRecord) (OperationHistoryRecordRef, error)
-	CancelReservation(context.Context, OperationHistoryReservation) error
+	CancelReservation(context.Context, OperationHistoryIdentity, OperationHistoryReservation) error
 }
 
 // OperationHistoryRecordValidator is the trusted schema-aware boundary used
