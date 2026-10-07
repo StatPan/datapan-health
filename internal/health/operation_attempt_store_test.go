@@ -220,6 +220,34 @@ func TestOperationAttemptIdentityBatchSnapshotTracksExternalAtomicReplacement(t 
 	}
 }
 
+func TestOperationAttemptStoreReadOnlyModeDoesNotCreateOrMutate(t *testing.T) {
+	root := t.TempDir()
+	writer, err := OpenOperationAttemptStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readOnly, err := OpenReadOnlyOperationAttemptStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 7, 5, 15, 0, 0, time.UTC)
+	binding := testOperationAttemptBinding()
+	if _, err := writer.BeginAttempt(binding, strings.Repeat("9", 64), now, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	identity := OperationAttemptIdentity{SourceID: binding.SourceID, OperationID: binding.OperationID}
+	attempts, err := readOnly.SnapshotReadModelAttemptsForIdentities([]OperationAttemptIdentity{identity})
+	if err != nil || len(attempts) != 1 || attempts[0].AttemptState != "claimed" {
+		t.Fatalf("read-only store could not read the persisted claim: %#v %v", attempts, err)
+	}
+	if _, err := readOnly.BeginAttempt(binding, strings.Repeat("a", 64), now.Add(time.Second), time.Minute); !errors.Is(err, ErrOperationAttemptUnavailable) {
+		t.Fatalf("read-only store accepted a writer claim: %v", err)
+	}
+	if _, err := OpenReadOnlyOperationAttemptStore(filepath.Join(root, "missing")); !errors.Is(err, ErrOperationAttemptUnavailable) {
+		t.Fatalf("read-only store created a missing directory: %v", err)
+	}
+}
+
 func TestOperationAttemptIdentityBatchDoesNotAdvanceStampsOnPartialFailure(t *testing.T) {
 	store, err := OpenOperationAttemptStore(t.TempDir())
 	if err != nil {

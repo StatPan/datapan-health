@@ -474,8 +474,8 @@ func (model *OperationReadModel) RefreshFromStoreBatch(store *OperationAttemptSt
 	if err != nil || len(identities) == 0 {
 		return offset, false, ErrOperationReadModelUnavailable
 	}
-	attempts, err := store.SnapshotReadModelAttemptsForIdentities(identities)
-	if err != nil || model.ApplyAttempts(attempts, generatedAt) != nil {
+	batch, err := store.prepareReadModelAttemptsForIdentities(identities)
+	if err != nil || model.applyReadModelAttemptBatch(store, batch, generatedAt) != nil {
 		return offset, false, ErrOperationReadModelUnavailable
 	}
 	nextOffset = offset + len(identities)
@@ -486,6 +486,19 @@ func (model *OperationReadModel) RefreshFromStoreBatch(store *OperationAttemptSt
 // projection. Plan-mismatched historical state is ignored rather than
 // relabeled under the current Registry release.
 func (model *OperationReadModel) ApplyAttempts(attempts []OperationReadModelAttempt, generatedAt time.Time) error {
+	return model.applyAttempts(attempts, generatedAt, nil)
+}
+
+func (model *OperationReadModel) applyReadModelAttemptBatch(store *OperationAttemptStore, batch *operationReadModelAttemptBatch, generatedAt time.Time) error {
+	if store == nil || batch == nil || batch.store != store {
+		return ErrOperationReadModelUnavailable
+	}
+	return model.applyAttempts(batch.attempts, generatedAt, func() error {
+		return store.commitReadModelAttemptBatch(batch)
+	})
+}
+
+func (model *OperationReadModel) applyAttempts(attempts []OperationReadModelAttempt, generatedAt time.Time, beforePublish func() error) error {
 	if model == nil || generatedAt.IsZero() || len(attempts) > operationAttemptIdentityBatchMaximum {
 		return ErrOperationReadModelUnavailable
 	}
@@ -523,6 +536,9 @@ func (model *OperationReadModel) ApplyAttempts(attempts []OperationReadModelAtte
 			return ErrOperationReadModelUnavailable
 		}
 		rows[index] = row
+	}
+	if beforePublish != nil && beforePublish() != nil {
+		return ErrOperationReadModelUnavailable
 	}
 	model.rows = rows
 	model.generatedAt = generatedAt.UTC()

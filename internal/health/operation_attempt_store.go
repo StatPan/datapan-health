@@ -120,6 +120,7 @@ type operationAttemptState struct {
 // working flock semantics; this alone is not a cross-host guarantee.
 type OperationAttemptStore struct {
 	root       string
+	readOnly   bool
 	stampsMu   sync.Mutex
 	readStamps map[string]operationAttemptFileStamp
 }
@@ -134,6 +135,17 @@ type operationAttemptFileStamp struct {
 	modifiedNS int64
 	size       int64
 	inode      uint64
+}
+
+// operationReadModelAttemptBatch keeps decoded snapshots and file-stamp
+// updates together until the in-memory projection accepts the whole batch.
+// This prevents a valid disk read that later fails model validation from
+// suppressing the same delta on the next refresh.
+type operationReadModelAttemptBatch struct {
+	store        *OperationAttemptStore
+	attempts     []OperationReadModelAttempt
+	stampUpdates map[string]operationAttemptFileStamp
+	committed    bool
 }
 
 type OperationAttemptStorageBudget struct {
@@ -176,12 +188,41 @@ func OpenOperationAttemptStore(root string) (*OperationAttemptStore, error) {
 	return &OperationAttemptStore{root: abs, readStamps: make(map[string]operationAttemptFileStamp)}, nil
 }
 
+// OpenReadOnlyOperationAttemptStore opens an existing shared store without
+// creating, chmodding, or otherwise mutating its directory. Public reader
+// processes should use this constructor and mount the volume read-only.
+func OpenReadOnlyOperationAttemptStore(root string) (*OperationAttemptStore, error) {
+	if strings.TrimSpace(root) == "" {
+		return nil, ErrOperationAttemptUnavailable
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil || filepath.Clean(abs) == string(filepath.Separator) {
+		return nil, ErrOperationAttemptUnavailable
+	}
+	info, err := os.Lstat(abs)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, ErrOperationAttemptUnavailable
+	}
+	return &OperationAttemptStore{root: abs, readOnly: true, readStamps: make(map[string]operationAttemptFileStamp)}, nil
+}
+
 // SnapshotReadModelAttemptsForIdentities reads only the deterministic state
 // files for one bounded Registry identity batch. File stamps let the separate
 // public process skip unchanged files without walking the whole store or
 // taking the writer flock. A later atomic rename changes the inode/stamp and
 // is picked up on the next pass.
 func (store *OperationAttemptStore) SnapshotReadModelAttemptsForIdentities(identities []OperationAttemptIdentity) ([]OperationReadModelAttempt, error) {
+	batch, err := store.prepareReadModelAttemptsForIdentities(identities)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.commitReadModelAttemptBatch(batch); err != nil {
+		return nil, err
+	}
+	return append([]OperationReadModelAttempt(nil), batch.attempts...), nil
+}
+
+func (store *OperationAttemptStore) prepareReadModelAttemptsForIdentities(identities []OperationAttemptIdentity) (*operationReadModelAttemptBatch, error) {
 	if store == nil || len(identities) > operationAttemptIdentityBatchMaximum {
 		return nil, ErrOperationAttemptUnavailable
 	}
@@ -241,13 +282,23 @@ func (store *OperationAttemptStore) SnapshotReadModelAttemptsForIdentities(ident
 		}
 		return snapshots[i].OperationID < snapshots[j].OperationID
 	})
-	// Do not advance any stamp until every identity in this batch has passed
-	// validation; otherwise a later corrupt file could discard earlier decoded
-	// snapshots and make the next pass skip them permanently.
-	for path, stamp := range stampUpdates {
+	return &operationReadModelAttemptBatch{store: store, attempts: snapshots, stampUpdates: stampUpdates}, nil
+}
+
+func (store *OperationAttemptStore) commitReadModelAttemptBatch(batch *operationReadModelAttemptBatch) error {
+	if store == nil || batch == nil || batch.store != store || batch.committed {
+		return ErrOperationAttemptUnavailable
+	}
+	store.stampsMu.Lock()
+	defer store.stampsMu.Unlock()
+	if store.readStamps == nil {
+		store.readStamps = make(map[string]operationAttemptFileStamp)
+	}
+	for path, stamp := range batch.stampUpdates {
 		store.readStamps[path] = stamp
 	}
-	return snapshots, nil
+	batch.committed = true
+	return nil
 }
 
 func operationAttemptFileStampAt(path string) (operationAttemptFileStamp, bool, error) {
@@ -779,6 +830,9 @@ func (store *OperationAttemptStore) writeState(state operationAttemptState) erro
 }
 
 func (store *OperationAttemptStore) withStoreLock(apply func() error) error {
+	if store == nil || store.readOnly {
+		return ErrOperationAttemptUnavailable
+	}
 	lock, err := os.OpenFile(filepath.Join(store.root, ".operation-attempt.lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return ErrOperationAttemptUnavailable
