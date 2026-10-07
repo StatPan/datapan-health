@@ -392,6 +392,10 @@ func TestPublicHTMLReadModelOperationStatusAndDiagnosisAreAllowlisted(t *testing
 	if !strings.Contains(partialDetail, "HTTP 204 응답은 받았지만") || !strings.Contains(partialNext, "공식 API 문서") {
 		t.Fatalf("partial-source row omitted the observation-only limitation or next action: detail=%q next=%q", partialDetail, partialNext)
 	}
+	partialStatus, partialStatusClass := publicPartialOperationObservation(semanticUnknown)
+	if partialStatus != "응답 수신 · 이용 가능성 판정 근거 부족" || partialStatusClass != "badge-warn" {
+		t.Fatalf("partial-source response semantics were not visible without a healthy badge: status=%q class=%q", partialStatus, partialStatusClass)
+	}
 
 	httpFailure := base
 	httpFailure.ObservationState, httpFailure.ResultState, httpFailure.ResultCategory = "current_fail", "unhealthy", "response_http_failure"
@@ -404,6 +408,10 @@ func TestPublicHTMLReadModelOperationStatusAndDiagnosisAreAllowlisted(t *testing
 	partialFailureDetail, partialFailureNext := publicPartialOperationDiagnosis(httpFailure)
 	if !strings.Contains(partialFailureDetail, "HTTP 503 응답 오류") || !strings.Contains(partialFailureDetail, "원인은 이 기록만으로 확정할 수 없습니다") || !strings.Contains(partialFailureNext, "API 사용 조건") {
 		t.Fatalf("partial-source HTTP error overstated its cause or omitted the next action: detail=%q next=%q", partialFailureDetail, partialFailureNext)
+	}
+	partialFailureStatus, partialFailureClass := publicPartialOperationObservation(httpFailure)
+	if partialFailureStatus != "HTTP 응답 오류" || partialFailureClass != "badge-bad" {
+		t.Fatalf("partial-source HTTP error was hidden behind a generic status label: status=%q class=%q", partialFailureStatus, partialFailureClass)
 	}
 
 	deferred := base

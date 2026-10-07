@@ -999,8 +999,14 @@ func publicPartialOperationObservation(operation OperationReadModelRow) (label, 
 	case "current_pass":
 		return "최근 검사 결과 통과", "badge-good"
 	case "current_fail":
+		if operation.ResultCategory == "response_http_failure" {
+			return "HTTP 응답 오류", "badge-bad"
+		}
 		return "최근 검사 결과 실패", "badge-bad"
 	case "current_indeterminate":
+		if operation.ResultCategory == "response_semantics_unestablished" {
+			return "응답 수신 · 이용 가능성 판정 근거 부족", "badge-warn"
+		}
 		return "현재 결과로 상태 판정 불가", "badge-warn"
 	case "stale":
 		return "최근 결과가 검사 주기를 지남", "badge-unknown"
