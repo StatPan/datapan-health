@@ -127,14 +127,16 @@ type ManifestOperation struct {
 }
 
 type RegistryReleaseManifest struct {
-	SchemaVersion string `json:"schema_version"`
-	Artifacts     []struct {
-		Path   string `json:"path"`
-		Kind   string `json:"kind"`
-		Schema string `json:"schema"`
-		Bytes  int64  `json:"bytes"`
-		SHA256 string `json:"sha256"`
-	} `json:"artifacts"`
+	SchemaVersion string                            `json:"schema_version"`
+	Artifacts     []RegistryReleaseManifestArtifact `json:"artifacts"`
+}
+
+type RegistryReleaseManifestArtifact struct {
+	Path   string `json:"path"`
+	Kind   string `json:"kind"`
+	Schema string `json:"schema"`
+	Bytes  int64  `json:"bytes"`
+	SHA256 string `json:"sha256"`
 }
 
 type OperationManifestVerification struct {

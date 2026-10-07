@@ -36,3 +36,13 @@ contract used only by the Korean HTML adapter to show aggregate pipeline
 readiness. It accepts the scheduler's bounded `/status` report, then discards
 canary identities and per-canary fields. It is not a public response schema,
 deployment identity, or proof of external public-route readback.
+
+`datapan.health-registry-operations-page.v2.schema.json` is a Health-owned,
+bounded full-operation read-model contract from issue #95. It is a separate
+projection from the fixed ten-canary v1 DTO and binds the pinned Registry
+operation-plan source and the independently pinned Korean metadata source.
+The page schema's exact digest is recorded in
+`config/registry/operation-read-model-v2-contract-pin.json`. Its synthetic
+fixtures establish type/schema and pagination behavior only; they are not
+evidence that a current Registry plan is released or that any provider call
+has run.
