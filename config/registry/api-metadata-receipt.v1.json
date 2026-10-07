@@ -1,0 +1,18 @@
+{
+  "schema_version": "datapan.health-registry-api-metadata-receipt.v1",
+  "generated_at": "2026-10-07T02:55:25Z",
+  "registry_revision": "d7dba637a06e345cba7ae058cba96fe53d3e532b",
+  "source_sha256": "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0",
+  "catalog_sha256": "0503ddd9c93c31781c7920ccccdaf55aa5f3ed7e8061cb7dd16f0d8eb95611d2",
+  "artifact_path": "config/registry/api-metadata.v1.json",
+  "artifact_sha256": "b8d1fc8bd1e4678c408f972d706f89400ca1a76b4085f99a192f8dd31b2828af",
+  "counts": {
+    "api_entities": 12282,
+    "api_operations": 12662,
+    "link_operations": 8871,
+    "operationless_catalog_entries": 473,
+    "filedata_catalog_entries": 0,
+    "institutions": 416,
+    "matched_health_canaries": 10
+  }
+}
