@@ -1,8 +1,11 @@
 package schemas
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
-const expectedHealthOperationPlanProbeV1SchemaSHA256 = "c5c7ee3ae3fee24c2a94f065fa723fc8727c5b16c45c397e2c7d88de64e1b416"
+const expectedHealthOperationPlanProbeV1SchemaSHA256 = "23fcac6ae7b47852f36e47fea24dd5d0dbeb795bef279529998233a835eefad9"
 
 func TestHealthOperationPlanProbeV1SchemaPinAndValidation(t *testing.T) {
 	if got := HealthOperationPlanProbeV1SchemaSHA256(); got != expectedHealthOperationPlanProbeV1SchemaSHA256 {
@@ -15,5 +18,47 @@ func TestHealthOperationPlanProbeV1SchemaPinAndValidation(t *testing.T) {
 	unknown := append(append([]byte(nil), valid[:len(valid)-1]...), []byte(`,"provider_url":"https://example.invalid/?key=secret"}`)...)
 	if err := ValidateHealthOperationPlanProbeV1(unknown); err == nil {
 		t.Fatal("receipt schema accepted an endpoint field")
+	}
+
+	var observationOnly map[string]any
+	if err := json.Unmarshal(valid, &observationOnly); err != nil {
+		t.Fatal(err)
+	}
+	execution := observationOnly["execution"].(map[string]any)
+	execution["request_started"] = true
+	execution["request_budget"] = float64(1)
+	observation := observationOnly["observation"].(map[string]any)
+	observation["response_observed"] = true
+	observation["observed_at"] = "2026-10-07T00:00:01Z"
+	observation["http_status"] = float64(204)
+	observation["outcome"] = "indeterminate"
+	observation["reason_code"] = "response_semantics_unestablished"
+	observation["assertion_kind"] = "observation_only"
+	observation["assertion_status"] = "not_run"
+	raw, err := json.Marshal(observationOnly)
+	if err != nil || ValidateHealthOperationPlanProbeV1(raw) != nil {
+		t.Fatalf("schema rejected the reviewed observation-only 2xx receipt: %s (%v)", raw, err)
+	}
+	observation["outcome"] = "healthy"
+	observation["reason_code"] = "response_assertion_passed"
+	observation["assertion_status"] = "passed"
+	raw, _ = json.Marshal(observationOnly)
+	if err := ValidateHealthOperationPlanProbeV1(raw); err == nil {
+		t.Fatal("schema accepted observation-only mode as a positive health assertion")
+	}
+	observation["outcome"] = "indeterminate"
+	observation["reason_code"] = "response_semantics_unestablished"
+	observation["assertion_status"] = "not_run"
+	observation["http_status"] = float64(503)
+	raw, _ = json.Marshal(observationOnly)
+	if err := ValidateHealthOperationPlanProbeV1(raw); err == nil {
+		t.Fatal("schema accepted non-2xx as semantics-unestablished")
+	}
+	observation["outcome"] = "unhealthy"
+	observation["reason_code"] = "response_http_failure"
+	observation["assertion_status"] = "failed"
+	raw, _ = json.Marshal(observationOnly)
+	if err := ValidateHealthOperationPlanProbeV1(raw); err != nil {
+		t.Fatalf("schema rejected the reviewed observation-only non-2xx receipt: %s (%v)", raw, err)
 	}
 }

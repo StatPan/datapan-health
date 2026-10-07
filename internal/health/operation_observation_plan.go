@@ -153,6 +153,7 @@ type PinnedOperationObservationPlan struct {
 type OperationObservationPlanRecord struct {
 	OperationID           string
 	Protocol              string
+	ResponseAssertionKind string
 	DatasetID             string
 	OperationName         string
 	UpstreamOperationKey  string
@@ -546,11 +547,15 @@ func decodeOperationObservationPlanRecord(raw json.RawMessage) (OperationObserva
 			Limits struct {
 				TimeoutMS int64 `json:"timeout_ms"`
 			} `json:"limits"`
+			ResponseAssertion struct {
+				Kind string `json:"kind"`
+			} `json:"response_assertion"`
 		}
 		if json.Unmarshal(request.RequestContract, &contract) != nil || contract.Limits.TimeoutMS < 1 || contract.Limits.TimeoutMS > maxOperationObservationTimeoutMS {
 			return OperationObservationPlanRecord{}, errOperationObservationPlanInvalid
 		}
 		record.RequestTimeout = time.Duration(contract.Limits.TimeoutMS) * time.Millisecond
+		record.ResponseAssertionKind = contract.ResponseAssertion.Kind
 	}
 	if runtime.ObservationPeriodSeconds > 0 {
 		if runtime.ObservationPeriodSeconds > int64((365*24*time.Hour)/time.Second) {
@@ -761,9 +766,9 @@ func validOperationResponseAssertion(protocol string, value any) bool {
 	}
 	kind := stringValue(assertion["kind"])
 	if protocol == "REST" {
-		return kind == "http_status" || kind == "json_contract"
+		return kind == "http_status" || kind == "json_contract" || kind == "observation_only"
 	}
-	return protocol == "SOAP" && (kind == "soap_fault_free" || kind == "xml_contract" || kind == "http_status")
+	return protocol == "SOAP" && (kind == "soap_fault_free" || kind == "xml_contract" || kind == "http_status" || kind == "observation_only")
 }
 
 func validOperationParameters(protocol string, parameters []any) bool {

@@ -23,7 +23,7 @@ import (
 const (
 	OperationPlanProbeReceiptSchemaVersion = "datapan.health-operation-plan-probe.v1"
 	OperationPlanProbeReceiptSchemaURI     = "https://schemas.datapan.dev/datapan.health-operation-plan-probe.v1.schema.json"
-	OperationPlanProbeReceiptSchemaSHA256  = "c5c7ee3ae3fee24c2a94f065fa723fc8727c5b16c45c397e2c7d88de64e1b416"
+	OperationPlanProbeReceiptSchemaSHA256  = "23fcac6ae7b47852f36e47fea24dd5d0dbeb795bef279529998233a835eefad9"
 	maxOperationPlanProbeReceiptBytes      = 64 << 10
 	maxOperationPlanProbeStderrBytes       = 8 << 10
 	maxOperationPlanProbeBinaryBytes       = 128 << 20
@@ -125,6 +125,7 @@ type OperationPlanProbeExpectation struct {
 	Provider                    string
 	AdapterID                   string
 	Protocol                    string
+	ResponseAssertionKind       string
 	RequestTimeout              time.Duration
 	StartedAt                   time.Time
 }
@@ -317,7 +318,17 @@ func (runner *OperationPlanProbeRunner) openVerifiedExecutable() (*os.File, erro
 }
 
 func validOperationProbeExpectation(expected OperationPlanProbeExpectation, config OperationPlanProbeConfig) bool {
-	return quotaAttemptIDPattern.MatchString(expected.AttemptID) && expected.CLIVersion == config.CLIVersion && expected.CLIBinarySHA256 == config.ExecutableSHA256 && expected.DatasetID == "StatPan/datapan-registry" && expected.Distribution == "huggingface_dataset" && commitPattern.MatchString(expected.DistributionDatasetRevision) && sha256Pattern.MatchString(expected.RegistrySHA256) && commitPattern.MatchString(expected.RegistryRevision) && sha256Pattern.MatchString(expected.ReleaseManifestSHA256) && sha256Pattern.MatchString(expected.OperationManifestSHA256) && sha256Pattern.MatchString(expected.ProviderIndexSHA256) && sha256Pattern.MatchString(expected.PlanSchemaSHA256) && sha256Pattern.MatchString(expected.IndexSHA256) && sha256Pattern.MatchString(expected.ShardSHA256) && sha256Pattern.MatchString(expected.SourceIdentitySetSHA256) && operationSourceIDPattern.MatchString(expected.SourceID) && expected.OperationID != "" && len(expected.OperationID) <= 256 && expected.Provider != "" && expected.AdapterID != "" && (expected.Protocol == "REST" || expected.Protocol == "SOAP") && expected.RequestTimeout > 0 && expected.RequestTimeout <= maxOperationPlanProbeDeadline-maxOperationPlanProbeProcessOverhead && !expected.StartedAt.IsZero()
+	return quotaAttemptIDPattern.MatchString(expected.AttemptID) && expected.CLIVersion == config.CLIVersion && expected.CLIBinarySHA256 == config.ExecutableSHA256 && expected.DatasetID == "StatPan/datapan-registry" && expected.Distribution == "huggingface_dataset" && commitPattern.MatchString(expected.DistributionDatasetRevision) && sha256Pattern.MatchString(expected.RegistrySHA256) && commitPattern.MatchString(expected.RegistryRevision) && sha256Pattern.MatchString(expected.ReleaseManifestSHA256) && sha256Pattern.MatchString(expected.OperationManifestSHA256) && sha256Pattern.MatchString(expected.ProviderIndexSHA256) && sha256Pattern.MatchString(expected.PlanSchemaSHA256) && sha256Pattern.MatchString(expected.IndexSHA256) && sha256Pattern.MatchString(expected.ShardSHA256) && sha256Pattern.MatchString(expected.SourceIdentitySetSHA256) && operationSourceIDPattern.MatchString(expected.SourceID) && expected.OperationID != "" && len(expected.OperationID) <= 256 && expected.Provider != "" && expected.AdapterID != "" && (expected.Protocol == "REST" || expected.Protocol == "SOAP") && validOperationProbeAssertionKind(expected.Protocol, expected.ResponseAssertionKind) && expected.RequestTimeout > 0 && expected.RequestTimeout <= maxOperationPlanProbeDeadline-maxOperationPlanProbeProcessOverhead && !expected.StartedAt.IsZero()
+}
+
+func validOperationProbeAssertionKind(protocol, kind string) bool {
+	if protocol == "REST" {
+		return kind == "http_status" || kind == "json_contract" || kind == "observation_only"
+	}
+	if protocol == "SOAP" {
+		return kind == "http_status" || kind == "soap_fault_free" || kind == "xml_contract" || kind == "observation_only"
+	}
+	return false
 }
 
 // ValidateOperationPlanProbeReceipt validates strict schema, canonical byte
@@ -364,7 +375,7 @@ func validOperationProbeReceiptSemantics(receipt operationPlanProbeReceipt, expe
 	if receipt.SchemaVersion != OperationPlanProbeReceiptSchemaVersion || receipt.AttemptID != expected.AttemptID || receipt.CLI.Version != expected.CLIVersion || receipt.CLI.BinarySHA256 != expected.CLIBinarySHA256 ||
 		receipt.Registry.DatasetID != expected.DatasetID || receipt.Registry.RegistryRevision != expected.RegistryRevision || receipt.Registry.Distribution != expected.Distribution || receipt.Registry.DistributionDatasetRevision != expected.DistributionDatasetRevision ||
 		receipt.Registry.RegistrySHA256 != expected.RegistrySHA256 || receipt.Registry.ManifestSHA256 != expected.ReleaseManifestSHA256 || receipt.Registry.OperationManifestSHA256 != expected.OperationManifestSHA256 || receipt.Registry.ProviderIndexSHA256 != expected.ProviderIndexSHA256 || receipt.Registry.PlanSchemaSHA256 != expected.PlanSchemaSHA256 || receipt.Registry.IndexSHA256 != expected.IndexSHA256 || receipt.Registry.ShardSHA256 != expected.ShardSHA256 || receipt.Registry.SourceIdentitySetSHA256 != expected.SourceIdentitySetSHA256 ||
-		receipt.Operation.OperationID != expected.OperationID || receipt.Operation.SourceID != expected.SourceID || receipt.Operation.Provider != expected.Provider || receipt.Operation.AdapterID != expected.AdapterID || receipt.Operation.Protocol != expected.Protocol ||
+		receipt.Operation.OperationID != expected.OperationID || receipt.Operation.SourceID != expected.SourceID || receipt.Operation.Provider != expected.Provider || receipt.Operation.AdapterID != expected.AdapterID || receipt.Operation.Protocol != expected.Protocol || receipt.Observation.AssertionKind != expected.ResponseAssertionKind ||
 		receipt.Execution.TimeoutMS != expected.RequestTimeout.Milliseconds() || receipt.Execution.DurationMS < 0 || receipt.Execution.DurationMS > (receivedAt.Sub(startedAt)+time.Second).Milliseconds() ||
 		!receipt.Redaction.CredentialValuesRemoved || !receipt.Redaction.CredentialReferencesRemoved || !receipt.Redaction.CredentialEnvNamesRemoved || !receipt.Redaction.QueryValuesRemoved || !receipt.Redaction.RequestBodyRemoved || !receipt.Redaction.ResponseBodyRemoved || !receipt.Redaction.ResponseRowsRemoved || !receipt.Redaction.EndpointDetailsRemoved || !receipt.Redaction.QuotaDetailsRemoved {
 		return false
@@ -389,10 +400,13 @@ func validOperationProbeReceiptSemantics(receipt operationPlanProbeReceipt, expe
 	}
 	switch receipt.Observation.Outcome {
 	case "healthy":
-		return exitCode == 0 && receipt.Execution.RequestStarted && receipt.Observation.ResponseObserved && receipt.Observation.AssertionStatus == "passed" && receipt.Observation.ReasonCode == "response_assertion_passed"
+		return expected.ResponseAssertionKind != "observation_only" && exitCode == 0 && receipt.Execution.RequestStarted && receipt.Observation.ResponseObserved && receipt.Observation.AssertionStatus == "passed" && receipt.Observation.ReasonCode == "response_assertion_passed"
 	case "unhealthy":
 		if exitCode != 4 || !receipt.Execution.RequestStarted || !receipt.Observation.ResponseObserved || receipt.Observation.AssertionStatus != "failed" {
 			return false
+		}
+		if expected.ResponseAssertionKind == "observation_only" {
+			return receipt.Observation.ReasonCode == "response_http_failure" && (receipt.Observation.HTTPStatus < 200 || receipt.Observation.HTTPStatus >= 300)
 		}
 		return receipt.Observation.ReasonCode == "response_assertion_failed" || receipt.Observation.ReasonCode == "response_assertion_invalid"
 	case "blocked":
@@ -410,6 +424,8 @@ func validOperationProbeReceiptSemantics(receipt operationPlanProbeReceipt, expe
 			return false
 		}
 		switch receipt.Observation.ReasonCode {
+		case "response_semantics_unestablished":
+			return expected.ResponseAssertionKind == "observation_only" && receipt.Observation.ResponseObserved && receipt.Observation.HTTPStatus >= 200 && receipt.Observation.HTTPStatus < 300
 		case "request_deadline_exceeded", "request_limit_exceeded", "response_limit_exceeded", "request_transport_failed", "response_read_failed", "response_invalid":
 			return true
 		default:
@@ -443,7 +459,7 @@ func operationPlanProbeExpected(plan PinnedOperationObservationPlan, record Oper
 		OperationManifestSHA256: inputs.OperationManifest.SHA256, ProviderIndexSHA256: inputs.ProviderIndex.SHA256,
 		PlanSchemaSHA256: plan.binding.SchemaSHA256, IndexSHA256: plan.IndexSHA256(), ShardSHA256: shardSHA,
 		SourceIdentitySetSHA256: scope.IdentitySetSHA256, SourceID: record.SourceID, OperationID: record.OperationID,
-		Provider: record.Provider, AdapterID: record.AdapterID, Protocol: record.Protocol,
+		Provider: record.Provider, AdapterID: record.AdapterID, Protocol: record.Protocol, ResponseAssertionKind: record.ResponseAssertionKind,
 		RequestTimeout: record.RequestTimeout, StartedAt: startedAt.UTC(),
 	}, nil
 }

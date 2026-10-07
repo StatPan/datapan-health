@@ -15,9 +15,10 @@ func TestOperationPlanGatusDeliveryUsesBoundedPerKeyPushAndReadback(t *testing.T
 	key := stableOperationGatusEndpointKey("data_go_kr", strings.Repeat("a", 64))
 	var acknowledgedAt time.Time
 	var acknowledgedAtMu sync.Mutex
+	fixtureNow := time.Now().UTC()
 	result := OperationObservationResult{
-		State: "healthy", Category: "healthy", ObservedAt: time.Now().UTC().Add(-time.Second),
-		ReceivedAt: time.Now().UTC(), ReceiptSHA: strings.Repeat("b", 64), LatencyMS: 123,
+		State: "healthy", Category: "healthy", ObservedAt: fixtureNow.Add(-2 * time.Second),
+		ReceivedAt: fixtureNow.Add(-time.Second), ReceiptSHA: strings.Repeat("b", 64), LatencyMS: 123,
 	}
 	var getCalls, postCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

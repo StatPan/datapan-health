@@ -1182,6 +1182,9 @@ func (row OperationReadModelRow) ValidatePublicProjection(at time.Time) error {
 	if row.ProviderHTTPStatus != nil && (*row.ProviderHTTPStatus < 100 || *row.ProviderHTTPStatus > 599) || row.ResultCategory == "response_semantics_unestablished" && (row.ProviderHTTPStatus == nil || *row.ProviderHTTPStatus < 200 || *row.ProviderHTTPStatus >= 300) || row.ResultCategory == "response_http_failure" && (row.ProviderHTTPStatus == nil || *row.ProviderHTTPStatus < 100 || *row.ProviderHTTPStatus >= 200 && *row.ProviderHTTPStatus < 300) {
 		return fmt.Errorf("%w: invalid safe HTTP status projection", ErrOperationReadModelUnavailable)
 	}
+	if row.ResultCategory == "response_semantics_unestablished" && !row.Attempted {
+		return fmt.Errorf("%w: observation-only result lacks current-plan request evidence", ErrOperationReadModelUnavailable)
+	}
 	if row.GatusDeliveryState == "not_applicable" && (row.ResultState != "indeterminate" || row.ResultCategory != "response_semantics_unestablished") {
 		return fmt.Errorf("%w: Gatus non-delivery lacks a reviewed reason", ErrOperationReadModelUnavailable)
 	}

@@ -75,15 +75,74 @@
         "reason_code": {
           "enum": [
             "response_assertion_passed", "response_assertion_failed", "response_assertion_invalid",
+            "response_semantics_unestablished", "response_http_failure",
             "credential_binding_unavailable", "credential_binding_mismatch", "credential_source_unavailable",
             "operation_plan_unsupported", "deadline_expired_before_request", "request_deadline_exceeded",
             "request_limit_exceeded", "response_limit_exceeded", "request_transport_failed",
             "response_read_failed", "response_invalid"
           ]
         },
-        "assertion_kind": { "enum": ["http_status", "soap_fault_free", "json_contract", "xml_contract"] },
+        "assertion_kind": { "enum": ["http_status", "soap_fault_free", "json_contract", "xml_contract", "observation_only"] },
         "assertion_status": { "enum": ["not_run", "passed", "failed"] }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "assertion_kind": { "const": "observation_only" } }, "required": ["assertion_kind"] },
+          "then": {
+            "properties": {
+              "outcome": { "enum": ["unhealthy", "blocked", "indeterminate"] },
+              "assertion_status": { "enum": ["not_run", "failed"] }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "assertion_kind": { "const": "observation_only" }, "outcome": { "const": "unhealthy" } },
+            "required": ["assertion_kind", "outcome"]
+          },
+          "then": { "properties": { "reason_code": { "const": "response_http_failure" }, "assertion_status": { "const": "failed" } } }
+        },
+        {
+          "if": {
+            "properties": { "assertion_kind": { "const": "observation_only" }, "outcome": { "const": "indeterminate" } },
+            "required": ["assertion_kind", "outcome"]
+          },
+          "then": { "properties": { "assertion_status": { "const": "not_run" } } }
+        },
+        {
+          "if": {
+            "properties": { "assertion_kind": { "const": "observation_only" }, "outcome": { "const": "blocked" } },
+            "required": ["assertion_kind", "outcome"]
+          },
+          "then": { "properties": { "assertion_status": { "const": "not_run" } } }
+        },
+        {
+          "if": { "properties": { "reason_code": { "const": "response_semantics_unestablished" } }, "required": ["reason_code"] },
+          "then": {
+            "required": ["observed_at", "http_status"],
+            "properties": {
+              "response_observed": { "const": true },
+              "outcome": { "const": "indeterminate" },
+              "assertion_kind": { "const": "observation_only" },
+              "assertion_status": { "const": "not_run" },
+              "http_status": { "minimum": 200, "maximum": 299 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "reason_code": { "const": "response_http_failure" } }, "required": ["reason_code"] },
+          "then": {
+            "required": ["observed_at", "http_status"],
+            "properties": {
+              "response_observed": { "const": true },
+              "outcome": { "const": "unhealthy" },
+              "assertion_kind": { "const": "observation_only" },
+              "assertion_status": { "const": "failed" },
+              "http_status": { "anyOf": [{ "maximum": 199 }, { "minimum": 300 }] }
+            }
+          }
+        }
+      ]
     },
     "redaction": {
       "type": "object", "additionalProperties": false,
@@ -100,5 +159,25 @@
         "quota_details_removed": { "const": true }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "observation": {
+            "properties": { "reason_code": { "enum": ["response_semantics_unestablished", "response_http_failure"] } },
+            "required": ["reason_code"]
+          }
+        },
+        "required": ["observation"]
+      },
+      "then": {
+        "properties": {
+          "execution": {
+            "properties": { "request_started": { "const": true }, "request_budget": { "const": 1 } }
+          }
+        }
+      }
+    }
+  ]
 }
