@@ -15,6 +15,8 @@ const operationPlanPostChildCommitTimeout = 15 * time.Second
 
 const operationPlanPreDispatchCleanupTimeout = 5 * time.Second
 
+const operationPlanQuotaReleaseTimeout = 2 * time.Second
+
 // OperationPlanProbeExecutor is the worker's single-operation child boundary.
 // The production constructor accepts only an attested OperationPlanProbeRunner;
 // same-package tests may instantiate the worker with a deterministic executor
@@ -60,6 +62,8 @@ type OperationPlanWorker struct {
 	attemptLease     time.Duration
 	quotaLease       time.Duration
 	targets          map[string]OperationPlanWorkerTarget
+	postChildCommit  time.Duration
+	quotaRelease     time.Duration
 }
 
 type OperationPlanWorkerResult struct {
@@ -102,6 +106,7 @@ func newOperationPlanWorker(config OperationPlanWorkerConfig, runnerConfig Opera
 		history: config.History, historyValidator: config.HistoryValidator, gatus: config.Gatus,
 		lock: config.RuntimeLock, arch: config.Architecture, attemptLease: config.AttemptLease,
 		quotaLease: config.QuotaLease, targets: make(map[string]OperationPlanWorkerTarget, len(verifiedTargets)),
+		postChildCommit: operationPlanPostChildCommitTimeout, quotaRelease: operationPlanQuotaReleaseTimeout,
 	}
 	const validationAttemptID = "00000000-0000-4000-8000-000000000000"
 	validationTime := time.Unix(1, 0).UTC()
@@ -143,7 +148,9 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 		ReleaseManifestSHA: worker.runtime.Plan.binding.ReleaseManifestSHA256, IndexSHA: worker.runtime.Plan.IndexSHA256(),
 		ShardSHA: target.ShardSHA256, GatusKey: target.GatusEndpointKey, ObservationPeriod: target.Record.ObservationPeriod,
 	}
-	claim, err := worker.attempts.BeginAttempt(binding, attemptID, now, worker.attemptLease)
+	preDispatchCtx, cancelPreDispatch := context.WithTimeout(ctx, operationPlanPreDispatchCleanupTimeout)
+	defer cancelPreDispatch()
+	claim, err := worker.attempts.BeginAttemptContext(preDispatchCtx, binding, attemptID, now, worker.attemptLease)
 	if err != nil {
 		return OperationPlanWorkerResult{}, err
 	}
@@ -157,7 +164,7 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 	if err != nil {
 		return worker.deferBeforeDispatch(claim, result, operationAttemptReasonChildUnavailable, now, nil, OperationHistoryReservation{})
 	}
-	reservation, err := worker.history.Reserve(ctx, identity)
+	reservation, err := worker.history.Reserve(preDispatchCtx, identity)
 	if err != nil {
 		if reservation.Matches(identity) {
 			_ = cancelOperationHistoryReservation(worker.history, identity, reservation)
@@ -169,7 +176,7 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 		return worker.deferBeforeDispatch(claim, result, reason, now, nil, OperationHistoryReservation{})
 	}
 	quotaNow := time.Now().UTC()
-	quotaClaims, err := worker.quotas.AcquireMany(target.Record.QuotaPolicies, attemptID, quotaNow, worker.quotaLease)
+	quotaClaims, err := worker.quotas.AcquireManyContext(preDispatchCtx, target.Record.QuotaPolicies, attemptID, quotaNow, worker.quotaLease)
 	if err != nil {
 		cancelErr := cancelOperationHistoryReservation(worker.history, identity, reservation)
 		reason := operationAttemptReasonChildUnavailable
@@ -188,35 +195,36 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 	deadlineNow := time.Now().UTC()
 	deadline, deadlineOK := operationPlanProbeExecutionDeadline(deadlineNow, target.Record.RequestTimeout, claim.ExpiresAt, attemptID, quotaClaims)
 	if !deadlineOK {
-		_ = worker.quotas.ReleaseMany(quotaClaims, deadlineNow)
+		_ = worker.releaseQuotaClaims(quotaClaims, deadlineNow)
 		return worker.deferBeforeDispatch(claim, result, operationAttemptReasonChildUnavailable, deadlineNow, worker.history, reservation)
 	}
 	probeResult, _, runErr := worker.runner.Run(ctx, expected, deadline)
-	quotaReleaseErr := worker.quotas.ReleaseMany(quotaClaims, time.Now().UTC())
 	if runErr != nil {
 		finishedAt := time.Now().UTC()
-		_ = worker.attempts.FailAttempt(claim, finishedAt)
+		commitCtx, cancelCommit := worker.newPostChildCommitContext()
+		_ = worker.attempts.failAttemptContext(commitCtx, claim, finishedAt)
+		cancelCommit()
+		_ = worker.releaseQuotaClaims(quotaClaims, time.Now().UTC())
 		result.AttemptState = "unknown"
-		if quotaReleaseErr != nil {
-			return result, errOperationPlanWorkerUnavailable
-		}
 		return result, errOperationPlanWorkerUnavailable
 	}
 	// A valid receipt may already exist in memory even if the scheduler context
 	// was canceled as the child returned. Preserve and commit that evidence with
 	// a short independent cleanup deadline; dropping it would leave a request
 	// that may have reached the provider without its validated receipt.
-	commitCtx, cancelCommit := context.WithTimeout(context.Background(), operationPlanPostChildCommitTimeout)
+	commitCtx, cancelCommit := worker.newPostChildCommitContext()
 	defer cancelCommit()
 	record, err := worker.historyValidator.newRecord(identity, probeResult, expected, claim.StartedAt)
 	if err != nil {
-		_ = worker.attempts.FailAttempt(claim, time.Now().UTC())
+		_ = worker.attempts.failAttemptContext(commitCtx, claim, time.Now().UTC())
+		_ = worker.releaseQuotaClaims(quotaClaims, time.Now().UTC())
 		result.AttemptState = "unknown"
 		return result, errOperationPlanWorkerUnavailable
 	}
 	ref, err := worker.history.AppendValidated(commitCtx, reservation, record)
 	if err != nil || !ref.MatchesValidatedRecord(record) {
-		_ = worker.attempts.FailAttempt(claim, time.Now().UTC())
+		_ = worker.attempts.failAttemptContext(commitCtx, claim, time.Now().UTC())
+		_ = worker.releaseQuotaClaims(quotaClaims, time.Now().UTC())
 		result.AttemptState = "unknown"
 		return result, errOperationPlanWorkerUnavailable
 	}
@@ -240,11 +248,33 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 			result.DeliveryState = "not_ready"
 		}
 	}
+	result.ReceiptSHA256 = probeResult.ReceiptSHA256
+	quotaReleaseErr := worker.releaseQuotaClaims(quotaClaims, time.Now().UTC())
 	if err != nil || quotaReleaseErr != nil {
 		return result, errOperationPlanWorkerUnavailable
 	}
-	result.ReceiptSHA256 = probeResult.ReceiptSHA256
 	return result, nil
+}
+
+func (worker *OperationPlanWorker) newPostChildCommitContext() (context.Context, context.CancelFunc) {
+	deadline := operationPlanPostChildCommitTimeout
+	if worker != nil && worker.postChildCommit > 0 && worker.postChildCommit < deadline {
+		deadline = worker.postChildCommit
+	}
+	return context.WithTimeout(context.Background(), deadline)
+}
+
+func (worker *OperationPlanWorker) releaseQuotaClaims(claims []OperationQuotaClaim, now time.Time) error {
+	if worker == nil || worker.quotas == nil || len(claims) == 0 {
+		return ErrOperationQuotaUnavailable
+	}
+	deadline := operationPlanQuotaReleaseTimeout
+	if worker.quotaRelease > 0 && worker.quotaRelease < deadline {
+		deadline = worker.quotaRelease
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
+	return worker.quotas.ReleaseManyContext(ctx, claims, now)
 }
 
 func operationPlanProbeExecutionDeadline(now time.Time, requestTimeout time.Duration, attemptExpiresAt time.Time, attemptID string, quotaClaims []OperationQuotaClaim) (time.Time, bool) {
@@ -314,7 +344,9 @@ func (worker *OperationPlanWorker) deferBeforeDispatch(claim OperationAttemptCla
 			return result, errOperationPlanWorkerUnavailable
 		}
 	}
-	if worker.attempts.RecordPreDispatchDeferred(claim, reason, now.UTC()) != nil {
+	deferCtx, cancel := context.WithTimeout(context.Background(), operationPlanPreDispatchCleanupTimeout)
+	defer cancel()
+	if worker.attempts.recordPreDispatchDeferredContext(deferCtx, claim, reason, now.UTC()) != nil {
 		return result, errOperationPlanWorkerUnavailable
 	}
 	result.AttemptState = "deferred"

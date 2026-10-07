@@ -349,13 +349,19 @@ func operationAttemptFileStampAt(path string) (operationAttemptFileStamp, bool, 
 }
 
 func (store *OperationAttemptStore) BeginAttempt(binding OperationAttemptBinding, attemptID string, now time.Time, lease time.Duration) (OperationAttemptClaim, error) {
-	if store == nil || !validOperationAttemptBinding(binding) || !quotaAttemptIDPattern.MatchString(attemptID) || now.IsZero() || lease < time.Second || lease > maxOperationAttemptLease {
+	return store.BeginAttemptContext(context.Background(), binding, attemptID, now, lease)
+}
+
+// BeginAttemptContext bounds lock contention and state persistence to the
+// scheduler's pre-dispatch deadline.
+func (store *OperationAttemptStore) BeginAttemptContext(ctx context.Context, binding OperationAttemptBinding, attemptID string, now time.Time, lease time.Duration) (OperationAttemptClaim, error) {
+	if store == nil || ctx == nil || ctx.Err() != nil || !validOperationAttemptBinding(binding) || !quotaAttemptIDPattern.MatchString(attemptID) || now.IsZero() || lease < time.Second || lease > maxOperationAttemptLease {
 		return OperationAttemptClaim{}, ErrOperationAttemptUnavailable
 	}
 	now = now.UTC()
 	var claim OperationAttemptClaim
 	var resultErr error
-	if err := store.withStoreLock(func() error {
+	if err := store.withStoreLockContext(ctx, func() error {
 		state, found, err := store.readState(binding.SourceID, binding.OperationID)
 		if err != nil {
 			return err
@@ -417,14 +423,18 @@ func (store *OperationAttemptStore) BeginAttempt(binding OperationAttemptBinding
 }
 
 func (store *OperationAttemptStore) CompleteAttempt(claim OperationAttemptClaim, result OperationObservationResult, now time.Time) error {
-	if store == nil || !validOperationAttemptClaim(claim) || !validOperationObservationResult(result) || now.IsZero() {
+	return store.completeAttemptContext(context.Background(), claim, result, now)
+}
+
+func (store *OperationAttemptStore) completeAttemptContext(ctx context.Context, claim OperationAttemptClaim, result OperationObservationResult, now time.Time) error {
+	if store == nil || ctx == nil || ctx.Err() != nil || !validOperationAttemptClaim(claim) || !validOperationObservationResult(result) || now.IsZero() {
 		return ErrOperationAttemptUnavailable
 	}
 	if result.Category == "response_semantics_unestablished" && (!result.validatedHistoryRecord || result.HistoryRecordID == "" || !sha256Pattern.MatchString(result.HistoryRecordSHA256)) {
 		return ErrOperationAttemptUnavailable
 	}
 	now = now.UTC()
-	return store.transitionClaim(claim, now, func(state *operationAttemptState, attempt *OperationStoredAttempt) error {
+	return store.transitionClaimContext(ctx, claim, now, func(state *operationAttemptState, attempt *OperationStoredAttempt) error {
 		if !now.Before(attempt.LeaseExpiresAt) {
 			attempt.State = "unknown"
 			attempt.FinishedAt = now
@@ -485,7 +495,7 @@ func (store *OperationAttemptStore) CompleteAttemptFromValidatedHistory(ctx cont
 		ReceiptSHA: probeResult.ReceiptSHA256, LatencyMS: probeResult.Latency.Milliseconds(), HTTPStatus: probeResult.HTTPStatus,
 		HistoryRecordID: ref.RecordID, HistoryRecordSHA256: ref.SHA256, validatedHistoryRecord: true,
 	}
-	return store.CompleteAttempt(claim, result, now)
+	return store.completeAttemptContext(ctx, claim, result, now)
 }
 
 // RecordRequestStartedFromValidatedHistory records an ambiguous provider result
@@ -499,7 +509,7 @@ func (store *OperationAttemptStore) RecordRequestStartedFromValidatedHistory(ctx
 	if err != nil || !probeResult.RequestStarted || !probeResult.ObservedAt.IsZero() || probeResult.Outcome != "indeterminate" {
 		return ErrOperationAttemptUnavailable
 	}
-	return store.RecordRequestStartedWithoutObservation(claim, probeResult.ReceiptSHA256, now)
+	return store.recordRequestStartedWithoutObservationContext(ctx, claim, probeResult.ReceiptSHA256, now)
 }
 
 // RecordBlockedAttemptFromValidatedHistory accepts only a pinned child receipt
@@ -518,7 +528,7 @@ func (store *OperationAttemptStore) RecordBlockedAttemptFromValidatedHistory(ctx
 	if !ok {
 		return ErrOperationAttemptUnavailable
 	}
-	return store.RecordBlockedAttempt(claim, probeResult.ReceiptSHA256, blockReason, now)
+	return store.recordBlockedAttemptContext(ctx, claim, probeResult.ReceiptSHA256, blockReason, now)
 }
 
 func validateOperationAttemptHistoryResult(ctx context.Context, claim OperationAttemptClaim, candidate OperationHistoryRecord, ref OperationHistoryRecordRef, validator OperationPlanProbeHistoryRecordValidator, now time.Time) (OperationHistoryRecord, OperationPlanProbeResult, error) {
@@ -575,11 +585,15 @@ func (identity OperationHistoryIdentity) MatchesOperationAttempt(claim Operation
 // RecordRequestStartedWithoutObservation records a validated child receipt
 // proving one provider request started when no provider response was observed.
 func (store *OperationAttemptStore) RecordRequestStartedWithoutObservation(claim OperationAttemptClaim, receiptSHA string, now time.Time) error {
-	if store == nil || !validOperationAttemptClaim(claim) || !sha256Pattern.MatchString(receiptSHA) || now.IsZero() {
+	return store.recordRequestStartedWithoutObservationContext(context.Background(), claim, receiptSHA, now)
+}
+
+func (store *OperationAttemptStore) recordRequestStartedWithoutObservationContext(ctx context.Context, claim OperationAttemptClaim, receiptSHA string, now time.Time) error {
+	if store == nil || ctx == nil || ctx.Err() != nil || !validOperationAttemptClaim(claim) || !sha256Pattern.MatchString(receiptSHA) || now.IsZero() {
 		return ErrOperationAttemptUnavailable
 	}
 	now = now.UTC()
-	return store.transitionClaim(claim, now, func(state *operationAttemptState, attempt *OperationStoredAttempt) error {
+	return store.transitionClaimContext(ctx, claim, now, func(state *operationAttemptState, attempt *OperationStoredAttempt) error {
 		if !now.Before(attempt.LeaseExpiresAt) {
 			attempt.State = "unknown"
 			attempt.FinishedAt = now
@@ -602,11 +616,15 @@ func (store *OperationAttemptStore) RecordRequestStartedWithoutObservation(claim
 // RecordBlockedAttempt persists a validated receipt proving no request was
 // dispatched. blockReason is a safe enum, never provider-controlled text.
 func (store *OperationAttemptStore) RecordBlockedAttempt(claim OperationAttemptClaim, receiptSHA, blockReason string, now time.Time) error {
-	if store == nil || !validOperationAttemptClaim(claim) || !sha256Pattern.MatchString(receiptSHA) || !validOperationAttemptBlockReason(blockReason) || now.IsZero() {
+	return store.recordBlockedAttemptContext(context.Background(), claim, receiptSHA, blockReason, now)
+}
+
+func (store *OperationAttemptStore) recordBlockedAttemptContext(ctx context.Context, claim OperationAttemptClaim, receiptSHA, blockReason string, now time.Time) error {
+	if store == nil || ctx == nil || ctx.Err() != nil || !validOperationAttemptClaim(claim) || !sha256Pattern.MatchString(receiptSHA) || !validOperationAttemptBlockReason(blockReason) || now.IsZero() {
 		return ErrOperationAttemptUnavailable
 	}
 	now = now.UTC()
-	return store.transitionClaim(claim, now, func(_ *operationAttemptState, attempt *OperationStoredAttempt) error {
+	return store.transitionClaimContext(ctx, claim, now, func(_ *operationAttemptState, attempt *OperationStoredAttempt) error {
 		if !now.Before(attempt.LeaseExpiresAt) {
 			attempt.State = "unknown"
 			attempt.FinishedAt = now
@@ -627,11 +645,15 @@ func (store *OperationAttemptStore) RecordBlockedAttempt(claim OperationAttemptC
 // durable claim but before invoking the CLI child. It carries no receipt and
 // proves only that this Health worker did not start the child request.
 func (store *OperationAttemptStore) RecordPreDispatchDeferred(claim OperationAttemptClaim, blockReason string, now time.Time) error {
-	if store == nil || !validOperationAttemptClaim(claim) || !validOperationAttemptDeferredReason(blockReason) || now.IsZero() {
+	return store.recordPreDispatchDeferredContext(context.Background(), claim, blockReason, now)
+}
+
+func (store *OperationAttemptStore) recordPreDispatchDeferredContext(ctx context.Context, claim OperationAttemptClaim, blockReason string, now time.Time) error {
+	if store == nil || ctx == nil || ctx.Err() != nil || !validOperationAttemptClaim(claim) || !validOperationAttemptDeferredReason(blockReason) || now.IsZero() {
 		return ErrOperationAttemptUnavailable
 	}
 	now = now.UTC()
-	return store.transitionClaim(claim, now, func(_ *operationAttemptState, attempt *OperationStoredAttempt) error {
+	return store.transitionClaimContext(ctx, claim, now, func(_ *operationAttemptState, attempt *OperationStoredAttempt) error {
 		if !now.Before(attempt.LeaseExpiresAt) {
 			attempt.State = "unknown"
 			attempt.FinishedAt = now
@@ -648,11 +670,15 @@ func (store *OperationAttemptStore) RecordPreDispatchDeferred(claim OperationAtt
 }
 
 func (store *OperationAttemptStore) FailAttempt(claim OperationAttemptClaim, now time.Time) error {
-	if store == nil || !validOperationAttemptClaim(claim) || now.IsZero() {
+	return store.failAttemptContext(context.Background(), claim, now)
+}
+
+func (store *OperationAttemptStore) failAttemptContext(ctx context.Context, claim OperationAttemptClaim, now time.Time) error {
+	if store == nil || ctx == nil || ctx.Err() != nil || !validOperationAttemptClaim(claim) || now.IsZero() {
 		return ErrOperationAttemptUnavailable
 	}
 	now = now.UTC()
-	return store.transitionClaim(claim, now, func(_ *operationAttemptState, attempt *OperationStoredAttempt) error {
+	return store.transitionClaimContext(ctx, claim, now, func(_ *operationAttemptState, attempt *OperationStoredAttempt) error {
 		attempt.State = "unknown"
 		attempt.FinishedAt = now
 		return nil
@@ -988,7 +1014,14 @@ func (store *OperationAttemptStore) PendingDeliveries(sourceID, operationID stri
 }
 
 func (store *OperationAttemptStore) transitionClaim(claim OperationAttemptClaim, now time.Time, apply func(*operationAttemptState, *OperationStoredAttempt) error) error {
-	return store.withStoreLock(func() error {
+	return store.transitionClaimContext(context.Background(), claim, now, apply)
+}
+
+func (store *OperationAttemptStore) transitionClaimContext(ctx context.Context, claim OperationAttemptClaim, now time.Time, apply func(*operationAttemptState, *OperationStoredAttempt) error) error {
+	if ctx == nil || ctx.Err() != nil {
+		return ErrOperationAttemptUnavailable
+	}
+	return store.withStoreLockContext(ctx, func() error {
 		state, found, err := store.readState(claim.Binding.SourceID, claim.Binding.OperationID)
 		if err != nil || !found {
 			return ErrOperationAttemptUnavailable
@@ -1067,7 +1100,11 @@ func (store *OperationAttemptStore) writeState(state operationAttemptState) erro
 }
 
 func (store *OperationAttemptStore) withStoreLock(apply func() error) error {
-	if store == nil || store.readOnly {
+	return store.withStoreLockContext(context.Background(), apply)
+}
+
+func (store *OperationAttemptStore) withStoreLockContext(ctx context.Context, apply func() error) error {
+	if store == nil || store.readOnly || ctx == nil || ctx.Err() != nil {
 		return ErrOperationAttemptUnavailable
 	}
 	lock, err := os.OpenFile(filepath.Join(store.root, ".operation-attempt.lock"), os.O_CREATE|os.O_RDWR, 0o600)
@@ -1075,7 +1112,7 @@ func (store *OperationAttemptStore) withStoreLock(apply func() error) error {
 		return ErrOperationAttemptUnavailable
 	}
 	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+	if err := flockExclusiveContext(ctx, lock); err != nil {
 		return ErrOperationAttemptUnavailable
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)

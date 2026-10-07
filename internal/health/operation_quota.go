@@ -2,6 +2,7 @@ package health
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -193,7 +194,11 @@ func (a *OperationQuotaAuthority) Acquire(policy OperationQuotaPolicy, attemptID
 // recoverable write-ahead record ensures a crash during persistence completes
 // the conservative reservation before another worker can observe the scopes.
 func (a *OperationQuotaAuthority) AcquireMany(policies []OperationQuotaPolicy, attemptID string, now time.Time, lease time.Duration) ([]OperationQuotaClaim, error) {
-	if a == nil || !quotaAttemptIDPattern.MatchString(attemptID) || now.IsZero() || lease <= 0 || lease > maxOperationQuotaLease {
+	return a.AcquireManyContext(context.Background(), policies, attemptID, now, lease)
+}
+
+func (a *OperationQuotaAuthority) AcquireManyContext(ctx context.Context, policies []OperationQuotaPolicy, attemptID string, now time.Time, lease time.Duration) ([]OperationQuotaClaim, error) {
+	if a == nil || ctx == nil || ctx.Err() != nil || !quotaAttemptIDPattern.MatchString(attemptID) || now.IsZero() || lease <= 0 || lease > maxOperationQuotaLease {
 		return nil, ErrOperationQuotaUnavailable
 	}
 	policies, err := normalizeOperationQuotaPolicies(policies)
@@ -202,7 +207,7 @@ func (a *OperationQuotaAuthority) AcquireMany(policies []OperationQuotaPolicy, a
 	}
 	now = now.UTC()
 	claims := make([]OperationQuotaClaim, 0, len(policies))
-	err = a.withAuthorityLock(func() error {
+	err = a.withAuthorityLockContext(ctx, func() error {
 		if err := a.recoverOperationQuotaTransaction(); err != nil {
 			return ErrOperationQuotaUnavailable
 		}
@@ -244,7 +249,11 @@ func (a *OperationQuotaAuthority) Release(claim OperationQuotaClaim, now time.Ti
 }
 
 func (a *OperationQuotaAuthority) ReleaseMany(claims []OperationQuotaClaim, now time.Time) error {
-	if a == nil || len(claims) == 0 || len(claims) > maxOperationQuotaScopesPerCall || now.IsZero() {
+	return a.ReleaseManyContext(context.Background(), claims, now)
+}
+
+func (a *OperationQuotaAuthority) ReleaseManyContext(ctx context.Context, claims []OperationQuotaClaim, now time.Time) error {
+	if a == nil || ctx == nil || ctx.Err() != nil || len(claims) == 0 || len(claims) > maxOperationQuotaScopesPerCall || now.IsZero() {
 		return ErrOperationQuotaUnavailable
 	}
 	now = now.UTC()
@@ -256,7 +265,7 @@ func (a *OperationQuotaAuthority) ReleaseMany(claims []OperationQuotaClaim, now 
 			return ErrOperationQuotaUnavailable
 		}
 	}
-	return a.withAuthorityLock(func() error {
+	return a.withAuthorityLockContext(ctx, func() error {
 		if err := a.recoverOperationQuotaTransaction(); err != nil {
 			return ErrOperationQuotaUnavailable
 		}
@@ -382,13 +391,20 @@ func (a *OperationQuotaAuthority) statePath(scope string) string {
 }
 
 func (a *OperationQuotaAuthority) withAuthorityLock(apply func() error) error {
+	return a.withAuthorityLockContext(context.Background(), apply)
+}
+
+func (a *OperationQuotaAuthority) withAuthorityLockContext(ctx context.Context, apply func() error) error {
+	if ctx == nil || ctx.Err() != nil {
+		return ErrOperationQuotaUnavailable
+	}
 	lockPath := filepath.Join(a.root, ".authority.lock")
 	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return ErrOperationQuotaUnavailable
 	}
 	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+	if err := flockExclusiveContext(ctx, lock); err != nil {
 		return ErrOperationQuotaUnavailable
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)

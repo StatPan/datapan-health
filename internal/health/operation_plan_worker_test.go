@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -46,14 +47,64 @@ func TestOperationPlanProbeDeadlineMustFitEveryQuotaLeaseAfterAcquisition(t *tes
 }
 
 type cancelAfterOperationPlanProbeExecutor struct {
-	runner OperationPlanProbeExecutor
-	cancel context.CancelFunc
+	runner    OperationPlanProbeExecutor
+	cancel    context.CancelFunc
+	lockPaths []string
+	locked    chan []*os.File
 }
 
 func (executor cancelAfterOperationPlanProbeExecutor) Run(ctx context.Context, expected OperationPlanProbeExpectation, deadline time.Time) (OperationPlanProbeResult, int, error) {
 	result, exitCode, err := executor.runner.Run(ctx, expected, deadline)
 	executor.cancel()
+	if executor.locked != nil {
+		files, lockErr := holdOperationPlanTestLocks(executor.lockPaths)
+		if lockErr != nil {
+			return OperationPlanProbeResult{}, -1, lockErr
+		}
+		executor.locked <- files
+	}
 	return result, exitCode, err
+}
+
+type lockAfterOperationPlanProbeExecutor struct {
+	runner    OperationPlanProbeExecutor
+	lockPaths []string
+	locked    chan []*os.File
+}
+
+func (executor lockAfterOperationPlanProbeExecutor) Run(ctx context.Context, expected OperationPlanProbeExpectation, deadline time.Time) (OperationPlanProbeResult, int, error) {
+	result, exitCode, err := executor.runner.Run(ctx, expected, deadline)
+	files, lockErr := holdOperationPlanTestLocks(executor.lockPaths)
+	if lockErr != nil {
+		return OperationPlanProbeResult{}, -1, lockErr
+	}
+	executor.locked <- files
+	return result, exitCode, err
+}
+
+func holdOperationPlanTestLocks(paths []string) ([]*os.File, error) {
+	files := make([]*os.File, 0, len(paths))
+	for _, path := range paths {
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+		if err != nil {
+			unlockOperationPlanTestLocks(files)
+			return nil, err
+		}
+		if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+			_ = file.Close()
+			unlockOperationPlanTestLocks(files)
+			return nil, err
+		}
+		files = append(files, file)
+	}
+	return files, nil
+}
+
+func unlockOperationPlanTestLocks(files []*os.File) {
+	for _, file := range files {
+		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		_ = file.Close()
+	}
 }
 
 type unavailableOperationPlanProbeExecutor struct{}
@@ -206,11 +257,17 @@ func TestOperationPlanWorkerArchivesCanceledChildReceiptBeforeGatusReadback(t *t
 		t.Fatalf("production constructor rejected the verified local runner/runtime: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	worker.runner = cancelAfterOperationPlanProbeExecutor{runner: runner, cancel: cancel}
+	quotaLockHeld := make(chan []*os.File, 1)
+	worker.quotaRelease = 250 * time.Millisecond
+	worker.runner = cancelAfterOperationPlanProbeExecutor{runner: runner, cancel: cancel, lockPaths: []string{filepath.Join(quotas.root, ".authority.lock")}, locked: quotaLockHeld}
+	startedAt := time.Now()
 	result, err := worker.ExecuteOne(ctx, target.Record.SourceID, target.Record.OperationID, time.Now().UTC())
-	if err != nil || result.AttemptState != "observed" || result.DeliveryState != "not_ready" || !result.RequestStarted || result.ReceiptSHA256 == "" || ctx.Err() == nil {
+	quotaLocks := <-quotaLockHeld
+	if err == nil || time.Since(startedAt) > 3*time.Second || result.AttemptState != "observed" || result.DeliveryState != "not_ready" || !result.RequestStarted || result.ReceiptSHA256 == "" || ctx.Err() == nil {
+		unlockOperationPlanTestLocks(quotaLocks)
 		t.Fatalf("validated local child receipt was not committed despite caller cancellation: result=%#v err=%v canceled=%t", result, err, ctx.Err() != nil)
 	}
+	unlockOperationPlanTestLocks(quotaLocks)
 	cancel()
 	stored, found, err := attempts.GetAttempt(result.SourceID, result.OperationID, result.AttemptID, result.Generation)
 	if err != nil || !found || stored.State != "observed" || stored.Result == nil || stored.Result.HistoryRecordID == "" || stored.DeliveryState != "not_ready" {
@@ -228,6 +285,52 @@ func TestOperationPlanWorkerArchivesCanceledChildReceiptBeforeGatusReadback(t *t
 	stored, found, err = attempts.GetAttempt(result.SourceID, result.OperationID, result.AttemptID, result.Generation)
 	if err != nil || !found || stored.DeliveryState != "readback_verified" || stored.DeliveryAckAt.IsZero() || stored.GatusReceivedAt.Before(stored.DeliveryAckAt) || postCalls != 1 || getCalls != 1 {
 		t.Fatalf("Gatus ACK/readback were not stored as distinct events: stored=%#v found=%t post=%d get=%d err=%v", stored, found, postCalls, getCalls, err)
+	}
+
+	// Move only the fixture's due timestamp back by one observation period. This
+	// preserves valid event ordering while making a second exact same-plan
+	// attempt due without sleeping through the configured production interval.
+	if err := attempts.withStoreLock(func() error {
+		state, found, err := attempts.readState(target.Record.SourceID, target.Record.OperationID)
+		if err != nil || !found || len(state.Attempts) == 0 {
+			return ErrOperationAttemptUnavailable
+		}
+		latest := &state.Attempts[len(state.Attempts)-1]
+		latest.StartedAt = time.Now().UTC().Add(-latest.Binding.ObservationPeriod - time.Minute)
+		latest.LeaseExpiresAt = latest.StartedAt.Add(time.Minute)
+		return attempts.writeState(state)
+	}); err != nil {
+		t.Fatal("could not prepare a due same-plan lock-contention regression", err)
+	}
+	secondQuotas, err := OpenOperationQuotaAuthority(filepath.Join(runtimeRoot, "second-quotas"))
+	if err != nil {
+		t.Fatal("could not open an isolated quota authority for the second synthetic attempt", err)
+	}
+	worker.quotas = secondQuotas
+
+	attemptLockHeld := make(chan []*os.File, 1)
+	worker.postChildCommit = 250 * time.Millisecond
+	worker.runner = lockAfterOperationPlanProbeExecutor{runner: runner, lockPaths: []string{filepath.Join(attempts.root, ".operation-attempt.lock")}, locked: attemptLockHeld}
+	startedAt = time.Now()
+	blockedResult, blockedErr := worker.ExecuteOne(context.Background(), target.Record.SourceID, target.Record.OperationID, time.Now().UTC())
+	var attemptLocks []*os.File
+	select {
+	case attemptLocks = <-attemptLockHeld:
+	default:
+		t.Fatalf("worker did not reach the post-child lock boundary: result=%#v err=%v", blockedResult, blockedErr)
+	}
+	if blockedErr == nil || time.Since(startedAt) > 3*time.Second || blockedResult.AttemptState != "observed" || blockedResult.ReceiptSHA256 == "" {
+		unlockOperationPlanTestLocks(attemptLocks)
+		t.Fatalf("attempt-store contention was not bounded after receipt archival: result=%#v err=%v duration=%s", blockedResult, blockedErr, time.Since(startedAt))
+	}
+	unlockOperationPlanTestLocks(attemptLocks)
+	blockedAttempt, found, err := attempts.GetAttempt(blockedResult.SourceID, blockedResult.OperationID, blockedResult.AttemptID, blockedResult.Generation)
+	if err != nil || !found || blockedAttempt.State != "claimed" || blockedAttempt.Result != nil {
+		t.Fatalf("bounded commit timeout unexpectedly mutated the fenced attempt row: attempt=%#v found=%t err=%v", blockedAttempt, found, err)
+	}
+	usage, err = history.Usage(context.Background())
+	if err != nil || usage.RecordCount != 2 || usage.ReservationCount != 0 {
+		t.Fatalf("attempt-store lock caused a validated receipt to be lost: usage=%#v err=%v", usage, err)
 	}
 }
 
