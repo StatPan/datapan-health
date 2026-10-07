@@ -66,21 +66,22 @@ type RegistryAPIMetadataPin struct {
 // read model. It intentionally excludes receipts, errors, endpoints, quota
 // scopes, credentials, and response data.
 type OperationReadModelAttempt struct {
-	SourceID            string
-	OperationID         string
-	AttemptState        string // claimed, request_started, observed, failed, unknown
-	ReceiptValidated    bool
-	RequestStarted      *bool
-	EverRequestStarted  bool
-	ResultState         string // healthy, unhealthy, indeterminate
-	ResultCategory      string
-	ProviderObservedAt  time.Time
-	HealthReceivedAt    time.Time
-	GatusDeliveryState  string // not_ready, pending, acknowledged, readback_verified
-	GatusAcknowledgedAt time.Time
-	GatusReadbackAt     time.Time
-	GatusObservedState  string
-	UpdatedAt           time.Time
+	SourceID                string
+	OperationID             string
+	AttemptState            string // claimed, request_started, observed, failed, unknown
+	ObservationAttemptState string // none, observed; separate from the latest claim state
+	ReceiptValidated        bool
+	RequestStarted          *bool
+	EverRequestStarted      bool
+	ResultState             string // healthy, unhealthy, indeterminate
+	ResultCategory          string
+	ProviderObservedAt      time.Time
+	HealthReceivedAt        time.Time
+	GatusDeliveryState      string // not_ready, pending, acknowledged, readback_verified
+	GatusAcknowledgedAt     time.Time
+	GatusReadbackAt         time.Time
+	GatusObservedState      string
+	UpdatedAt               time.Time
 }
 
 type OperationReadModelIdentityCounts struct {
@@ -99,20 +100,21 @@ type OperationReadModelIdentityCounts struct {
 }
 
 type OperationAPIProgress struct {
-	APIID              string         `json:"api_id"`
-	TotalFunctions     int            `json:"total_functions"`
-	ConfiguredAdmitted int            `json:"configured_admitted"`
-	Claimed            int            `json:"claimed"`
-	Attempted          int            `json:"attempted"`
-	CurrentPass        int            `json:"current_pass"`
-	CurrentFail        int            `json:"current_fail"`
-	Pending            int            `json:"pending"`
-	Stale              int            `json:"stale"`
-	Unobserved         int            `json:"unobserved"`
-	DeliveryPending    int            `json:"delivery_pending"`
-	ReadbackVerified   int            `json:"readback_verified"`
-	MissingReasons     map[string]int `json:"missing_reasons"`
-	CoverageState      string         `json:"coverage_state"`
+	APIID                string         `json:"api_id"`
+	TotalFunctions       int            `json:"total_functions"`
+	ConfiguredAdmitted   int            `json:"configured_admitted"`
+	Claimed              int            `json:"claimed"`
+	Attempted            int            `json:"attempted"`
+	CurrentPass          int            `json:"current_pass"`
+	CurrentFail          int            `json:"current_fail"`
+	CurrentIndeterminate int            `json:"current_indeterminate"`
+	Pending              int            `json:"pending"`
+	Stale                int            `json:"stale"`
+	Unobserved           int            `json:"unobserved"`
+	DeliveryPending      int            `json:"delivery_pending"`
+	ReadbackVerified     int            `json:"readback_verified"`
+	MissingReasons       map[string]int `json:"missing_reasons"`
+	CoverageState        string         `json:"coverage_state"`
 }
 
 type OperationPageQuery struct {
@@ -168,9 +170,11 @@ type OperationReadModelRow struct {
 	ObservationPeriodSeconds *int64     `json:"observation_period_seconds"`
 	NextDueAt                *time.Time `json:"next_due_at"`
 	AttemptState             string     `json:"attempt_state"`
+	ObservationAttemptState  string     `json:"observation_attempt_state"`
 	RequestStarted           *bool      `json:"request_started"`
 	Attempted                bool       `json:"attempted"`
 	ObservationState         string     `json:"observation_state"`
+	ResultState              string     `json:"result_state,omitempty"`
 	ResultCategory           string     `json:"result_category,omitempty"`
 	ProviderObservedAt       *time.Time `json:"provider_observed_at"`
 	HealthReceivedAt         *time.Time `json:"health_received_at"`
@@ -386,6 +390,8 @@ func (model *OperationReadModel) LookupAPIProgress(apiIDs []string, at time.Time
 				progress.CurrentPass++
 			case "current_fail":
 				progress.CurrentFail++
+			case "current_indeterminate":
+				progress.CurrentIndeterminate++
 			case "stale":
 				progress.Stale++
 			case "unobserved":
@@ -404,9 +410,13 @@ func (model *OperationReadModel) LookupAPIProgress(apiIDs []string, at time.Time
 		results = append(results, progress)
 		if progress.TotalFunctions == 0 {
 			results[len(results)-1].CoverageState = "no_registered_operations"
-		} else if progress.CurrentPass+progress.CurrentFail == progress.TotalFunctions {
-			results[len(results)-1].CoverageState = "current"
-		} else if progress.CurrentPass+progress.CurrentFail > 0 {
+		} else if progress.CurrentPass+progress.CurrentFail+progress.CurrentIndeterminate == progress.TotalFunctions {
+			if progress.CurrentIndeterminate > 0 {
+				results[len(results)-1].CoverageState = "current_indeterminate"
+			} else {
+				results[len(results)-1].CoverageState = "current"
+			}
+		} else if progress.CurrentPass+progress.CurrentFail+progress.CurrentIndeterminate > 0 {
 			results[len(results)-1].CoverageState = "partial"
 		} else if progress.Stale > 0 {
 			results[len(results)-1].CoverageState = "stale"
@@ -483,6 +493,9 @@ func (model *OperationReadModel) PageOperations(query OperationPageQuery, at tim
 	for _, index := range matching[start:end] {
 		row := model.rows[index]
 		refreshOperationReadModelFreshness(&row, at)
+		if err := row.ValidatePublicProjection(at); err != nil {
+			return OperationReadModelPage{}, fmt.Errorf("%w: %v", ErrOperationReadModelUnavailable, err)
+		}
 		page.Operations = append(page.Operations, row)
 	}
 	if end < len(matching) && end > start {
@@ -492,6 +505,13 @@ func (model *OperationReadModel) PageOperations(query OperationPageQuery, at tim
 			return OperationReadModelPage{}, ErrOperationReadModelUnavailable
 		}
 		page.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
+	}
+	encoded, err := json.Marshal(page)
+	if err != nil {
+		return OperationReadModelPage{}, ErrOperationReadModelUnavailable
+	}
+	if err := schemas.ValidateHealthRegistryOperationsPageV2(encoded); err != nil {
+		return OperationReadModelPage{}, fmt.Errorf("%w: public page schema validation failed: %v", ErrOperationReadModelUnavailable, err)
 	}
 	return page, nil
 }
@@ -548,7 +568,7 @@ func operationReadModelRow(record OperationObservationPlanRecord, metadata *Regi
 		SourceID: record.SourceID, RegistryOperationID: record.OperationID, Provider: safePlanLabel(record.Provider), AdapterID: safePlanLabel(record.AdapterID), Protocol: safePlanLabel(record.Protocol),
 		OperationName: safeOperationReadText(record.OperationName), OperationNameState: "missing", TitleState: "missing", OrganizationState: "missing", PurposeState: "missing",
 		RequestPlanState: record.RequestPlanStatus, RuntimeBindingState: record.RuntimeBindingStatus, AdmissionState: record.AdmissionStatus,
-		AttemptState: "none", ObservationState: "unobserved", GatusDeliveryState: "not_ready",
+		AttemptState: "none", ObservationAttemptState: "none", ObservationState: "unobserved", GatusDeliveryState: "not_ready",
 	}
 	if row.OperationName != "" {
 		row.OperationNameState = "present"
@@ -642,7 +662,7 @@ func operationMissingReason(record OperationObservationPlanRecord) string {
 }
 
 func validOperationReadModelAttempt(attempt OperationReadModelAttempt) bool {
-	if !operationSourceIDPattern.MatchString(attempt.SourceID) || attempt.OperationID == "" || len(attempt.OperationID) > 256 || !validOperationReadModelAttemptState(attempt.AttemptState) || !validOperationReadModelDeliveryState(attempt.GatusDeliveryState) || attempt.UpdatedAt.IsZero() {
+	if !operationSourceIDPattern.MatchString(attempt.SourceID) || attempt.OperationID == "" || len(attempt.OperationID) > 256 || !validOperationReadModelAttemptState(attempt.AttemptState) || !validOperationReadModelObservationAttemptState(attempt.ObservationAttemptState) || !validOperationReadModelDeliveryState(attempt.GatusDeliveryState) || attempt.UpdatedAt.IsZero() {
 		return false
 	}
 	if attempt.RequestStarted != nil && !attempt.ReceiptValidated {
@@ -666,15 +686,21 @@ func validOperationReadModelAttempt(attempt OperationReadModelAttempt) bool {
 			return false
 		}
 	}
-	if attempt.AttemptState == "observed" && attempt.ProviderObservedAt.IsZero() {
+	if attempt.AttemptState == "observed" && attempt.ObservationAttemptState != "observed" {
 		return false
 	}
 	hasObservation := !attempt.ProviderObservedAt.IsZero() || !attempt.HealthReceivedAt.IsZero() || attempt.ResultState != "" || attempt.ResultCategory != ""
+	if hasObservation != (attempt.ObservationAttemptState == "observed") {
+		return false
+	}
 	if hasObservation {
 		if !validOperationReadModelResultState(attempt.ResultState) || !validOperationReadModelResultCategory(attempt.ResultCategory) || attempt.ProviderObservedAt.IsZero() || attempt.HealthReceivedAt.IsZero() || attempt.ProviderObservedAt.After(attempt.HealthReceivedAt) || attempt.HealthReceivedAt.After(attempt.UpdatedAt) {
 			return false
 		}
-		if attempt.ResultState == "healthy" && attempt.ResultCategory != "healthy" || attempt.ResultState == "unhealthy" && (attempt.ResultCategory == "healthy" || attempt.ResultCategory == "indeterminate") || attempt.ResultState == "indeterminate" && attempt.ResultCategory != "indeterminate" && attempt.ResultCategory != "observer_failure" {
+		if !validOperationReadModelResultPair(attempt.ResultState, attempt.ResultCategory) {
+			return false
+		}
+		if !attempt.GatusAcknowledgedAt.IsZero() && (attempt.GatusAcknowledgedAt.Before(attempt.HealthReceivedAt) || attempt.GatusAcknowledgedAt.After(attempt.UpdatedAt)) || !attempt.GatusReadbackAt.IsZero() && (attempt.GatusReadbackAt.Before(attempt.HealthReceivedAt) || attempt.GatusReadbackAt.After(attempt.UpdatedAt)) {
 			return false
 		}
 		if !validGatusReadback(attempt) {
@@ -701,9 +727,12 @@ func validGatusReadback(attempt OperationReadModelAttempt) bool {
 
 func applyOperationReadModelAttempt(row *OperationReadModelRow, attempt OperationReadModelAttempt) {
 	row.AttemptState = attempt.AttemptState
+	row.ObservationAttemptState = attempt.ObservationAttemptState
 	row.RequestStarted = cloneBool(attempt.RequestStarted)
 	row.Attempted = row.Attempted || attempt.EverRequestStarted || attempt.RequestStarted != nil && *attempt.RequestStarted
 	if !attempt.ProviderObservedAt.IsZero() {
+		row.MissingReason = ""
+		row.ResultState = attempt.ResultState
 		row.ResultCategory = attempt.ResultCategory
 		row.ProviderObservedAt = cloneTime(attempt.ProviderObservedAt)
 		row.HealthReceivedAt = cloneTime(attempt.HealthReceivedAt)
@@ -717,14 +746,31 @@ func applyOperationReadModelAttempt(row *OperationReadModelRow, attempt Operatio
 func refreshOperationReadModelFreshness(row *OperationReadModelRow, at time.Time) {
 	row.NextDueAt = nil
 	row.ObservationState = "unobserved"
+	if row.GatusAcknowledgedAt != nil && row.GatusAcknowledgedAt.After(at) {
+		row.GatusDeliveryState = "pending"
+		row.GatusAcknowledgedAt = nil
+		row.GatusReadbackAt = nil
+		row.GatusObservedState = ""
+	} else if row.GatusReadbackAt != nil && row.GatusReadbackAt.After(at) {
+		row.GatusDeliveryState = "acknowledged"
+		row.GatusReadbackAt = nil
+		row.GatusObservedState = ""
+	}
+	if row.ProviderObservedAt != nil && row.ProviderObservedAt.After(at) || row.HealthReceivedAt != nil && row.HealthReceivedAt.After(at) {
+		row.MissingReason = "future_observation"
+		return
+	}
 	if row.ProviderObservedAt != nil && row.ObservationPeriodSeconds != nil {
 		due := row.ProviderObservedAt.Add(time.Duration(*row.ObservationPeriodSeconds) * time.Second)
 		row.NextDueAt = &due
 		if at.Before(due) {
-			if row.ResultCategory == "healthy" {
+			switch row.ResultState {
+			case "healthy":
 				row.ObservationState = "current_pass"
-			} else {
+			case "unhealthy":
 				row.ObservationState = "current_fail"
+			case "indeterminate":
+				row.ObservationState = "current_indeterminate"
 			}
 		} else {
 			row.ObservationState = "stale"
@@ -766,6 +812,9 @@ func operationReadModelIdentityKey(sourceID, operationID string) string {
 func validOperationReadModelAttemptState(value string) bool {
 	return value == "claimed" || value == "request_started" || value == "observed" || value == "failed" || value == "unknown"
 }
+func validOperationReadModelObservationAttemptState(value string) bool {
+	return value == "none" || value == "observed"
+}
 
 func validRegistryAPIMetadataPin(pin RegistryAPIMetadataPin) bool {
 	return commitPattern.MatchString(pin.RegistryRevision) && sha256Pattern.MatchString(pin.SourceSHA256) && sha256Pattern.MatchString(pin.CatalogSHA256) && sha256Pattern.MatchString(pin.ArtifactSHA256) && pin.APIEntityCount >= 0 && pin.APIEntityCount <= 20_000 && pin.OperationCount >= 0 && pin.OperationCount <= 50_000
@@ -783,6 +832,21 @@ func validOperationReadModelResultCategory(value string) bool {
 	switch value {
 	case "healthy", "transport_failure", "timeout", "rate_limited", "credential_missing", "credential_rejected", "parameter_blocked", "provider_failure", "semantic_failure", "schema_drift", "unsupported", "observer_failure", "indeterminate":
 		return true
+	default:
+		return false
+	}
+}
+func validOperationReadModelResultPair(state, category string) bool {
+	if !validOperationReadModelResultState(state) || !validOperationReadModelResultCategory(category) {
+		return false
+	}
+	switch state {
+	case "healthy":
+		return category == "healthy"
+	case "unhealthy":
+		return category != "healthy" && category != "indeterminate" && category != "observer_failure"
+	case "indeterminate":
+		return category == "indeterminate" || category == "observer_failure"
 	default:
 		return false
 	}
@@ -812,9 +876,30 @@ func (model *OperationReadModel) CursorDigest() string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (row OperationReadModelRow) ValidatePublicProjection() error {
-	if row.SourceID == "" || row.RegistryOperationID == "" || row.TitleState == "present" && safeOperationReadText(row.Title) == "" || row.OrganizationState == "present" && safeOperationReadText(row.Organization) == "" || row.PurposeState == "present" && safeOperationReadText(row.Purpose) == "" || row.APIID != nil && !operationReadModelAPIIDPattern.MatchString(*row.APIID) {
+func (row OperationReadModelRow) ValidatePublicProjection(at time.Time) error {
+	if at.IsZero() || !operationSourceIDPattern.MatchString(row.SourceID) || row.RegistryOperationID == "" || row.OperationNameState == "present" && safeOperationReadText(row.OperationName) == "" || row.TitleState == "present" && safeOperationReadText(row.Title) == "" || row.OrganizationState == "present" && safeOperationReadText(row.Organization) == "" || row.PurposeState == "present" && safeOperationReadText(row.Purpose) == "" || row.APIID != nil && !operationReadModelAPIIDPattern.MatchString(*row.APIID) {
 		return fmt.Errorf("%w: unsafe projected operation metadata", ErrOperationReadModelUnavailable)
 	}
+	if !validOperationReadModelObservationAttemptState(row.ObservationAttemptState) || row.ObservationAttemptState == "observed" && (!validOperationReadModelResultPair(row.ResultState, row.ResultCategory) || row.ProviderObservedAt == nil || row.HealthReceivedAt == nil || row.ProviderObservedAt.After(*row.HealthReceivedAt)) || row.ObservationAttemptState == "none" && (row.ResultState != "" || row.ResultCategory != "" || row.ProviderObservedAt != nil || row.HealthReceivedAt != nil) {
+		return fmt.Errorf("%w: invalid observation projection state", ErrOperationReadModelUnavailable)
+	}
+	if row.HealthReceivedAt != nil && row.HealthReceivedAt.After(at) && (row.ObservationState != "unobserved" || row.MissingReason != "future_observation") || row.ProviderObservedAt != nil && row.ProviderObservedAt.After(at) && (row.ObservationState != "unobserved" || row.MissingReason != "future_observation") {
+		return fmt.Errorf("%w: future observation was projected as coverage", ErrOperationReadModelUnavailable)
+	}
+	if row.GatusAcknowledgedAt != nil && (row.HealthReceivedAt == nil || row.GatusAcknowledgedAt.Before(*row.HealthReceivedAt) || row.GatusAcknowledgedAt.After(at)) || row.GatusReadbackAt != nil && (row.GatusAcknowledgedAt == nil || row.GatusReadbackAt.Before(*row.GatusAcknowledgedAt) || row.GatusReadbackAt.After(at)) {
+		return fmt.Errorf("%w: invalid Gatus event time order", ErrOperationReadModelUnavailable)
+	}
+	projected := row
+	refreshOperationReadModelFreshness(&projected, at)
+	if projected.ObservationState != row.ObservationState || !equalOptionalTime(projected.NextDueAt, row.NextDueAt) || projected.GatusDeliveryState != row.GatusDeliveryState || !equalOptionalTime(projected.GatusAcknowledgedAt, row.GatusAcknowledgedAt) || !equalOptionalTime(projected.GatusReadbackAt, row.GatusReadbackAt) || projected.GatusObservedState != row.GatusObservedState {
+		return fmt.Errorf("%w: public projection is inconsistent at evaluation time", ErrOperationReadModelUnavailable)
+	}
 	return nil
+}
+
+func equalOptionalTime(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.Equal(*right)
 }

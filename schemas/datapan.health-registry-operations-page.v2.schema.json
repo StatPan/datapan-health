@@ -51,7 +51,7 @@
     },
     "operation": {
       "type": "object", "additionalProperties": false,
-      "required": ["source_id", "registry_operation_id", "api_id", "provider", "adapter_id", "protocol", "operation_name_state", "title_state", "organization_state", "purpose_state", "request_plan_state", "runtime_binding_state", "admission_state", "observation_period_seconds", "next_due_at", "attempt_state", "request_started", "attempted", "observation_state", "provider_observed_at", "health_received_at", "gatus_delivery_state", "gatus_acknowledged_at", "gatus_readback_at"],
+      "required": ["source_id", "registry_operation_id", "api_id", "provider", "adapter_id", "protocol", "operation_name_state", "title_state", "organization_state", "purpose_state", "request_plan_state", "runtime_binding_state", "admission_state", "observation_period_seconds", "next_due_at", "attempt_state", "observation_attempt_state", "request_started", "attempted", "observation_state", "provider_observed_at", "health_received_at", "gatus_delivery_state", "gatus_acknowledged_at", "gatus_readback_at"],
       "properties": {
         "source_id": {"type": "string", "pattern": "^[a-z0-9]+(?:_[a-z0-9]+)*$"},
         "registry_operation_id": {"type": "string", "minLength": 1, "maxLength": 256},
@@ -70,13 +70,15 @@
         "request_plan_state": {"enum": ["complete", "incomplete", "unknown"]},
         "runtime_binding_state": {"enum": ["bound", "unbound", "unknown"]},
         "admission_state": {"enum": ["admitted", "not_admitted", "unknown"]},
-        "missing_reason": {"enum": ["inventory_unknown", "test_only", "request_plan_incomplete", "runtime_unbound", "not_admitted", "unsupported_contract", "no_validated_observation"]},
+        "missing_reason": {"enum": ["inventory_unknown", "test_only", "request_plan_incomplete", "runtime_unbound", "not_admitted", "unsupported_contract", "no_validated_observation", "future_observation"]},
         "observation_period_seconds": {"type": ["integer", "null"], "minimum": 1, "maximum": 31536000},
         "next_due_at": {"$ref": "#/$defs/nullableDateTime"},
         "attempt_state": {"enum": ["none", "claimed", "request_started", "observed", "failed", "unknown"]},
+        "observation_attempt_state": {"enum": ["none", "observed"]},
         "request_started": {"type": ["boolean", "null"]},
         "attempted": {"type": "boolean"},
-        "observation_state": {"enum": ["current_pass", "current_fail", "stale", "unobserved"]},
+        "observation_state": {"enum": ["current_pass", "current_fail", "current_indeterminate", "stale", "unobserved"]},
+        "result_state": {"enum": ["healthy", "unhealthy", "indeterminate"]},
         "result_category": {"enum": ["healthy", "transport_failure", "timeout", "rate_limited", "credential_missing", "credential_rejected", "parameter_blocked", "provider_failure", "semantic_failure", "schema_drift", "unsupported", "observer_failure", "indeterminate"]},
         "provider_observed_at": {"$ref": "#/$defs/nullableDateTime"},
         "health_received_at": {"$ref": "#/$defs/nullableDateTime"},
@@ -84,7 +86,18 @@
         "gatus_acknowledged_at": {"$ref": "#/$defs/nullableDateTime"},
         "gatus_readback_at": {"$ref": "#/$defs/nullableDateTime"},
         "gatus_observed_state": {"enum": ["healthy", "unhealthy", "unknown"]}
-      }
+      },
+      "allOf": [
+        {"if": {"required": ["result_state"], "properties": {"result_state": {"const": "healthy"}}}, "then": {"required": ["result_category"], "properties": {"result_category": {"const": "healthy"}}}},
+        {"if": {"required": ["result_state"], "properties": {"result_state": {"const": "unhealthy"}}}, "then": {"required": ["result_category"], "properties": {"result_category": {"not": {"enum": ["healthy", "indeterminate", "observer_failure"]}}}}},
+        {"if": {"required": ["result_state"], "properties": {"result_state": {"const": "indeterminate"}}}, "then": {"required": ["result_category"], "properties": {"result_category": {"enum": ["indeterminate", "observer_failure"]}}}},
+        {"if": {"properties": {"observation_attempt_state": {"const": "none"}}}, "then": {"properties": {"result_state": {"not": {}}, "provider_observed_at": {"type": "null"}, "health_received_at": {"type": "null"}}}},
+        {"if": {"properties": {"observation_attempt_state": {"const": "observed"}}}, "then": {"required": ["result_state"], "properties": {"provider_observed_at": {"type": "string", "format": "date-time"}, "health_received_at": {"type": "string", "format": "date-time"}}}},
+        {"if": {"properties": {"attempt_state": {"const": "observed"}}}, "then": {"properties": {"observation_attempt_state": {"const": "observed"}}}},
+        {"if": {"properties": {"observation_state": {"const": "current_pass"}}}, "then": {"required": ["result_state"], "properties": {"result_state": {"const": "healthy"}}}},
+        {"if": {"properties": {"observation_state": {"const": "current_fail"}}}, "then": {"required": ["result_state"], "properties": {"result_state": {"const": "unhealthy"}}}},
+        {"if": {"properties": {"observation_state": {"const": "current_indeterminate"}}}, "then": {"required": ["result_state"], "properties": {"result_state": {"const": "indeterminate"}}}}
+      ]
     }
   }
 }

@@ -10,7 +10,7 @@ import (
 )
 
 func TestHealthRegistryOperationsPageV2Schema(t *testing.T) {
-	const expectedSchemaSHA256 = "6e7459c0e7e5f92924076961f083231bfe4a899a24e2864986901a3edb4ade97"
+	const expectedSchemaSHA256 = "3c7cb725094cf2d143c6eddce0818e87731d4c69fce14ee8aef419f552688516"
 	if got := schemas.HealthRegistryOperationsPageV2SchemaSHA256(); got != expectedSchemaSHA256 {
 		t.Fatalf("pinned page schema digest = %s, want %s", got, expectedSchemaSHA256)
 	}
@@ -25,7 +25,7 @@ func TestHealthRegistryOperationsPageV2Schema(t *testing.T) {
 			SourceID: "data_go_kr", RegistryOperationID: "operation-1", Provider: "data.go.kr", AdapterID: "data-go-kr", Protocol: "REST",
 			APIID: schemaStringPointer("api-1"), OperationNameState: "missing", TitleState: "missing", OrganizationState: "missing", PurposeState: "missing",
 			RequestPlanState: "incomplete", RuntimeBindingState: "unbound", AdmissionState: "not_admitted", MissingReason: "request_plan_incomplete",
-			AttemptState: "none", ObservationState: "unobserved", GatusDeliveryState: "not_ready",
+			AttemptState: "none", ObservationAttemptState: "none", ObservationState: "unobserved", GatusDeliveryState: "not_ready",
 		}},
 	}
 	raw, err := json.Marshal(page)
@@ -43,6 +43,16 @@ func TestHealthRegistryOperationsPageV2Schema(t *testing.T) {
 	raw, _ = json.Marshal(object)
 	if err := schemas.ValidateHealthRegistryOperationsPageV2(raw); err == nil {
 		t.Fatal("schema accepted an unmodeled endpoint field")
+	}
+	delete(object, "unmodeled_endpoint")
+	operations := object["operations"].([]any)
+	operation := operations[0].(map[string]any)
+	operation["observation_state"] = "current_pass"
+	operation["result_state"] = "unhealthy"
+	operation["result_category"] = "healthy"
+	raw, _ = json.Marshal(object)
+	if err := schemas.ValidateHealthRegistryOperationsPageV2(raw); err == nil {
+		t.Fatal("schema accepted a contradictory unhealthy/healthy result as a current pass")
 	}
 }
 
