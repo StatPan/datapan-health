@@ -59,7 +59,7 @@ func TestOperationReadModelRuntimeLoaderFailsClosedWithoutImageOwnedPlanPin(t *t
 
 func TestOperationReadModelRuntimePublishesOnlyCompleteRefreshAndKeepsLastGood(t *testing.T) {
 	started := time.Date(2026, 10, 7, 8, 0, 0, 0, time.UTC)
-	root, planBinding, _ := writeSyntheticOperationObservationPlan(t, false)
+	root, planBinding, _ := writeSyntheticOperationObservationPlanVersion(t, false, strings.Repeat("a", 40), 60)
 	plan, err := LoadPinnedOperationObservationPlan(root, planBinding)
 	if err != nil {
 		t.Fatal(err)
@@ -149,12 +149,86 @@ func TestOperationReadModelRuntimePublishesOnlyCompleteRefreshAndKeepsLastGood(t
 	if err := os.WriteFile(pathB, validB, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if complete, err = runtime.RefreshNextBatch(started.Add(8*time.Second), 1); err != nil || !complete {
-		t.Fatalf("repaired in-progress sweep did not complete: complete=%t err=%v", complete, err)
+	if complete, err = runtime.RefreshNextBatch(started.Add(8*time.Second), 1); err != nil || complete {
+		t.Fatalf("repaired sweep did not restart from its first bounded identity: complete=%t err=%v", complete, err)
 	}
-	updated, err := runtime.PageOperations(OperationPageQuery{Limit: 10}, started.Add(8*time.Second))
+	if complete, err = runtime.RefreshNextBatch(started.Add(9*time.Second), 1); err != nil || !complete {
+		t.Fatalf("repaired complete sweep did not publish: complete=%t err=%v", complete, err)
+	}
+	updated, err := runtime.PageOperations(OperationPageQuery{Limit: 10}, started.Add(9*time.Second))
 	if err != nil || len(updated.Operations) != 2 || updated.Operations[0].ObservationState != "current_pass" || updated.Operations[1].ObservationState != "current_fail" {
 		t.Fatalf("repaired full sweep did not atomically publish both validated observations: %#v %v", updated, err)
+	}
+	// The snapshot itself remains inside its five-minute cache age, but both
+	// provider observations have exceeded the plan's one-minute period. Status
+	// must calculate freshness at the requested time rather than reuse counts
+	// captured when the sweep completed.
+	statusAt := started.Add(64 * time.Second)
+	status := runtime.Status(statusAt)
+	if status.ReadModelState != "ready" || status.CurrentPass != 0 || status.CurrentFail != 0 || status.IdentityCounts.Missing != 2 || status.IdentityCounts.Late != 2 || status.CoverageState != "observations_incomplete" {
+		t.Fatalf("fresh-cache status reused expired observation counts: %#v", status)
+	}
+}
+
+func TestOperationReadModelExpiredSweepDiscardsStampsAndRereadsEarlierIdentity(t *testing.T) {
+	started := time.Date(2026, 10, 7, 8, 30, 0, 0, time.UTC)
+	root, planBinding, _ := writeSyntheticOperationObservationPlanVersion(t, false, strings.Repeat("b", 40), 60)
+	plan, err := LoadPinnedOperationObservationPlan(root, planBinding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, err := newOperationReadModel(plan, testRegistryAPIMetadataPin(0, 0), nil, nil, started)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenOperationAttemptStore(filepath.Join(t.TempDir(), "attempts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := NewOperationReadModelRuntime(model, store, 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identities, err := model.AttemptIdentities(0, 2)
+	if err != nil || len(identities) != 2 {
+		t.Fatalf("synthetic identities unavailable: %#v %v", identities, err)
+	}
+	if complete, err := runtime.refreshNextBatch(started, 1, time.Second); err != nil || complete {
+		t.Fatalf("first batch did not remain staged: complete=%t err=%v", complete, err)
+	}
+	// The first batch observed an absent state file. Before an overlong pass is
+	// abandoned, a writer creates a valid observation for that same identity.
+	// No staged stamp may suppress rereading that new state in the next pass.
+	binding := testOperationReadModelAttemptBinding(t, model, identities[0].SourceID, identities[0].OperationID)
+	claim, err := store.BeginAttempt(binding, strings.Repeat("1", 64), started.Add(time.Second), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := OperationObservationResult{State: "healthy", Category: "healthy", ObservedAt: started.Add(2 * time.Second), ReceivedAt: started.Add(3 * time.Second), ReceiptSHA: strings.Repeat("2", 64), LatencyMS: 10}
+	if err := store.CompleteAttempt(claim, result, started.Add(4*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	runtime.mu.Lock()
+	runtime.refreshWallStartedAt = time.Now().Add(-2 * time.Second)
+	runtime.mu.Unlock()
+	if complete, err := runtime.refreshNextBatch(started.Add(500*time.Millisecond), 1, time.Second); !errors.Is(err, errOperationReadModelRuntimeUnavailable) || complete {
+		t.Fatalf("overlong sweep was allowed to continue: complete=%t err=%v", complete, err)
+	}
+	store.stampsMu.Lock()
+	stampCount := len(store.readStamps)
+	store.stampsMu.Unlock()
+	if stampCount != 0 {
+		t.Fatalf("discarded sweep advanced %d state-file stamps", stampCount)
+	}
+	if complete, err := runtime.RefreshNextBatch(started.Add(3*time.Second), 1); err != nil || complete {
+		t.Fatalf("recovery pass did not reread the first identity: complete=%t err=%v", complete, err)
+	}
+	if complete, err := runtime.RefreshNextBatch(started.Add(4*time.Second), 1); err != nil || !complete {
+		t.Fatalf("recovery pass did not finish: complete=%t err=%v", complete, err)
+	}
+	page, err := runtime.PageOperations(OperationPageQuery{Limit: 10}, started.Add(4*time.Second))
+	if err != nil || len(page.Operations) != 2 || page.Operations[0].ObservationState != "current_pass" {
+		t.Fatalf("recovery snapshot missed the observation written after the abandoned read: %#v %v", page, err)
 	}
 }
 

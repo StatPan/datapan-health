@@ -286,18 +286,39 @@ func (store *OperationAttemptStore) prepareReadModelAttemptsForIdentities(identi
 }
 
 func (store *OperationAttemptStore) commitReadModelAttemptBatch(batch *operationReadModelAttemptBatch) error {
-	if store == nil || batch == nil || batch.store != store || batch.committed {
+	return store.commitReadModelAttemptBatches([]*operationReadModelAttemptBatch{batch})
+}
+
+// commitReadModelAttemptBatches advances file stamps only after a complete
+// read-model sweep has accepted every bounded batch. If a sweep is discarded,
+// none of its staged stamps hide a later retry.
+func (store *OperationAttemptStore) commitReadModelAttemptBatches(batches []*operationReadModelAttemptBatch) error {
+	if store == nil || len(batches) == 0 {
 		return ErrOperationAttemptUnavailable
+	}
+	updates := make(map[string]operationAttemptFileStamp)
+	for _, batch := range batches {
+		if batch == nil || batch.store != store || batch.committed {
+			return ErrOperationAttemptUnavailable
+		}
+		for path, stamp := range batch.stampUpdates {
+			if _, duplicate := updates[path]; duplicate {
+				return ErrOperationAttemptUnavailable
+			}
+			updates[path] = stamp
+		}
 	}
 	store.stampsMu.Lock()
 	defer store.stampsMu.Unlock()
 	if store.readStamps == nil {
 		store.readStamps = make(map[string]operationAttemptFileStamp)
 	}
-	for path, stamp := range batch.stampUpdates {
+	for path, stamp := range updates {
 		store.readStamps[path] = stamp
 	}
-	batch.committed = true
+	for _, batch := range batches {
+		batch.committed = true
+	}
 	return nil
 }
 

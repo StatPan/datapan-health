@@ -482,6 +482,25 @@ func (model *OperationReadModel) RefreshFromStoreBatch(store *OperationAttemptSt
 	return nextOffset, nextOffset == len(model.staticRows), nil
 }
 
+// refreshFromStoreBatchPrepared applies one decoded identity batch to a
+// private staging model but leaves its file stamps pending. The runtime
+// commits all pending batches together only after the complete sweep succeeds.
+func (model *OperationReadModel) refreshFromStoreBatchPrepared(store *OperationAttemptStore, offset, limit int, generatedAt time.Time) (nextOffset int, complete bool, batch *operationReadModelAttemptBatch, err error) {
+	if store == nil || generatedAt.IsZero() {
+		return offset, false, nil, ErrOperationReadModelUnavailable
+	}
+	identities, err := model.AttemptIdentities(offset, limit)
+	if err != nil || len(identities) == 0 {
+		return offset, false, nil, ErrOperationReadModelUnavailable
+	}
+	batch, err = store.prepareReadModelAttemptsForIdentities(identities)
+	if err != nil || model.applyAttempts(batch.attempts, generatedAt, nil) != nil {
+		return offset, false, nil, ErrOperationReadModelUnavailable
+	}
+	nextOffset = offset + len(identities)
+	return nextOffset, nextOffset == len(model.staticRows), batch, nil
+}
+
 // ApplyAttempts publishes one store batch atomically into the cached page
 // projection. Plan-mismatched historical state is ignored rather than
 // relabeled under the current Registry release.
