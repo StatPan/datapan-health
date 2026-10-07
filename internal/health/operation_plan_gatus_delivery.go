@@ -1,6 +1,7 @@
 package health
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,7 +15,7 @@ import (
 
 const (
 	maxOperationGatusReadbackBytes = 256 << 10
-	maxOperationGatusHistoryRows   = 512
+	maxOperationGatusHistoryRows   = 1
 	operationGatusReadbackPolls    = 3
 	operationGatusReadbackDelay    = 100 * time.Millisecond
 )
@@ -22,14 +23,32 @@ const (
 var errOperationGatusDeliveryUnavailable = errors.New("operation Gatus delivery is unavailable")
 
 type operationGatusStatusResult struct {
-	Success   bool   `json:"success"`
-	Duration  int64  `json:"duration"`
-	Timestamp string `json:"timestamp"`
+	HTTPStatus       *int                             `json:"status,omitempty"`
+	Hostname         *string                          `json:"hostname,omitempty"`
+	Duration         *int64                           `json:"duration"`
+	Errors           []string                         `json:"errors,omitempty"`
+	ConditionResults []*operationGatusConditionResult `json:"conditionResults,omitempty"`
+	Success          *bool                            `json:"success"`
+	Timestamp        *time.Time                       `json:"timestamp"`
+	Name             *string                          `json:"name,omitempty"`
 }
 
 type operationGatusStatusResponse struct {
-	Key     string                       `json:"key"`
-	Results []operationGatusStatusResult `json:"results"`
+	Name    *string                       `json:"name,omitempty"`
+	Group   *string                       `json:"group,omitempty"`
+	Key     *string                       `json:"key"`
+	Results []*operationGatusStatusResult `json:"results"`
+	Events  []*operationGatusEvent        `json:"events,omitempty"`
+}
+
+type operationGatusConditionResult struct {
+	Condition *string `json:"condition"`
+	Success   *bool   `json:"success"`
+}
+
+type operationGatusEvent struct {
+	Type      *string    `json:"type"`
+	Timestamp *time.Time `json:"timestamp"`
 }
 
 // OperationPlanGatusDelivery sends only the Health-owned outcome and reads
@@ -100,6 +119,10 @@ func (delivery *OperationPlanGatusDelivery) Readback(ctx context.Context, key st
 	wantSuccess := expected.State == "healthy"
 	wantDuration := (time.Duration(expected.LatencyMS) * time.Millisecond).Nanoseconds()
 	endpoint := delivery.endpoint("/api/v1/endpoints/" + url.PathEscape(key) + "/statuses")
+	query := endpoint.Query()
+	query.Set("page", "1")
+	query.Set("pageSize", "1")
+	endpoint.RawQuery = query.Encode()
 	var latestAt time.Time
 	for attempt := 0; attempt < operationGatusReadbackPolls; attempt++ {
 		response, err := delivery.get(ctx, endpoint)
@@ -164,31 +187,149 @@ func (delivery *OperationPlanGatusDelivery) endpoint(path string) *url.URL {
 }
 
 func decodeOperationGatusStatus(raw []byte, expectedKey string) (time.Time, bool, int64, error) {
-	if len(raw) == 0 || len(raw) > maxOperationGatusReadbackBytes || !validPlanGatusEndpointKey(expectedKey) {
+	if len(raw) == 0 || len(raw) > maxOperationGatusReadbackBytes || !validPlanGatusEndpointKey(expectedKey) || validateOperationGatusJSONMembers(raw) != nil {
 		return time.Time{}, false, 0, errOperationGatusDeliveryUnavailable
 	}
-	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
 	var status operationGatusStatusResponse
-	if decoder.Decode(&status) != nil || decoder.Decode(new(any)) != io.EOF || status.Key != expectedKey || len(status.Results) == 0 || len(status.Results) > maxOperationGatusHistoryRows {
+	if decoder.Decode(&status) != nil || decoder.Decode(new(any)) != io.EOF || status.Key == nil || *status.Key != expectedKey || len(status.Results) != maxOperationGatusHistoryRows || status.Results[0] == nil {
 		return time.Time{}, false, 0, errOperationGatusDeliveryUnavailable
 	}
-	var newest operationGatusStatusResult
-	var newestAt time.Time
-	for _, item := range status.Results {
-		at, err := time.Parse(time.RFC3339Nano, item.Timestamp)
-		if err != nil || item.Duration < 0 {
-			return time.Time{}, false, 0, errOperationGatusDeliveryUnavailable
-		}
-		if at.After(newestAt) {
-			newest, newestAt = item, at.UTC()
-		} else if at.Equal(newestAt) && (item.Success != newest.Success || item.Duration != newest.Duration) {
-			return time.Time{}, false, 0, errOperationGatusDeliveryUnavailable
-		}
-	}
-	if newestAt.IsZero() {
+	result := status.Results[0]
+	if result.Duration == nil || result.Success == nil || result.Timestamp == nil || result.Timestamp.IsZero() || *result.Duration < 0 || *result.Duration > int64((365*24*time.Hour)) {
 		return time.Time{}, false, 0, errOperationGatusDeliveryUnavailable
 	}
-	return newestAt, newest.Success, newest.Duration, nil
+	if result.HTTPStatus != nil && (*result.HTTPStatus < 0 || *result.HTTPStatus > 599) {
+		return time.Time{}, false, 0, errOperationGatusDeliveryUnavailable
+	}
+	for _, item := range result.ConditionResults {
+		if item == nil || item.Condition == nil || item.Success == nil {
+			return time.Time{}, false, 0, errOperationGatusDeliveryUnavailable
+		}
+	}
+	for _, item := range status.Events {
+		if item == nil || item.Type == nil || item.Timestamp == nil || item.Timestamp.IsZero() || (*item.Type != "START" && *item.Type != "HEALTHY" && *item.Type != "UNHEALTHY") {
+			return time.Time{}, false, 0, errOperationGatusDeliveryUnavailable
+		}
+	}
+	return result.Timestamp.UTC(), *result.Success, *result.Duration, nil
+}
+
+// validateOperationGatusJSONMembers rejects duplicate JSON members and
+// case-folded aliases before encoding/json can apply its last-value-wins or
+// case-insensitive struct matching behavior. Object shapes are restricted to
+// the native DTO fields emitted by the pinned Gatus v5.36.0 API.
+func validateOperationGatusJSONMembers(raw []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	first, err := decoder.Token()
+	if err != nil || consumeOperationGatusJSONValue(decoder, first, "status") != nil {
+		return errOperationGatusDeliveryUnavailable
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return errOperationGatusDeliveryUnavailable
+	}
+	return nil
+}
+
+func consumeOperationGatusJSONValue(decoder *json.Decoder, token json.Token, shape string) error {
+	delim, isDelim := token.(json.Delim)
+	if !isDelim {
+		return nil
+	}
+	switch delim {
+	case '{':
+		allowed := operationGatusAllowedFields(shape)
+		seen := map[string]struct{}{}
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			key, ok := keyToken.(string)
+			if err != nil || !ok {
+				return errOperationGatusDeliveryUnavailable
+			}
+			folded := strings.ToLower(key)
+			if _, duplicate := seen[folded]; duplicate {
+				return errOperationGatusDeliveryUnavailable
+			}
+			seen[folded] = struct{}{}
+			if allowed != nil {
+				if _, accepted := allowed[key]; !accepted {
+					return errOperationGatusDeliveryUnavailable
+				}
+			}
+			value, err := decoder.Token()
+			if err != nil || consumeOperationGatusJSONValue(decoder, value, operationGatusChildShape(shape, key)) != nil {
+				return errOperationGatusDeliveryUnavailable
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil || closing != json.Delim('}') {
+			return errOperationGatusDeliveryUnavailable
+		}
+	case '[':
+		childShape := operationGatusArrayItemShape(shape)
+		for decoder.More() {
+			value, err := decoder.Token()
+			if err != nil || consumeOperationGatusJSONValue(decoder, value, childShape) != nil {
+				return errOperationGatusDeliveryUnavailable
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil || closing != json.Delim(']') {
+			return errOperationGatusDeliveryUnavailable
+		}
+	default:
+		return errOperationGatusDeliveryUnavailable
+	}
+	return nil
+}
+
+func operationGatusAllowedFields(shape string) map[string]struct{} {
+	fields := []string(nil)
+	switch shape {
+	case "status":
+		fields = []string{"name", "group", "key", "results", "events"}
+	case "result":
+		fields = []string{"status", "hostname", "duration", "errors", "conditionResults", "success", "timestamp", "name"}
+	case "condition":
+		fields = []string{"condition", "success"}
+	case "event":
+		fields = []string{"type", "timestamp"}
+	default:
+		return nil
+	}
+	allowed := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		allowed[field] = struct{}{}
+	}
+	return allowed
+}
+
+func operationGatusChildShape(parent, field string) string {
+	switch {
+	case parent == "status" && field == "results":
+		return "results"
+	case parent == "status" && field == "events":
+		return "events"
+	case parent == "result" && field == "conditionResults":
+		return "conditions"
+	default:
+		return "any"
+	}
+}
+
+func operationGatusArrayItemShape(shape string) string {
+	switch shape {
+	case "results":
+		return "result"
+	case "events":
+		return "event"
+	case "conditions":
+		return "condition"
+	default:
+		return "any"
+	}
 }
 
 func validPlanGatusEndpointKey(key string) bool {

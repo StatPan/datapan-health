@@ -33,7 +33,7 @@ func TestOperationPlanGatusDeliveryUsesBoundedPerKeyPushAndReadback(t *testing.T
 			w.WriteHeader(http.StatusNoContent)
 		case http.MethodGet:
 			getCalls++
-			if r.URL.Path != "/api/v1/endpoints/"+key+"/statuses" {
+			if r.URL.Path != "/api/v1/endpoints/"+key+"/statuses" || r.URL.Query().Get("page") != "1" || r.URL.Query().Get("pageSize") != "1" || len(r.URL.Query()) != 2 {
 				t.Errorf("operation readback did not use the exact per-key status path")
 			}
 			// Gatus records the native result before the POST response reaches
@@ -41,7 +41,7 @@ func TestOperationPlanGatusDeliveryUsesBoundedPerKeyPushAndReadback(t *testing.T
 			acknowledgedAtMu.Lock()
 			resultAt := acknowledgedAt.Add(-100 * time.Millisecond)
 			acknowledgedAtMu.Unlock()
-			fmt.Fprintf(w, `{"key":%q,"results":[{"success":true,"duration":123000000,"timestamp":%q,"errors":[]}]}`, key, resultAt.Format(time.RFC3339Nano))
+			fmt.Fprintf(w, `{"name":"fixture","group":"registry-operations","key":%q,"results":[{"status":200,"hostname":"fixture.invalid","duration":123000000,"errors":[],"conditionResults":[],"success":true,"timestamp":%q}],"events":[]}`, key, resultAt.Format(time.RFC3339Nano))
 		default:
 			t.Errorf("unexpected Gatus method %s", r.Method)
 			http.NotFound(w, r)
@@ -94,6 +94,45 @@ func TestOperationPlanGatusDeliveryUsesBoundedPerKeyPushAndReadback(t *testing.T
 	}
 	if err := store.RecordGatusReadback(binding.SourceID, binding.OperationID, claim.AttemptID, claim.Generation, readbackAt, state); err != nil {
 		t.Fatalf("verified GET completion must satisfy the durable ACK ordering: %v", err)
+	}
+}
+
+func TestDecodeOperationGatusStatusRequiresUnambiguousNativeFields(t *testing.T) {
+	key := stableOperationGatusEndpointKey("data_go_kr", strings.Repeat("a", 64))
+	at := time.Now().UTC().Add(-time.Second).Format(time.RFC3339Nano)
+	valid := fmt.Sprintf(`{"key":%q,"results":[{"success":true,"duration":123000000,"timestamp":%q}]}`, key, at)
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "missing key", body: fmt.Sprintf(`{"results":[{"success":true,"duration":123000000,"timestamp":%q}]}`, at)},
+		{name: "null key", body: fmt.Sprintf(`{"key":null,"results":[{"success":true,"duration":123000000,"timestamp":%q}]}`, at)},
+		{name: "missing success", body: fmt.Sprintf(`{"key":%q,"results":[{"duration":123000000,"timestamp":%q}]}`, key, at)},
+		{name: "null success", body: fmt.Sprintf(`{"key":%q,"results":[{"success":null,"duration":123000000,"timestamp":%q}]}`, key, at)},
+		{name: "wrong success type", body: fmt.Sprintf(`{"key":%q,"results":[{"success":1,"duration":123000000,"timestamp":%q}]}`, key, at)},
+		{name: "missing duration", body: fmt.Sprintf(`{"key":%q,"results":[{"success":true,"timestamp":%q}]}`, key, at)},
+		{name: "null duration", body: fmt.Sprintf(`{"key":%q,"results":[{"success":true,"duration":null,"timestamp":%q}]}`, key, at)},
+		{name: "wrong duration type", body: fmt.Sprintf(`{"key":%q,"results":[{"success":true,"duration":"123000000","timestamp":%q}]}`, key, at)},
+		{name: "missing timestamp", body: fmt.Sprintf(`{"key":%q,"results":[{"success":true,"duration":123000000}]}`, key)},
+		{name: "null timestamp", body: fmt.Sprintf(`{"key":%q,"results":[{"success":true,"duration":123000000,"timestamp":null}]}`, key)},
+		{name: "duplicate success", body: fmt.Sprintf(`{"key":%q,"results":[{"success":true,"success":false,"duration":123000000,"timestamp":%q}]}`, key, at)},
+		{name: "case alias", body: fmt.Sprintf(`{"key":%q,"results":[{"success":true,"Success":false,"duration":123000000,"timestamp":%q}]}`, key, at)},
+		{name: "unknown top-level field", body: fmt.Sprintf(`{"key":%q,"unexpected":true,"results":[{"success":true,"duration":123000000,"timestamp":%q}]}`, key, at)},
+		{name: "two results despite page size one", body: fmt.Sprintf(`{"key":%q,"results":[{"success":true,"duration":123000000,"timestamp":%q},{"success":true,"duration":123000000,"timestamp":%q}]}`, key, at, at)},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			if _, _, _, err := decodeOperationGatusStatus([]byte(test.body), key); err == nil {
+				t.Fatal("ambiguous or incomplete native Gatus result was accepted")
+			}
+		})
+	}
+	if _, success, duration, err := decodeOperationGatusStatus([]byte(valid), key); err != nil || !success || duration != 123000000 {
+		t.Fatalf("valid pinned native status failed: success=%v duration=%d err=%v", success, duration, err)
+	}
+	nativeOptional := fmt.Sprintf(`{"name":"probe","group":"registry-operations","key":%q,"results":[{"status":200,"hostname":"fixture.invalid","duration":123000000,"errors":[],"conditionResults":[{"condition":"[STATUS] == 200","success":true}],"success":true,"timestamp":%q}],"events":[{"type":"HEALTHY","timestamp":%q}]}`, key, at, at)
+	if _, success, duration, err := decodeOperationGatusStatus([]byte(nativeOptional), key); err != nil || !success || duration != 123000000 {
+		t.Fatalf("valid pinned optional native fields failed: success=%v duration=%d err=%v", success, duration, err)
 	}
 }
 
