@@ -43,6 +43,9 @@ var healthRegistryAPIMetadataSchema []byte
 //go:embed datapan.health-registry-api-metadata-source-pin.v1.schema.json
 var healthRegistryAPIMetadataSourcePinSchema []byte
 
+//go:embed datapan.health-self-readiness.v1.schema.json
+var healthSelfReadinessSchema []byte
+
 var (
 	healthProbeOnce                   sync.Once
 	healthProbe                       *jsonschema.Schema
@@ -77,6 +80,9 @@ var (
 	healthRegistryMetadataPinOnce     sync.Once
 	healthRegistryMetadataPin         *jsonschema.Schema
 	healthRegistryMetadataPinErr      error
+	healthSelfReadinessOnce           sync.Once
+	healthSelfReadiness               *jsonschema.Schema
+	healthSelfReadinessErr            error
 )
 
 func ValidateHealthProbeV1(data []byte) error {
@@ -162,6 +168,15 @@ func ValidateHealthRegistryAPIMetadataSourcePinV1(data []byte) error {
 		healthRegistryMetadataPin, healthRegistryMetadataPinErr = compile(healthRegistryAPIMetadataSourcePinSchema, "https://schemas.datapan.dev/datapan.health-registry-api-metadata-source-pin.v1.schema.json")
 	})
 	return validate(data, healthRegistryMetadataPin, healthRegistryMetadataPinErr, "Registry API metadata source pin")
+}
+
+// ValidateHealthSelfReadinessV1 validates the private scheduler's aggregate
+// readiness response before any status fields are projected to public HTML.
+func ValidateHealthSelfReadinessV1(data []byte) error {
+	healthSelfReadinessOnce.Do(func() {
+		healthSelfReadiness, healthSelfReadinessErr = compile(healthSelfReadinessSchema, "https://schemas.datapan.dev/datapan.health-self-readiness.v1.schema.json")
+	})
+	return validate(data, healthSelfReadiness, healthSelfReadinessErr, "Health self-readiness")
 }
 
 func compile(source []byte, uri string) (*jsonschema.Schema, error) {

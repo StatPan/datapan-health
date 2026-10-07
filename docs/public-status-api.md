@@ -8,9 +8,10 @@ route, or prove availability of any Datapan product.
 
 | Route | Contract | Meaning |
 | --- | --- | --- |
-| `GET /datapan/` | HTML overview | Explains the two scopes. |
-| `GET /datapan/services/` | HTML | Datapan-owned services only. |
-| `GET /datapan/dependencies/` | HTML | External dependency observations only. |
+| `GET /datapan/` | Korean HTML API directory | Searchable, paginated one-column list of all API metadata in the pinned `data.go.kr` Registry snapshot, with Korean title/institution/purpose and exact joined Health results. APIs with a recent result sort first, configured APIs next; every API remains searchable and paginated. |
+| `GET /datapan/apis/{registry_api_id}/` | Korean HTML API detail | Full source description and API functions, paged at 50 rows. Shows status only for an exact configured-function join; never infers API-wide health. |
+| `GET /datapan/services/` | Korean HTML | Datapan-owned service status and a separate aggregate scheduler readiness projection. |
+| `GET /datapan/dependencies/` | Korean HTML | Results for the ten configured external API functions, with allowlisted explanation/actions and up to 50 Gatus result-receipt history points per function. |
 | `GET /datapan/v1/services` | `datapan.service-status.v1` | Dataset API, Registry distribution, Datapan Web/Atlas, and Health itself. A service is `unknown` unless its own check supplies a public surface and immutable deployment identity. |
 | `GET /datapan/v1/dependencies` | `datapan.dependency-observation.v1` | The ten Registry-owned `dpr-op-*` canaries. This is not a Datapan service SLA or catalogue-coverage claim. |
 | `GET /datapan/v1/status` | `datapan.dependency-status-legacy.v1` | Dependency-only compatibility alias for one release. It emits `Deprecation: true`, `Sunset: Thu, 31 Dec 2026 23:59:59 GMT`, and links to both successors. |
@@ -20,12 +21,52 @@ records one full release of consumer evidence, successor parity, a visible
 warning period, and the exact removal release. It never represents
 Datapan-owned service status.
 
+The checked-in metadata artifact describes the complete pinned `data.go.kr`
+Registry source snapshot at revision `d7dba637a06e345cba7ae058cba96fe53d3e532b`:
+12,282 API entities, 12,662 REST/SOAP API operations, 8,871 separately
+classified LINK operations, 473 operationless entries, and 416 source
+institutions. This is not a complete inventory of every Registry adapter;
+`registry_wide_metadata_complete` remains false. Counts describe source
+metadata, not safe-to-call, entitled, or currently observed APIs. The Health
+catalog configures ten exact API-function observations. This fixed Registry
+snapshot is not a claim about the portal's current full registration state.
+The HTML keeps the metadata source revision and Health observation-catalog
+revision distinct in a disclosure. Its recent-result times and history points
+are the times Gatus received status results, not original provider request
+times. Each function's strip retains at most the latest 50 result-receipt
+points, with only timestamp and success/failure; the public v1 JSON is unchanged.
+
+HTML pages also show the private scheduler `/status` aggregate as “Datapan
+관제”. The public adapter accepts only the pinned readiness schema, exact
+configured-canary identity set, allowlisted reason codes and internally
+consistent timestamps; it discards all per-canary rows and identities. It
+uses a one-second timeout, one-second coalesced cache and the shorter of the
+cache interval, scheduler-loop freshness deadline, and canary heartbeat
+deadlines. A null, stale, invalid, or unavailable report becomes a generic
+monitoring-system problem and never changes an API-function result.
+
+Only inventory HTML accepts bounded navigation parameters: `/datapan/` accepts
+`page` and `q`, and API detail accepts `page`. Search is limited to 128 Unicode
+characters and 256 UTF-8 bytes; URL, host, credential, internal-target, and
+query/path-shaped search values receive a generic Korean 400 response without
+echo. JSON routes, services, and dependency HTML continue to reject query
+parameters. Search responses use `no-store`; ordinary HTML uses a byte-derived
+ETag and short cache. Listing and detail requests only read the pinned metadata
+artifact and cached Gatus summary; they never start provider work.
+
 The dependency adapter deliberately excludes Gatus key/name, dataset ID,
 provider host/path/message, query data, receipt, credential identity, response
 data, and support references. A missing, future, or heartbeat-expired canary
 is `unknown`; it cannot promote an owned service. Diagnosis is projected only
 from a separately reviewed accepted input, otherwise it is `unknown` with no
 action IDs.
+
+The Korean HTML projection displays only source-sanitized title, institution,
+description, and operation-name metadata from the pinned artifact. Missing or
+unsafe field states remain visible. Registry operation hashes and internal
+Health IDs are used for exact joins and internal navigation only; endpoint
+addresses, paths, request examples, query values, credentials, and response
+rows are not rendered.
 
 ## Dependency observation and incident meaning
 
@@ -54,11 +95,11 @@ credentials, accept an authorization header, or use a wildcard. Approved
 GET/HEAD preflight returns only `GET, HEAD`; other origin, method, and header
 shapes fail closed.
 
-JSON and HTML responses use a byte-derived strong ETag and
+JSON responses and ordinary HTML pages use a byte-derived strong ETag and
 `Cache-Control: public, max-age=30, stale-if-error=60, no-transform`.
-`If-None-Match` returns 304. Errors are generic, `no-store`, and contain no
-upstream/parser detail. JSON responses vary on `Origin`; preflight also varies
-on its requested method and headers.
+`If-None-Match` returns 304. Search responses and errors use `no-store`; errors
+are generic and contain no upstream/parser detail. JSON responses vary on
+`Origin`; preflight also varies on its requested method and headers.
 
 ## Readiness report
 
@@ -77,10 +118,12 @@ route or dependency coverage meaning.
 ## Local container smoke
 
 The Compose `public-status` profile uses the private Gatus status URL and the
-reviewed canary map:
+reviewed canary map. Add the scheduler profile to show its aggregate readiness;
+its local configuration deliberately lacks an executable CLI and provider
+credentials, so it cannot make provider calls:
 
 ```sh
-docker compose --profile public-status up --build gatus public-status
+docker compose --profile public-status --profile scheduler up --build gatus scheduler public-status
 curl -H 'Origin: https://datapan.statpan.com' http://127.0.0.1:8082/datapan/v1/dependencies
 curl -H 'Origin: https://datapan.statpan.com' http://127.0.0.1:8082/datapan/v1/services
 ```

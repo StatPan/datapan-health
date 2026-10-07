@@ -1,6 +1,6 @@
 # Datapan Status
 
-공공데이터 API가 고장 난 것처럼 보일 때 가장 먼저 확인하는 공개 상태 페이지의 최소 구현입니다. UI는 익숙한 한 열 세로 목록을 유지하며, [upstream Gatus v5.36.0](https://github.com/TwiN/gatus/releases/tag/v5.36.0)을 수정 없이 사용합니다.
+공공데이터 API가 어떤 기관의 어떤 기능을 제공하는지, 연결된 기능의 검사 결과가 어떤지 한국어로 보여주는 공개 상태 페이지입니다. `/datapan/`은 고정된 Registry 원본 시점의 `data.go.kr` 목록을 페이지로 나누어 표시하며, 다른 제공처와 나머지 API 기능은 연결 중인 상태를 그대로 보여줍니다. 익숙한 한 열 세로 목록과 API 상태·이력은 고정된 [upstream Gatus v5.36.0](https://github.com/TwiN/gatus/releases/tag/v5.36.0)을 사용합니다. Health의 한국어 화면은 저장된 API 설명과 Gatus 결과를 읽기 전용으로 연결합니다.
 
 ## Governance
 
@@ -31,11 +31,14 @@ make archive-smoke
 ```
 
 `docker compose --profile scheduler up scheduler` starts the separate
-scheduler health surface on `:8081` (`/live`, `/ready`, `/metrics`). The local
+scheduler health surface on `:8081` (`/live`, `/ready`, `/status`, `/metrics`). The local
 profile deliberately has no Datapan CLI credential or provider executable, so
 it cannot call a real provider.
 
-`health-public` provides separate versioned browser contracts defined in
+`health-public` renders the Korean read-only pages at `/datapan/`,
+`/datapan/dependencies/` and `/datapan/services/`; it reads the scheduler's
+private `/status` aggregate to show Health pipeline readiness separately from
+API results. It also provides separate versioned browser contracts defined in
 [docs/public-status-api.md](docs/public-status-api.md): owned service status at
 `/datapan/v1/services` and external canary observations at
 `/datapan/v1/dependencies`. The latter maps exact Registry operation identity

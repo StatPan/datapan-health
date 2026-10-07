@@ -53,6 +53,9 @@ COPY config /opt/datapan-health/config
 ENV DATAPAN_BIN=/opt/datapan-cli/datapan \
     HEALTH_RUNNER_BIN=/health-runner \
     CANARY_CONFIG=/opt/datapan-health/config/canaries.json \
+    REGISTRY_API_METADATA=/opt/datapan-health/config/registry/api-metadata.v1.json \
+    REGISTRY_API_METADATA_PIN=/opt/datapan-health/config/registry/api-metadata-source-pin.v1.json \
+    HEALTH_SELF_READINESS_URL=http://scheduler:8081/status \
     ASSERTION_POLICY_PIN=/opt/datapan-health/config/registry/assertion-policy-contract-pin.json \
     RUNTIME_DEPENDENCY_LOCK=/opt/datapan-health/config/runtime-dependencies.json
 WORKDIR /opt/datapan-cli

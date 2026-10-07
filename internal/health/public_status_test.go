@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,6 +16,42 @@ import (
 )
 
 var publicNow = time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC)
+
+func TestFormatPublicCount(t *testing.T) {
+	for value, want := range map[int]string{0: "0", 10: "10", 999: "999", 1000: "1,000", 12652: "12,652", 12282: "12,282"} {
+		if got := formatPublicCount(value); got != want {
+			t.Errorf("formatPublicCount(%d) = %q, want %q", value, got, want)
+		}
+	}
+}
+
+func TestUnknownHTMLDiagnosisStatesEvidenceLimitAndSafeNextStep(t *testing.T) {
+	cause, next := publicHTMLDiagnosis(unknownPublicDiagnosis())
+	if cause != "현재 기록만으로는 실패 원인을 확인할 수 없습니다." || next != "추가 검사 결과와 공급처 공지, API 사용 조건을 확인하세요." {
+		t.Fatalf("unknown diagnosis copy = (%q, %q)", cause, next)
+	}
+}
+
+func TestPublicHTMLGuardErrorsAreKoreanAndRetryable(t *testing.T) {
+	handler, err := NewPublicStatusHandler(staticPublicSource{}, []string{"https://datapan.statpan.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard, err := NewPublicReadGuard(handler, PublicReadLimits{RequestsPerSecond: 1, Burst: 1, MaxConcurrent: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := httptest.NewRecorder()
+	guard.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/datapan/", nil))
+	if first.Code != http.StatusServiceUnavailable || first.Header().Get("Content-Type") != "text/html; charset=utf-8" || first.Header().Get("Retry-After") != "1" || !strings.Contains(first.Body.String(), "상태 페이지를 잠시 사용할 수 없습니다.") {
+		t.Fatalf("HTML unavailable response: status=%d headers=%v body=%s", first.Code, first.Header(), first.Body.String())
+	}
+	second := httptest.NewRecorder()
+	guard.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/datapan/", nil))
+	if second.Code != http.StatusTooManyRequests || second.Header().Get("Content-Type") != "text/html; charset=utf-8" || second.Header().Get("Retry-After") != "1" || !strings.Contains(second.Body.String(), "1초 후 다시 시도해 주세요.") || strings.Contains(second.Body.String(), `{"error"`) {
+		t.Fatalf("HTML overload response: status=%d headers=%v body=%s", second.Code, second.Header(), second.Body.String())
+	}
+}
 
 type staticPublicSource struct {
 	document PublicStatusDocument
@@ -36,6 +73,19 @@ func testPublicDocument(t *testing.T) PublicStatusDocument {
 		operations = append(operations, PublicOperationStatus{OperationID: canary.OperationID, ObservationState: "not_observed", RawObservationState: "unknown", IncidentState: "unknown", ConsecutiveFailureThreshold: canary.ConsecutiveFailuresBeforeIncident, Availability: "unknown", Diagnosis: unknownPublicDiagnosis()})
 	}
 	return PublicStatusDocument{SchemaVersion: PublicStatusSchemaVersion, GeneratedAt: publicNow, DiagnosticRegistryRevision: AcceptedDiagnosticRegistryRevision, ObservationCatalogRevision: config.ConsumptionProvenance.RegistryDatasetRevision, Operations: operations}
+}
+
+func testRegistryAPIMetadata(t *testing.T) RegistryAPIMetadata {
+	t.Helper()
+	canaries, err := LoadCanaryConfig("../../config/canaries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := LoadRegistryAPIMetadata("../../config/registry/api-metadata.v1.json", "../../config/registry/api-metadata-source-pin.v1.json", canaries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return metadata
 }
 
 func TestPublicStatusHandlerBrowserAndCacheContract(t *testing.T) {
@@ -444,7 +494,7 @@ func TestPublicStatusHandlerSourceFailureIsBounded(t *testing.T) {
 }
 
 func TestDatapanStatusRoutesKeepServicesAndDependenciesSeparate(t *testing.T) {
-	handler, err := NewPublicStatusHandler(staticPublicSource{document: testPublicDocument(t)}, []string{"https://datapan.statpan.com"})
+	handler, err := NewPublicStatusHandlerWithRegistryMetadata(staticPublicSource{document: testPublicDocument(t)}, []string{"https://datapan.statpan.com"}, testRegistryAPIMetadata(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,13 +526,153 @@ func TestDatapanStatusRoutesKeepServicesAndDependenciesSeparate(t *testing.T) {
 	if legacyRecorder.Code != http.StatusOK || schemas.ValidateLegacyDependencyStatusV1(legacyRecorder.Body.Bytes()) != nil || legacyRecorder.Header().Get("Deprecation") != "true" || legacyRecorder.Header().Get("Sunset") != "Thu, 31 Dec 2026 23:59:59 GMT" || legacyRecorder.Header().Get("Link") != "</datapan/v1/dependencies>; rel=\"successor-version\", </datapan/dependencies/>; rel=\"alternate\"; type=\"text/html\"" {
 		t.Fatalf("legacy headers/body=%v %s", legacyRecorder.Header(), legacyRecorder.Body.String())
 	}
-	for _, path := range []string{"/datapan/", "/datapan/services/", "/datapan/dependencies/"} {
+	for _, route := range []struct{ path, heading string }{{"/datapan/", "Datapan API 상태"}, {"/datapan/services/", "Datapan 관제 상태"}, {"/datapan/dependencies/", "검사 결과"}} {
 		recorder := httptest.NewRecorder()
-		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
-		if recorder.Code != http.StatusOK || recorder.Header().Get("Content-Type") != "text/html; charset=utf-8" || recorder.Header().Get("ETag") == "" || !strings.Contains(recorder.Body.String(), "Datapan") {
-			t.Fatalf("html %s=%d %s", path, recorder.Code, recorder.Body.String())
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, route.path, nil))
+		if recorder.Code != http.StatusOK || recorder.Header().Get("Content-Type") != "text/html; charset=utf-8" || recorder.Header().Get("ETag") == "" || !strings.Contains(recorder.Body.String(), route.heading) {
+			t.Fatalf("html %s=%d %s", route.path, recorder.Code, recorder.Body.String())
 		}
 	}
+}
+
+func TestRegistryAPIMetadataHTMLDirectoryIsCompleteForPinnedSourceAndBounded(t *testing.T) {
+	metadata := testRegistryAPIMetadata(t)
+	if metadata.Scope.RegistryWideMetadataComplete || metadata.Scope.Provider != "data.go.kr" || !metadata.Scope.SourceSnapshotComplete {
+		t.Fatalf("incorrectly broad Registry scope: %+v", metadata.Scope)
+	}
+	if metadata.Counts.APIEntities != 12282 || metadata.Counts.APIOperations != 12662 || metadata.Counts.LinkOperations != 8871 || metadata.Counts.Institutions != 416 || metadata.Counts.MatchedHealthCanaries != 10 {
+		t.Fatalf("unexpected pinned source counts: %+v", metadata.Counts)
+	}
+	items, total := metadata.APIPage("", 1, publicAPIsPageSize)
+	if total != metadata.Counts.APIEntities || len(items) != publicAPIsPageSize {
+		t.Fatalf("directory page is not bounded or complete: total=%d rows=%d", total, len(items))
+	}
+	if len(metadata.APIs) <= 10 {
+		t.Fatalf("inventory only contains canary sample: %d APIs", len(metadata.APIs))
+	}
+
+	handler, err := NewPublicStatusHandlerWithRegistryMetadata(staticPublicSource{document: testPublicDocument(t)}, []string{"https://datapan.statpan.com"}, metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstAPI := items[0]
+	for _, test := range []struct {
+		path      string
+		wantTitle string
+	}{
+		{path: "/datapan/"},
+		{path: "/datapan/?page=2"},
+		{path: "/datapan/?q=" + url.QueryEscape(firstAPI.Title), wantTitle: firstAPI.Title},
+	} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, test.path, nil))
+		if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "data.go.kr 원본 시점의 Registry 목록") || !strings.Contains(recorder.Body.String(), "다른 제공처 전체 목록은 아닙니다") {
+			t.Fatalf("bounded inventory route %s=%d", test.path, recorder.Code)
+		}
+		if test.path == "/datapan/" && strings.Count(recorder.Body.String(), `<article class="status-item">`) != publicAPIsPageSize {
+			t.Fatalf("first API page is not exactly bounded: cards=%d", strings.Count(recorder.Body.String(), `<article class="status-item">`))
+		}
+		if test.path == "/datapan/?page=2" && !strings.Contains(recorder.Body.String(), "페이지 2 /") {
+			t.Fatalf("second inventory page missing: %s", recorder.Body.String()[:min(300, recorder.Body.Len())])
+		}
+		if test.wantTitle != "" && !strings.Contains(recorder.Body.String(), test.wantTitle) {
+			t.Fatalf("Korean API title search did not find the source record")
+		}
+	}
+	for _, value := range []string{
+		"arbitrarysecret/query/localhosttext",
+		"https://private.example/path?token=hidden",
+		"service_key=do-not-reflect",
+		"localhosttext",
+	} {
+		recorder := httptest.NewRecorder()
+		path := "/datapan/?q=" + url.QueryEscape(value)
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if recorder.Code != http.StatusBadRequest || strings.Contains(recorder.Body.String(), value) {
+			t.Fatalf("unsafe search was not rejected without reflection (%q): status=%d", value, recorder.Code)
+		}
+	}
+	jsonQuery := httptest.NewRecorder()
+	handler.ServeHTTP(jsonQuery, httptest.NewRequest(http.MethodGet, "/datapan/v1/dependencies?secret=1", nil))
+	if jsonQuery.Code != http.StatusNotFound || strings.Contains(jsonQuery.Body.String(), "secret") {
+		t.Fatalf("query was allowed on the JSON contract: %d %s", jsonQuery.Code, jsonQuery.Body.String())
+	}
+}
+
+func TestRegistryAPIMetadataHTMLShowsOnlyPerOperationObservationState(t *testing.T) {
+	metadata := testRegistryAPIMetadata(t)
+	canaries, err := LoadCanaryConfig("../../config/canaries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	document := testPublicDocument(t)
+	statuses := []PublicOperationStatus{
+		{ObservationState: "current", RawObservationState: "succeeded", IncidentState: "operational", Availability: "operational", ObservedAt: timePointer(now.Add(-time.Minute)), HistoryStartedAt: timePointer(now.Add(-24 * time.Hour))},
+		{ObservationState: "current", RawObservationState: "failed", IncidentState: "pending", PendingCount: 1, Availability: "degraded", ObservedAt: timePointer(now.Add(-2 * time.Minute))},
+		{ObservationState: "current", RawObservationState: "failed", IncidentState: "confirmed", Availability: "degraded", ObservedAt: timePointer(now.Add(-3 * time.Minute))},
+		{ObservationState: "stale", RawObservationState: "unknown", IncidentState: "unknown", Availability: "unknown", ObservedAt: timePointer(now.Add(-time.Hour))},
+		{ObservationState: "not_observed", RawObservationState: "unknown", IncidentState: "unknown", Availability: "unknown"},
+		{ObservationState: "current", RawObservationState: "succeeded", IncidentState: "recovering", Availability: "operational", ObservedAt: timePointer(now.Add(-4 * time.Minute))},
+	}
+	for index, status := range statuses {
+		if index >= len(metadata.HealthCanaryLinks) || index >= len(canaries.Canaries) {
+			break
+		}
+		status.OperationID = metadata.HealthCanaryLinks[index].HealthOperationID
+		status.ConsecutiveFailureThreshold = 2
+		status.Diagnosis = unknownPublicDiagnosis()
+		setPublicOperationStatus(t, &document, status)
+	}
+	handler, err := NewPublicStatusHandlerWithRegistryMetadata(staticPublicSource{document: document}, []string{"https://datapan.statpan.com"}, metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		path  string
+		wants []string
+	}{
+		{path: "/datapan/", wants: []string{"4 / 10개 연결 기능", "검사 연결 전인 API 기능", "API 설명 출처 revision"}},
+		{path: "/datapan/dependencies/", wants: []string{"최근 검사 결과 통과", "최근 검사 결과 실패 · 연속 기준 확인 중", "연속 실패 기준 충족", "최근 검사 결과가 오래됨", "검사 연결됨 · 결과 기록 없음", "검사 결과 통과 후 연속 회복 확인 중"}},
+	} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, test.path, nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s status=%d: %s", test.path, recorder.Code, recorder.Body.String())
+		}
+		for _, want := range test.wants {
+			if !strings.Contains(recorder.Body.String(), want) {
+				t.Errorf("%s missing %q", test.path, want)
+			}
+		}
+		if strings.Contains(recorder.Body.String(), "API 전체 상태: 정상") || strings.Contains(recorder.Body.String(), "모든 API 정상") {
+			t.Fatalf("one operation observation promoted the parent API: %s", test.path)
+		}
+	}
+	failedLink := metadata.HealthCanaryLinks[1]
+	failedAPI, ok := metadata.APIByID(failedLink.RegistryAPIID)
+	if !ok {
+		t.Fatal("pending canary API missing")
+	}
+	search := "/datapan/?q=" + url.QueryEscape(failedAPI.Title)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, search, nil))
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "최근 검사 결과 실패 · 연속 기준 확인 중") {
+		t.Fatalf("current failed raw observation was not shown yellow: %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func timePointer(value time.Time) *time.Time { return &value }
+
+func setPublicOperationStatus(t *testing.T, document *PublicStatusDocument, replacement PublicOperationStatus) {
+	t.Helper()
+	for index := range document.Operations {
+		if document.Operations[index].OperationID == replacement.OperationID {
+			document.Operations[index] = replacement
+			return
+		}
+	}
+	t.Fatalf("operation %s missing from test document", replacement.OperationID)
 }
 
 func TestExternalDependencyObservationCannotPromoteOwnedService(t *testing.T) {

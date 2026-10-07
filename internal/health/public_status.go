@@ -22,6 +22,7 @@ import (
 const (
 	PublicStatusSchemaVersion = "datapan.health-public-status.v1"
 	maxGatusStatusBytes       = 2 * 1024 * 1024
+	maxPublicHistoryPoints    = 50
 )
 
 var publicActionIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,95}$`)
@@ -35,15 +36,25 @@ type PublicStatusDocument struct {
 }
 
 type PublicOperationStatus struct {
-	OperationID                 string          `json:"operation_id"`
-	ObservedAt                  *time.Time      `json:"observed_at,omitempty"`
-	ObservationState            string          `json:"observation_state"`
-	RawObservationState         string          `json:"raw_observation_state"`
-	IncidentState               string          `json:"incident_state"`
-	ConsecutiveFailureThreshold int             `json:"consecutive_failure_threshold"`
-	PendingCount                int             `json:"pending_count"`
-	Availability                string          `json:"availability"`
-	Diagnosis                   PublicDiagnosis `json:"diagnosis"`
+	OperationID                 string                     `json:"operation_id"`
+	ObservedAt                  *time.Time                 `json:"observed_at,omitempty"`
+	HistoryStartedAt            *time.Time                 `json:"-"`
+	History                     []PublicResultHistoryPoint `json:"-"`
+	ObservationState            string                     `json:"observation_state"`
+	RawObservationState         string                     `json:"raw_observation_state"`
+	IncidentState               string                     `json:"incident_state"`
+	ConsecutiveFailureThreshold int                        `json:"consecutive_failure_threshold"`
+	PendingCount                int                        `json:"pending_count"`
+	Availability                string                     `json:"availability"`
+	Diagnosis                   PublicDiagnosis            `json:"diagnosis"`
+}
+
+// PublicResultHistoryPoint keeps only the timestamp Gatus assigned when a
+// result reached the monitor and the boolean outcome. It intentionally omits
+// provider receipt times, response data, errors, and endpoint identity.
+type PublicResultHistoryPoint struct {
+	ReceivedAt time.Time
+	Success    bool
 }
 
 type PublicDiagnosis struct {
@@ -204,6 +215,11 @@ func (s *GatusPublicStatusSource) Snapshot(ctx context.Context) (PublicStatusDoc
 	for _, canary := range s.canaries.Canaries {
 		operation := PublicOperationStatus{OperationID: canary.OperationID, ObservationState: "not_observed", RawObservationState: "unknown", IncidentState: "unknown", ConsecutiveFailureThreshold: canary.ConsecutiveFailuresBeforeIncident, Availability: "unknown", Diagnosis: unknownPublicDiagnosis()}
 		results := resultsByKey[canary.GatusEndpointKey]
+		operation.History = boundedPublicResultHistory(results, now)
+		if len(operation.History) > 0 {
+			started := operation.History[0].ReceivedAt
+			operation.HistoryStartedAt = &started
+		}
 		if result, ok := latestGatusPublicResult(results); ok {
 			observed := result.Timestamp.UTC()
 			operation.ObservedAt = &observed
@@ -231,6 +247,24 @@ func (s *GatusPublicStatusSource) Snapshot(ctx context.Context) (PublicStatusDoc
 	return document, nil
 }
 
+func boundedPublicResultHistory(results []gatusPublicResult, now time.Time) []PublicResultHistoryPoint {
+	ordered := make([]gatusPublicResult, 0, len(results))
+	for _, result := range results {
+		if !result.Timestamp.IsZero() && !result.Timestamp.After(now.Add(30*time.Second)) {
+			ordered = append(ordered, result)
+		}
+	}
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Timestamp.Before(ordered[j].Timestamp) })
+	if len(ordered) > maxPublicHistoryPoints {
+		ordered = ordered[len(ordered)-maxPublicHistoryPoints:]
+	}
+	history := make([]PublicResultHistoryPoint, 0, len(ordered))
+	for _, result := range ordered {
+		history = append(history, PublicResultHistoryPoint{ReceivedAt: result.Timestamp.UTC(), Success: result.Success})
+	}
+	return history
+}
+
 func latestGatusPublicResult(results []gatusPublicResult) (gatusPublicResult, bool) {
 	var latest gatusPublicResult
 	for _, result := range results {
@@ -239,6 +273,16 @@ func latestGatusPublicResult(results []gatusPublicResult) (gatusPublicResult, bo
 		}
 	}
 	return latest, !latest.Timestamp.IsZero()
+}
+
+func oldestGatusPublicResult(results []gatusPublicResult) (gatusPublicResult, bool) {
+	var oldest gatusPublicResult
+	for _, result := range results {
+		if !result.Timestamp.IsZero() && (oldest.Timestamp.IsZero() || result.Timestamp.Before(oldest.Timestamp)) {
+			oldest = result
+		}
+	}
+	return oldest, !oldest.Timestamp.IsZero()
 }
 
 // projectIncidentState replays the most recent contiguous result runs against
@@ -287,9 +331,11 @@ func projectIncidentState(results []gatusPublicResult, threshold int) (rawState,
 }
 
 type PublicStatusHandler struct {
-	source   PublicStatusSource
-	services PublicServiceStatusSource
-	origins  map[string]bool
+	source    PublicStatusSource
+	services  PublicServiceStatusSource
+	readiness HealthSelfReadinessSource
+	origins   map[string]bool
+	registry  *RegistryAPIMetadata
 }
 
 func NewPublicStatusHandler(source PublicStatusSource, origins []string) (*PublicStatusHandler, error) {
@@ -307,13 +353,27 @@ func NewPublicStatusHandler(source PublicStatusSource, origins []string) (*Publi
 	return &PublicStatusHandler{source: source, services: DefaultOwnedServiceStatusSource(), origins: allowed}, nil
 }
 
+func NewPublicStatusHandlerWithRegistryMetadata(source PublicStatusSource, origins []string, metadata RegistryAPIMetadata) (*PublicStatusHandler, error) {
+	return NewPublicStatusHandlerWithRegistryMetadataAndSelfReadiness(source, origins, metadata, nil)
+}
+
+func NewPublicStatusHandlerWithRegistryMetadataAndSelfReadiness(source PublicStatusSource, origins []string, metadata RegistryAPIMetadata, readiness HealthSelfReadinessSource) (*PublicStatusHandler, error) {
+	handler, err := NewPublicStatusHandler(source, origins)
+	if err != nil {
+		return nil, err
+	}
+	handler.registry = &metadata
+	handler.readiness = readiness
+	return handler, nil
+}
+
 func (h *PublicStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.RawQuery != "" {
-		writePublicError(w, http.StatusNotFound)
+	if isDatapanHTMLRoute(r.URL.Path) {
+		h.serveDatapanHTML(w, r)
 		return
 	}
-	if isDatapanHTMLRoute(r.URL.Path) {
-		serveDatapanHTML(w, r)
+	if r.URL.RawQuery != "" {
+		writePublicError(w, http.StatusNotFound)
 		return
 	}
 	if !isDatapanJSONRoute(r.URL.Path) {
@@ -410,38 +470,7 @@ func isDatapanJSONRoute(path string) bool {
 }
 
 func isDatapanHTMLRoute(path string) bool {
-	return path == "/datapan/" || path == "/datapan/services/" || path == "/datapan/dependencies/"
-}
-
-func serveDatapanHTML(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", "GET, HEAD")
-		writePublicError(w, http.StatusMethodNotAllowed)
-		return
-	}
-	copy := map[string]struct{ title, body string }{
-		"/datapan/":              {"Datapan 상태 개요", "Datapan 서비스와 외부 데이터 의존성 관측을 분리해 표시합니다."},
-		"/datapan/services/":     {"Datapan 서비스", "Dataset API, Registry 배포, Datapan Web/Atlas, Health 자체 상태만 표시합니다. 배포 identity가 없으면 unknown입니다."},
-		"/datapan/dependencies/": {"외부 데이터 의존성", "data.go.kr canary 관측은 외부 의존성 표본이며 Datapan 서비스 SLA나 전체 카탈로그 상태가 아닙니다."},
-	}
-	page := copy[r.URL.Path]
-	body := "<!doctype html><html lang=\"ko\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>" + page.title + "</title><style>body{font:16px system-ui;margin:0;background:#f8fafc;color:#0f172a}main{max-width:760px;margin:48px auto;padding:24px}nav{display:flex;gap:16px;flex-wrap:wrap}a{color:#2563eb}section{background:#fff;border:1px solid #dbe3ef;border-radius:12px;padding:24px;margin-top:24px}small{color:#475569}</style><main><nav><a href=\"/datapan/\">개요</a><a href=\"/datapan/services/\">서비스</a><a href=\"/datapan/dependencies/\">외부 의존성</a></nav><section><h1>" + page.title + "</h1><p>" + page.body + "</p><small>JSON: /datapan/v1/services · /datapan/v1/dependencies</small></section></main></html>"
-	w.Header().Set("Cache-Control", "public, max-age=30, stale-if-error=60, no-transform")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	sum := sha256.Sum256([]byte(body))
-	etag := `"sha256-` + hex.EncodeToString(sum[:]) + `"`
-	w.Header().Set("ETag", etag)
-	if r.Header.Get("If-None-Match") == etag {
-		w.WriteHeader(http.StatusNotModified)
-		return
-	}
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
-	if r.Method == http.MethodHead {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	_, _ = io.WriteString(w, body)
+	return path == "/datapan/" || path == "/datapan/apis/" || path == "/datapan/services/" || path == "/datapan/dependencies/" || (strings.HasPrefix(path, "/datapan/apis/") && strings.HasSuffix(path, "/"))
 }
 
 func mergeVary(header http.Header, fields ...string) {

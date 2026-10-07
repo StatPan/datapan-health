@@ -17,7 +17,10 @@ import (
 func main() {
 	listen := flag.String("listen", env("PUBLIC_STATUS_LISTEN", ":8082"), "private listener for the public status adapter")
 	gatusStatusURL := flag.String("gatus-status-url", env("GATUS_STATUS_URL", "http://gatus:8080/api/v1/endpoints/statuses"), "private Gatus summary URL")
+	selfReadinessURL := flag.String("self-readiness-url", env("HEALTH_SELF_READINESS_URL", "http://scheduler:8081/status"), "private Health scheduler aggregate readiness URL")
 	canaryPath := flag.String("canaries", env("CANARY_CONFIG", "config/canaries.json"), "reviewed public canary identity map")
+	registryMetadataPath := flag.String("registry-api-metadata", env("REGISTRY_API_METADATA", "/opt/datapan-health/config/registry/api-metadata.v1.json"), "pinned Registry API purpose and inventory metadata")
+	registryMetadataPinPath := flag.String("registry-api-metadata-pin", env("REGISTRY_API_METADATA_PIN", "/opt/datapan-health/config/registry/api-metadata-source-pin.v1.json"), "pinned Registry API metadata source and artifact identity")
 	diagnosisPath := flag.String("diagnosis-snapshot", env("PUBLIC_DIAGNOSIS_SNAPSHOT", "data/public-diagnosis-snapshot.json"), "atomic reviewed diagnosis snapshot")
 	assertionPinPath := flag.String("assertion-pin", env("ASSERTION_POLICY_PIN", "config/registry/assertion-policy-contract-pin.json"), "exact assertion policy contract")
 	scheduleCoverageState := flag.String("schedule-coverage-state", os.Getenv("SCHEDULE_COVERAGE_STATE"), "private durable full-population schedule coverage authority state")
@@ -50,6 +53,10 @@ func main() {
 		}
 		return
 	}
+	registryMetadata, err := health.LoadRegistryAPIMetadata(*registryMetadataPath, *registryMetadataPinPath, canaries)
+	if err != nil {
+		fatal()
+	}
 	source, err := health.NewGatusPublicStatusSource(*gatusStatusURL, canaries, 5*time.Second)
 	if err != nil {
 		fatal()
@@ -67,7 +74,15 @@ func main() {
 	if err != nil {
 		fatal()
 	}
-	handler, err := health.NewPublicStatusHandler(cachedSource, origins)
+	readinessSource, err := health.NewSchedulerHealthSelfReadinessSource(*selfReadinessURL, canaries, time.Second)
+	if err != nil {
+		fatal()
+	}
+	cachedReadiness, err := health.NewCachedHealthSelfReadinessSource(readinessSource, time.Second, time.Second)
+	if err != nil {
+		fatal()
+	}
+	handler, err := health.NewPublicStatusHandlerWithRegistryMetadataAndSelfReadiness(cachedSource, origins, registryMetadata, cachedReadiness)
 	if err != nil {
 		fatal()
 	}

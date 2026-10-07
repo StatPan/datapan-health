@@ -30,3 +30,9 @@ surfaces and requires an immutable deployment identity before `operational` or
 observations. The legacy schema is dependency-only and has a separate
 deprecation/removal gate; no external observation may be converted to a
 Datapan service state.
+
+`datapan.health-self-readiness.v1` is a Health-owned private scheduler input
+contract used only by the Korean HTML adapter to show aggregate pipeline
+readiness. It accepts the scheduler's bounded `/status` report, then discards
+canary identities and per-canary fields. It is not a public response schema,
+deployment identity, or proof of external public-route readback.

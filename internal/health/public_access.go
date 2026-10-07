@@ -137,6 +137,10 @@ func (s *CachedPublicStatusSource) refresh(flight *publicRefresh) {
 
 func (g *PublicReadGuard) reject(w http.ResponseWriter, r *http.Request, code int) {
 	w.Header().Set("Retry-After", "1")
+	if _, ok := g.next.(*PublicStatusHandler); ok && isDatapanHTMLRoute(r.URL.Path) {
+		writePublicHTMLError(w, r, code)
+		return
+	}
 	if handler, ok := g.next.(*PublicStatusHandler); ok && isDatapanJSONRoute(r.URL.Path) {
 		mergeVary(w.Header(), "Origin")
 		if origin := r.Header.Get("Origin"); handler.origins[origin] {
