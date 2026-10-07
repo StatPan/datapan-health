@@ -54,3 +54,4 @@ if grep -Eq '(^|[^[:alnum:]_])latest([^[:alnum:]_]|$)' "$workflow"; then
 fi
 printf '%s\n' 'runtime publication workflow contract is pinned and source-bound'
 python3 "$root/scripts/test-runtime-publication-receipt.py"
+python3 "$root/scripts/test-runtime-build-receipt.py"

@@ -79,6 +79,20 @@ image argument, or release manifest.
 
 ## Trusted runtime publication
 
+After the local release checks, the publisher validates the runtime OCI
+blob digests, descriptor sizes, ARM64 configuration and exact source label.
+It uploads `datapan-health-runtime-build-<source_sha>` before registry login
+or publication. This preserves reviewable bytes when registry access fails.
+The build artifact contains `runtime-build-receipt.json`,
+`infra-image-inputs.env`, `sha256sums.txt` and `runtime.oci.tar`.
+
+Its separate `statpan.datapan-health-runtime-build.v1` receipt declares
+`published: false` and `deployment_admissible: false`. It records local build
+digests and workflow identity without a successful workflow conclusion or
+verified package identity. A failed run can still have a valid build artifact;
+this does not satisfy the successful publication or deployment contracts.
+The existing successful release artifact below remains separate.
+
 The runtime publisher is manual by design. It accepts only a full lowercase
 `source_sha` that is still the exact `main` tip at execution and a declared,
 immutable prior runtime image for a future rollback handoff. It checks out that
