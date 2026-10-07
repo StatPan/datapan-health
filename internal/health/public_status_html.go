@@ -174,7 +174,7 @@ const publicStatusHTMLTemplate = `<!doctype html>
       <article class="status-item">
         <h3>{{.Title}}</h3>
         <p><strong>기관:</strong> {{.Organization}}</p>
-        <p><strong>기능:</strong> {{.Description}}</p>
+        <p><strong>API 설명:</strong> {{.Description}}</p>
         <p><strong>API 기능:</strong> {{count .APIOperations}}개 · <strong>외부 링크:</strong> {{count .LinkOperations}}개</p>
         {{if .RegistrationNote}}<p class="notice">{{.RegistrationNote}}</p>{{end}}
         <p><strong>검사 연결:</strong> {{count .ConfiguredOperations}}개 · <strong>검사 연결 전:</strong> {{count .UnconfiguredOperations}}개</p>
@@ -262,7 +262,7 @@ const publicStatusHTMLTemplate = `<!doctype html>
     <article class="status-item">
       <h2 id="api-detail-heading">{{.DetailTitle}}</h2>
       <p><strong>기관:</strong> {{.DetailOrganization}}</p>
-      <p><strong>기능:</strong> {{.DetailDescription}}</p>
+      <p><strong>API 설명:</strong> {{.DetailDescription}}</p>
       <p><strong>API 기능:</strong> {{.DetailAPIOperations}}개</p>
       <p><strong>외부 링크:</strong> {{.DetailLinkOperations}}개</p>
       {{if .DetailRegistrationNote}}<p class="notice">{{.DetailRegistrationNote}}</p>{{end}}
@@ -281,7 +281,9 @@ const publicStatusHTMLTemplate = `<!doctype html>
       <li class="status-item">
         <h3>{{.Name}}</h3>
         <p>제공 방식: {{.Protocol}} · {{.NameState}}</p>
-        {{if .Description}}<p><strong>기능 설명:</strong> {{.Description}}</p>{{end}}
+        <p><strong>상위 API:</strong> {{.Title}} · <strong>기관:</strong> {{.Organization}}</p>
+        <p><strong>{{.DescriptionLabel}}:</strong> {{.Description}}</p>
+        <p class="muted"><strong>기능별 설명:</strong> Registry 원본에서 이 기능만의 설명은 별도로 확인되지 않았습니다. 위 설명은 상위 API 전체에 대한 설명입니다.</p>
         <p><strong>검사 결과:</strong> <span class="badge {{.StatusClass}}">{{.ObservationLabel}}</span></p>
         {{if .AvailabilityLabel}}<p><strong>실행 조건:</strong> {{.AvailabilityLabel}}</p>{{end}}
         {{if .AttemptLabel}}<p><strong>검사 진행:</strong> {{.AttemptLabel}}</p>{{end}}
@@ -582,6 +584,7 @@ type publicHTMLOperation struct {
 	Title               string
 	Organization        string
 	Description         string
+	DescriptionLabel    string
 	OperationName       string
 	DetailURL           string
 	ProviderObservedAt  *publicHTMLTime
@@ -1068,10 +1071,11 @@ func publicHTMLReadModelOperation(operation OperationReadModelRow, now time.Time
 	}
 	row := publicHTMLOperation{
 		Name: name, Protocol: protocol, NameState: metadataStateLabel(operation.OperationNameState),
-		Title:        publicReadModelField(operation.Title, operation.TitleState, "API 이름", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes),
-		Organization: publicReadModelField(operation.Organization, operation.OrganizationState, "기관 정보", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes),
-		Description:  publicReadModelField(operation.Purpose, operation.PurposeState, "기능 설명", maxPublicOperationPurposeBytes, maxPublicOperationPurposeRunes),
-		StatusClass:  "badge-unknown",
+		Title:            publicReadModelField(operation.Title, operation.TitleState, "API 이름", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes),
+		Organization:     publicReadModelField(operation.Organization, operation.OrganizationState, "기관 정보", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes),
+		Description:      publicReadModelField(operation.Purpose, operation.PurposeState, "API 설명", maxPublicOperationPurposeBytes, maxPublicOperationPurposeRunes),
+		DescriptionLabel: "상위 API 설명",
+		StatusClass:      "badge-unknown",
 	}
 	if operation.ProviderObservedAt != nil {
 		value := publicHTMLTimeValue(*operation.ProviderObservedAt, now)

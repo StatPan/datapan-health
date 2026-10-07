@@ -352,6 +352,21 @@ func TestPublicHTMLReadModelOperationStatusAndDiagnosisAreAllowlisted(t *testing
 	if pass.StatusClass != "badge-good" || pass.ObservationLabel != "최근 검사 결과 통과" || pass.Name != "현재 대기소 조회" {
 		t.Fatalf("validated pass was not localized safely: %#v", pass)
 	}
+	if pass.Title != "대기소 정보" || pass.Organization != "기관 A" || pass.DescriptionLabel != "상위 API 설명" || pass.Description != "현재 대기소 정보를 확인합니다" {
+		t.Fatalf("operation detail lost its parent API context or misattributed the API description: %#v", pass)
+	}
+	operationPage := publicHTMLPage{
+		Detail: true, DetailTitle: "대기소 API", DetailOrganization: "기관 A",
+		ReadModelOperationsAvailable: true, Operations: []publicHTMLOperation{pass},
+	}
+	var operationHTML bytes.Buffer
+	if err := publicStatusPages.Execute(&operationHTML, operationPage); err != nil {
+		t.Fatal(err)
+	}
+	renderedOperation := operationHTML.String()
+	if !strings.Contains(renderedOperation, "상위 API 설명:") || !strings.Contains(renderedOperation, "상위 API:") || !strings.Contains(renderedOperation, "기능별 설명:</strong> Registry 원본에서 이 기능만의 설명은 별도로 확인되지 않았습니다.") || !strings.Contains(renderedOperation, "위 설명은 상위 API 전체에 대한 설명입니다.") {
+		t.Fatalf("operation page presented its parent API description as a per-function purpose: %s", renderedOperation)
+	}
 	longPurpose := strings.TrimSpace(strings.Repeat("공공 API 자료 설명입니다. ", 40))
 	if len(longPurpose) <= 512 {
 		t.Fatal("long-purpose fixture did not exceed the former byte cutoff")
@@ -619,7 +634,7 @@ func TestPublicOperationRendererRetainsPinnedKoreanDescriptionCorpus(t *testing.
 		rendered := publicHTMLReadModelOperation(row, time.Now().UTC())
 		if verifiedText {
 			operationDetailsRetained++
-			if rendered.Description != api.Description {
+			if rendered.Description != api.Description || rendered.DescriptionLabel != "상위 API 설명" {
 				t.Fatalf("verified Registry description was lost by the operation renderer; present=%d sanitized=%d retained=%d operation_details=%d", present, sanitized, retained, operationDetailsRetained)
 			}
 		} else if strings.Contains(rendered.Description, api.Description) {
