@@ -179,6 +179,7 @@ func GenerateOperationGatusArtifacts(baseConfig []byte, canaryConfigSHA256 strin
 
 	entries := make(map[string]OperationGatusIdentity, max(len(canaries.Canaries), 16))
 	legacyByIdentity := make(map[string]Canary, len(canaries.Canaries))
+	identityByGatusKey := make(map[string]string, len(canaries.Canaries))
 	metadataOperations := make(map[string]struct{}, len(metadata.operations))
 	for _, operation := range metadata.operations {
 		metadataOperations[operation.RegistryOperationID] = struct{}{}
@@ -194,7 +195,7 @@ func GenerateOperationGatusArtifacts(baseConfig []byte, canaryConfigSHA256 strin
 			return OperationGatusArtifacts{}, errOperationGatusConfiguration
 		}
 		group, name, ok := splitOperationGatusEndpointKey(canary.GatusEndpointKey)
-		if !ok {
+		if !ok || !registerOperationGatusKey(identityByGatusKey, canary.GatusEndpointKey, identityKey) {
 			return OperationGatusArtifacts{}, errOperationGatusConfiguration
 		}
 		entries[identityKey] = OperationGatusIdentity{
@@ -280,6 +281,9 @@ func GenerateOperationGatusArtifacts(baseConfig []byte, canaryConfigSHA256 strin
 						endpoints[legacy.GatusEndpointKey] = operationGatusEndpoint{key: legacy.GatusEndpointKey, group: group, name: name, heartbeat: 2 * record.ObservationPeriod}
 					}
 				}
+				if !registerOperationGatusKey(identityByGatusKey, entry.GatusEndpointKey, identityKey) {
+					return OperationGatusArtifacts{}, fmt.Errorf("%w: gatus_identity_collision", errOperationGatusConfiguration)
+				}
 				if selected && !overlapsLegacy {
 					group, name, ok := splitOperationGatusEndpointKey(entry.GatusEndpointKey)
 					if !ok {
@@ -354,6 +358,17 @@ func GenerateOperationGatusArtifacts(baseConfig []byte, canaryConfigSHA256 strin
 	}
 	pinBytes = append(pinBytes, '\n')
 	return OperationGatusArtifacts{Config: generatedConfig, Mapping: mapBytes, RuntimePin: pinBytes, ConfigSHA256: configSHA, MappingSHA256: mappingSHA, RuntimePinSHA256: digestOperationGatusBytes(pinBytes), LegacySuppressedHealthIDs: mapDoc.LegacySuppressedHealthIDs}, nil
+}
+
+func registerOperationGatusKey(identityByKey map[string]string, gatusKey, identityKey string) bool {
+	if identityByKey == nil || gatusKey == "" || identityKey == "" {
+		return false
+	}
+	if existing, ok := identityByKey[gatusKey]; ok {
+		return existing == identityKey
+	}
+	identityByKey[gatusKey] = identityKey
+	return true
 }
 
 func verifiedGatusMetadata(metadata VerifiedRegistryAPIMetadata, canaries CanaryConfig) bool {

@@ -178,6 +178,49 @@ func TestOperationGatusActivationDigestCannotBeReusedAfterMutation(t *testing.T)
 	}
 }
 
+func TestOperationGatusRejectsDuplicateLegacyAndGeneratedReceiverKeys(t *testing.T) {
+	t.Run("duplicate legacy keys", func(t *testing.T) {
+		_, _, sourceSHA, operationIDs := writeGatusPlanFixture(t)
+		metadata, canaries := gatusTestMetadata(sourceSHA, operationIDs)
+		second := canaries.Canaries[0]
+		second.OperationID = "health-canary-two"
+		canaries.Canaries = append(canaries.Canaries, second)
+		metadata.canaryLinksByHealthID[second.OperationID] = RegistryHealthCanaryLink{
+			HealthOperationID: second.OperationID, RegistryAPIID: "api-1", RegistryOperationID: operationIDs[1], DatasetID: "api-1",
+			UpstreamOperationSeq: "2", OperationName: "Read", CLIOperationKey: strings.Repeat("a", 64),
+		}
+		_, err := GenerateOperationGatusArtifacts([]byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: static\n"), strings.Repeat("e", 64), canaries, metadata, nil, nil, "")
+		if err == nil {
+			t.Fatal("two legacy identities were allowed to collapse onto one Gatus receiver key")
+		}
+	})
+
+	t.Run("legacy key collides with another plan identity", func(t *testing.T) {
+		planRoot, binding, sourceSHA, operationIDs := writeGatusPlanFixture(t)
+		plan, err := LoadPinnedOperationObservationPlan(planRoot, binding)
+		if err != nil {
+			t.Fatal(err)
+		}
+		metadata, canaries := gatusTestMetadata(sourceSHA, operationIDs)
+		canaries.Canaries[0].GatusEndpointKey = stableOperationGatusEndpointKey("data_go_kr", operationIDs[1])
+		activationBytes, err := json.Marshal(OperationGatusActivation{
+			SchemaVersion: OperationGatusActivationSchemaVersion, RegistryRevision: plan.RegistryRevision(), IndexSHA256: plan.IndexSHA256(),
+			Operations: []OperationGatusActivationEntry{{SourceID: "data_go_kr", OperationID: operationIDs[1]}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		activation, activationSHA, err := DecodeOperationGatusActivation(activationBytes, plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = GenerateOperationGatusArtifacts([]byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: static\n"), strings.Repeat("e", 64), canaries, metadata, &plan, &activation, activationSHA)
+		if err == nil {
+			t.Fatal("distinct legacy and Registry identities were allowed to share a Gatus receiver key")
+		}
+	})
+}
+
 func TestStableOperationGatusKeysRemainUniqueAcrossKnownScale(t *testing.T) {
 	const operationCount = 12_666
 	seen := make(map[string]struct{}, operationCount)
