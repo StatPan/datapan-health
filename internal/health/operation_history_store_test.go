@@ -103,6 +103,37 @@ func TestOperationHistoryStoreReserveAppendRestartAndIdempotency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("append: %v", err)
 	}
+	if !ref.MatchesValidatedRecord(record) {
+		t.Fatal("durable append ref did not prove the matching validated record")
+	}
+	forged := OperationHistoryRecordRef{RecordID: ref.RecordID, SHA256: ref.SHA256, AppendedAt: ref.AppendedAt}
+	if forged.MatchesValidatedRecord(record) {
+		t.Fatal("caller-constructed ref must not prove a durable append")
+	}
+	mutatedRefs := []OperationHistoryRecordRef{ref, ref, ref}
+	mutatedRefs[0].RecordID += "x"
+	mutatedRefs[1].SHA256 = strings.Repeat("f", 64)
+	mutatedRefs[2].AppendedAt = mutatedRefs[2].AppendedAt.Add(time.Second)
+	for index, mutated := range mutatedRefs {
+		if mutated.MatchesValidatedRecord(record) {
+			t.Fatalf("mutated ref %d must not prove a durable append", index)
+		}
+	}
+	changedRecord := fixtureOperationHistoryRecord(t, identity, "unhealthy")
+	if ref.MatchesValidatedRecord(changedRecord) {
+		t.Fatal("append ref must bind the exact validated record digest")
+	}
+	refBytes, err := json.Marshal(ref)
+	if err != nil {
+		t.Fatalf("marshal append ref: %v", err)
+	}
+	var decodedRef OperationHistoryRecordRef
+	if err := json.Unmarshal(refBytes, &decodedRef); err != nil {
+		t.Fatalf("unmarshal append ref: %v", err)
+	}
+	if decodedRef.MatchesValidatedRecord(record) {
+		t.Fatal("serialized ref must not retain its in-process append capability")
+	}
 	info, err := os.Stat(store.recordPath(ref.RecordID))
 	if err != nil {
 		t.Fatalf("stat stored record: %v", err)
@@ -122,6 +153,9 @@ func TestOperationHistoryStoreReserveAppendRestartAndIdempotency(t *testing.T) {
 	duplicate, err := store.AppendValidated(context.Background(), token, record)
 	if err != nil || duplicate.RecordID != ref.RecordID || duplicate.SHA256 != ref.SHA256 || !duplicate.AppendedAt.Equal(ref.AppendedAt) {
 		t.Fatalf("same record append must be idempotent: got=%#v want=%#v err=%v", duplicate, ref, err)
+	}
+	if !duplicate.MatchesValidatedRecord(record) {
+		t.Fatal("revalidated durable duplicate did not mint an append capability")
 	}
 	conflict := fixtureOperationHistoryRecord(t, identity, "unhealthy")
 	if _, err := store.AppendValidated(context.Background(), token, conflict); !errors.Is(err, ErrOperationHistoryConflict) {
@@ -356,6 +390,8 @@ func TestOperationHistoryPublicationCheckpointRecoversPartialCleanupAndFencesSta
 	}
 	if duplicate, err := store.AppendValidated(context.Background(), secondToken, second); err != nil || duplicate.RecordID != secondRef.RecordID || duplicate.SHA256 != secondRef.SHA256 || !duplicate.AppendedAt.Equal(secondRef.AppendedAt) {
 		t.Fatalf("latest exact duplicate should retain its proof: got=%#v err=%v", duplicate, err)
+	} else if !duplicate.MatchesValidatedRecord(second) {
+		t.Fatal("verified published high-water duplicate did not mint an append capability")
 	}
 	conflict := fixtureOperationHistoryRecord(t, secondIdentity, "healthy")
 	if _, err := store.AppendValidated(context.Background(), secondToken, conflict); !errors.Is(err, ErrOperationHistoryConflict) {
