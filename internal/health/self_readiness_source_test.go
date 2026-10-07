@@ -290,17 +290,17 @@ func TestGatusReceiptHistoryIsBoundedInternalAndRendered(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	results := make([]map[string]any, 75)
+	results := make([]map[string]any, maxPublicHistoryPoints)
 	for index := range results {
-		results[index] = map[string]any{"timestamp": now.Add(-time.Duration(75-index) * time.Minute), "success": index%2 == 0}
+		originalIndex := index + 25
+		results[index] = map[string]any{"timestamp": now.Add(-time.Duration(75-originalIndex) * time.Minute), "success": originalIndex%2 == 0}
 	}
-	body, err := json.Marshal([]map[string]any{{"key": config.Canaries[0].GatusEndpointKey, "results": results}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	gatus := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(body)
+	gatus := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if testGatusEndpointKeyFromPath(r.URL.Path) != config.Canaries[0].GatusEndpointKey {
+			http.NotFound(w, r)
+			return
+		}
+		writeTestGatusEndpointStatus(t, w, config.Canaries[0].GatusEndpointKey, results)
 	}))
 	defer gatus.Close()
 	source, err := NewGatusPublicStatusSource(gatus.URL, config, time.Second)

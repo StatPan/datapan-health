@@ -1,6 +1,7 @@
 package health
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -293,20 +295,34 @@ func TestPublicStatusSourceProjectsExactIdentityAndFreshness(t *testing.T) {
 	}
 	currentKey := config.Canaries[0].GatusEndpointKey
 	staleKey := config.Canaries[1].GatusEndpointKey
-	body, _ := json.Marshal([]map[string]any{
-		{"key": currentKey, "name": "private-name-must-not-project", "results": []map[string]any{
-			{"success": true, "timestamp": publicNow.Add(-time.Minute), "errors": []string{"secret-provider-message"}},
+	fixtures := map[string]any{
+		currentKey: []map[string]any{{
+			"status": 200, "hostname": "private-host-must-not-project", "duration": int64(time.Millisecond),
+			"conditionResults": []map[string]any{{"condition": "secret-condition", "success": true}},
+			"success":          true, "timestamp": publicNow.Add(-time.Minute), "errors": []string{"secret-provider-message"}, "name": "private-result-name",
 		}},
-		{"key": staleKey, "results": []map[string]any{
-			{"success": false, "timestamp": publicNow.Add(-time.Hour)},
-		}},
-		{"key": "system_extra", "results": []map[string]any{
-			{"success": true, "timestamp": publicNow},
-		}},
-	})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(body)
+		staleKey: []map[string]any{{"success": false, "timestamp": publicNow.Add(-time.Hour)}},
+	}
+	var requestedKeys atomic.Int64
+	var aggregateRequests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/endpoints/statuses" {
+			aggregateRequests.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`["aggregate should never be read"]`))
+			return
+		}
+		key := testGatusEndpointKeyFromPath(r.URL.Path)
+		requestedKeys.Add(1)
+		if r.URL.RawQuery != "page=1&pageSize=50" {
+			t.Errorf("per-key query=%q", r.URL.RawQuery)
+		}
+		results, ok := fixtures[key]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		writeTestGatusEndpointStatus(t, w, key, results)
 	}))
 	defer server.Close()
 	source, err := NewGatusPublicStatusSource(server.URL, config, time.Second)
@@ -331,8 +347,11 @@ func TestPublicStatusSourceProjectsExactIdentityAndFreshness(t *testing.T) {
 	if got := byID[config.Canaries[1].OperationID]; got.Availability != "unknown" || got.ObservationState != "stale" || got.RawObservationState != "unknown" || got.IncidentState != "unknown" || got.PendingCount != 0 {
 		t.Fatalf("stale=%+v", got)
 	}
+	if aggregateRequests.Load() != 0 || requestedKeys.Load() != int64(len(config.Canaries)) {
+		t.Fatalf("Gatus reads were not limited to the configured per-key paths: aggregate=%d per_key=%d", aggregateRequests.Load(), requestedKeys.Load())
+	}
 	encoded, _ := json.Marshal(document)
-	for _, forbidden := range []string{"private-name", "secret-provider-message", currentKey, "dataset_id", "endpoint_host", "query"} {
+	for _, forbidden := range []string{"private-name", "private-host", "private-result-name", "secret-provider-message", "secret-condition", currentKey, "dataset_id", "endpoint_host", "query", "events"} {
 		if strings.Contains(string(encoded), forbidden) {
 			t.Fatalf("forbidden %q projected", forbidden)
 		}
@@ -362,14 +381,19 @@ func TestPublicStatusSourceSeparatesRawObservationIncidentAndRecovery(t *testing
 	if err := json.Unmarshal(mustRead(t, "../../testdata/public-status/incident-policy-v1.json"), &fixture); err != nil || fixture.SchemaVersion != "datapan.health-public-status-incident-fixture.v1" || len(fixture.Cases) != 5 {
 		t.Fatalf("invalid fixture: %v", err)
 	}
-	upstream := make([]map[string]any, 0, len(fixture.Cases))
+	resultsByKey := make(map[string]any, len(fixture.Cases))
 	for _, testCase := range fixture.Cases {
-		upstream = append(upstream, map[string]any{"key": config.Canaries[testCase.CanaryIndex].GatusEndpointKey, "results": testCase.Results})
+		key := config.Canaries[testCase.CanaryIndex].GatusEndpointKey
+		resultsByKey[key] = testCase.Results
 	}
-	body, _ := json.Marshal(upstream)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(body)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := testGatusEndpointKeyFromPath(r.URL.Path)
+		results, ok := resultsByKey[key]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		writeTestGatusEndpointStatus(t, w, key, results)
 	}))
 	defer server.Close()
 	source, err := NewGatusPublicStatusSource(server.URL, config, time.Second)
@@ -410,27 +434,76 @@ func TestPublicStatusSourceRejectsUnsafeUpstream(t *testing.T) {
 		name    string
 		handler http.Handler
 	}{
-		{"redirect", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			http.Redirect(w, &http.Request{}, "https://evil.example", http.StatusFound)
+		{"redirect", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "https://evil.example", http.StatusFound)
 		})},
 		{"wrong-type", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "text/html")
-			_, _ = w.Write([]byte("[]"))
+			_, _ = w.Write([]byte(`{"key":"public-data_holiday-emergency-clinics","results":[]}`))
 		})},
 		{"oversized", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(strings.Repeat(" ", maxGatusStatusBytes+1)))
+			_, _ = w.Write([]byte(strings.Repeat(" ", maxGatusEndpointStatusBytes+1)))
 		})},
 		{"duplicate", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`[{"key":"public-data_x","results":[]},{"key":"public-data_x","results":[]}]`))
+			_, _ = w.Write([]byte(`{"key":"public-data_holiday-emergency-clinics","results":[],"key":"public-data_holiday-emergency-clinics"}`))
+		})},
+		{"wrong-key", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			writeTestGatusEndpointStatus(t, w, "public-data_other-endpoint", []any{})
+		})},
+		{"invalid-result-time", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			key := testGatusEndpointKeyFromPath(r.URL.Path)
+			writeTestGatusEndpointStatus(t, w, key, []map[string]any{{"success": true, "timestamp": "not-a-time"}})
+		})},
+		{"missing-result-time", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			key := testGatusEndpointKeyFromPath(r.URL.Path)
+			writeTestGatusEndpointStatus(t, w, key, []map[string]any{{"success": true}})
+		})},
+		{"missing-result-success", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			key := testGatusEndpointKeyFromPath(r.URL.Path)
+			writeTestGatusEndpointStatus(t, w, key, []map[string]any{{"timestamp": publicNow.Add(-time.Minute)}})
+		})},
+		{"null-result-success", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			key := testGatusEndpointKeyFromPath(r.URL.Path)
+			writeTestGatusEndpointStatus(t, w, key, []map[string]any{{"success": nil, "timestamp": publicNow.Add(-time.Minute)}})
+		})},
+		{"case-alias-success", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			key := testGatusEndpointKeyFromPath(r.URL.Path)
+			_, _ = w.Write([]byte(`{"key":"` + key + `","results":[{"success":false,"Success":true,"timestamp":"` + publicNow.Add(-time.Minute).Format(time.RFC3339Nano) + `"}]}`))
+		})},
+		{"case-alias-key", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			key := testGatusEndpointKeyFromPath(r.URL.Path)
+			_, _ = w.Write([]byte(`{"key":"` + key + `","Key":"public-data_other-endpoint","results":[]}`))
+		})},
+		{"too-many-results", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			key := testGatusEndpointKeyFromPath(r.URL.Path)
+			results := make([]map[string]any, maxGatusEndpointStatusResults+1)
+			for index := range results {
+				results[index] = map[string]any{"success": true, "timestamp": publicNow.Add(-time.Duration(index+1) * time.Minute)}
+			}
+			writeTestGatusEndpointStatus(t, w, key, results)
 		})},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			server := httptest.NewServer(test.handler)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/endpoints/statuses" {
+					t.Errorf("aggregate Gatus route was requested")
+					return
+				}
+				test.handler.ServeHTTP(w, r)
+			}))
 			defer server.Close()
-			source, err := NewGatusPublicStatusSource(server.URL, config, time.Second)
+			source, err := NewGatusPublicStatusSource(server.URL+"/api/v1/endpoints/statuses", config, time.Second)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -438,6 +511,218 @@ func TestPublicStatusSourceRejectsUnsafeUpstream(t *testing.T) {
 				t.Fatalf("err=%v", err)
 			}
 		})
+	}
+}
+
+func testGatusEndpointKeyFromPath(path string) string {
+	const routePrefix = "/api/v1/endpoints/"
+	const routeSuffix = "/statuses"
+	if !strings.HasPrefix(path, routePrefix) || !strings.HasSuffix(path, routeSuffix) {
+		return ""
+	}
+	key := strings.TrimSuffix(strings.TrimPrefix(path, routePrefix), routeSuffix)
+	if key == "" || strings.ContainsAny(key, "/%") {
+		return ""
+	}
+	return key
+}
+
+func writeTestGatusEndpointStatus(t *testing.T, w http.ResponseWriter, key string, results any) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	body, err := json.Marshal(map[string]any{
+		"name":    "private-endpoint-name",
+		"group":   "private-group-name",
+		"key":     key,
+		"results": results,
+		"events":  []map[string]any{{"type": "START", "timestamp": publicNow.Add(-time.Hour)}},
+	})
+	if err != nil {
+		t.Errorf("encode native Gatus fixture: %v", err)
+		return
+	}
+	_, _ = w.Write(body)
+}
+
+func TestGatusPublicStatusPerKey404KeepsOnlyObservedCanaries(t *testing.T) {
+	config, err := LoadCanaryConfig("../../config/canaries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("all missing before first push", func(t *testing.T) {
+		var requests atomic.Int64
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if testGatusEndpointKeyFromPath(r.URL.Path) == "" {
+				t.Errorf("unexpected Gatus path %q", r.URL.Path)
+			}
+			requests.Add(1)
+			http.NotFound(w, r)
+		}))
+		defer server.Close()
+		source, err := NewGatusPublicStatusSource(server.URL+"/api/v1/endpoints/statuses", config, time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source.now = func() time.Time { return publicNow }
+		document, err := source.Snapshot(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if requests.Load() != int64(len(config.Canaries)) || len(document.Operations) != len(config.Canaries) {
+			t.Fatalf("all configured keys were not read: requests=%d operations=%d", requests.Load(), len(document.Operations))
+		}
+		for _, operation := range document.Operations {
+			if operation.ObservationState != "not_observed" || operation.Availability != "unknown" || operation.ObservedAt != nil || len(operation.History) != 0 {
+				t.Fatalf("missing Gatus key became observed or healthy: %+v", operation)
+			}
+		}
+	})
+
+	t.Run("missing key does not erase other results", func(t *testing.T) {
+		missingKey := config.Canaries[1].GatusEndpointKey
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key := testGatusEndpointKeyFromPath(r.URL.Path)
+			if key == missingKey {
+				http.NotFound(w, r)
+				return
+			}
+			writeTestGatusEndpointStatus(t, w, key, []map[string]any{{"success": true, "timestamp": publicNow.Add(-time.Minute)}})
+		}))
+		defer server.Close()
+		source, err := NewGatusPublicStatusSource(server.URL, config, time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source.now = func() time.Time { return publicNow }
+		document, err := source.Snapshot(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		byID := make(map[string]PublicOperationStatus, len(document.Operations))
+		for _, operation := range document.Operations {
+			byID[operation.OperationID] = operation
+		}
+		for index, canary := range config.Canaries {
+			operation := byID[canary.OperationID]
+			if index == 1 {
+				if operation.ObservationState != "not_observed" || operation.Availability != "unknown" {
+					t.Fatalf("404 key should remain unobserved: %+v", operation)
+				}
+				continue
+			}
+			if operation.ObservationState != "current" || operation.Availability != "operational" {
+				t.Fatalf("healthy per-key result was lost beside 404: %+v", operation)
+			}
+		}
+	})
+}
+
+func TestGatusPublicStatusUsesBoundedPerKeyReadsAndIgnoresHugeAggregate(t *testing.T) {
+	config, err := LoadCanaryConfig("../../config/canaries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	knownKeys := make(map[string]struct{}, len(config.Canaries))
+	for _, canary := range config.Canaries {
+		knownKeys[canary.GatusEndpointKey] = struct{}{}
+	}
+	largeAggregate := bytes.Repeat([]byte{'x'}, 3_950_831)
+	var aggregateRequests atomic.Int64
+	var perKeyRequests atomic.Int64
+	var active atomic.Int32
+	var maximumActive atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/endpoints/statuses" {
+			aggregateRequests.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(largeAggregate)
+			return
+		}
+		key := testGatusEndpointKeyFromPath(r.URL.Path)
+		if _, ok := knownKeys[key]; !ok {
+			t.Errorf("unexpected/unconfigured Gatus status key %q", key)
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.RawQuery != "page=1&pageSize=50" {
+			t.Errorf("unexpected Gatus page query %q", r.URL.RawQuery)
+		}
+		perKeyRequests.Add(1)
+		current := active.Add(1)
+		for observed := maximumActive.Load(); current > observed && !maximumActive.CompareAndSwap(observed, current); observed = maximumActive.Load() {
+		}
+		time.Sleep(5 * time.Millisecond)
+		active.Add(-1)
+		writeTestGatusEndpointStatus(t, w, key, []map[string]any{{
+			"status": 200, "hostname": "private-upstream-host", "duration": int64(5 * time.Millisecond),
+			"conditionResults": []map[string]any{{"condition": "private-condition", "success": true}},
+			"success":          true, "timestamp": publicNow.Add(-time.Minute), "errors": []string{"private-upstream-error"},
+		}})
+	}))
+	defer server.Close()
+
+	configuredKey := config.Canaries[0].GatusEndpointKey
+	source, err := NewGatusPublicStatusSource(server.URL+"/api/v1/endpoints/statuses", config, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Mutating caller-owned config after construction must not redirect requests.
+	config.Canaries[0].GatusEndpointKey = "public-data_replaced-key"
+	source.now = func() time.Time { return publicNow }
+	document, err := source.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aggregateRequests.Load() != 0 || perKeyRequests.Load() != int64(len(knownKeys)) {
+		t.Fatalf("aggregate/per-key requests=%d/%d; want 0/%d", aggregateRequests.Load(), perKeyRequests.Load(), len(knownKeys))
+	}
+	if maximumActive.Load() > maxGatusStatusReadConcurrency || maximumActive.Load() < 1 {
+		t.Fatalf("per-key read concurrency=%d; want 1..%d", maximumActive.Load(), maxGatusStatusReadConcurrency)
+	}
+	for _, operation := range document.Operations {
+		if operation.Availability != "operational" || operation.ObservationState != "current" {
+			t.Fatalf("per-key native result was not projected: %+v", operation)
+		}
+	}
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{configuredKey, "private-upstream-host", "private-condition", "private-upstream-error", "events", "results"} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("internal Gatus field %q reached public v1 JSON", forbidden)
+		}
+	}
+}
+
+func TestGatusPublicStatusUsesOneSharedDeadlineForPerKeyReads(t *testing.T) {
+	config, err := LoadCanaryConfig("../../config/canaries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if testGatusEndpointKeyFromPath(r.URL.Path) == "" {
+			t.Errorf("unexpected Gatus path %q", r.URL.Path)
+			return
+		}
+		requests.Add(1)
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	source, err := NewGatusPublicStatusSource(server.URL, config, 80*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	if _, err := source.Snapshot(context.Background()); err == nil || err.Error() != "public status source unavailable" {
+		t.Fatalf("blocked shared-deadline snapshot error=%v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 400*time.Millisecond {
+		t.Fatalf("snapshot exceeded its shared deadline by too much: %s", elapsed)
+	}
+	if got := requests.Load(); got == 0 || got > maxGatusStatusReadConcurrency {
+		t.Fatalf("requests started after the shared deadline: %d", got)
 	}
 }
 

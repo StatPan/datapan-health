@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -22,9 +23,13 @@ import (
 )
 
 const (
-	PublicStatusSchemaVersion = "datapan.health-public-status.v1"
-	maxGatusStatusBytes       = 2 * 1024 * 1024
-	maxPublicHistoryPoints    = 50
+	PublicStatusSchemaVersion     = "datapan.health-public-status.v1"
+	maxGatusEndpointStatusBytes   = 128 * 1024
+	maxGatusEndpointStatusResults = 50
+	maxGatusEndpointStatusEvents  = 100
+	maxGatusStatusReadConcurrency = 2
+	maxGatusStatusCanaries        = 32
+	maxPublicHistoryPoints        = 50
 )
 
 var (
@@ -201,68 +206,171 @@ type PublicStatusSource interface {
 }
 
 type GatusPublicStatusSource struct {
-	statusURL string
-	client    *http.Client
-	canaries  CanaryConfig
-	now       func() time.Time
+	statusBaseURL *url.URL
+	client        *http.Client
+	timeout       time.Duration
+	canaries      CanaryConfig
+	now           func() time.Time
 }
 
 func NewGatusPublicStatusSource(statusURL string, canaries CanaryConfig, timeout time.Duration) (*GatusPublicStatusSource, error) {
 	parsed, err := url.Parse(statusURL)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+	if err != nil || parsed == nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.RawPath != "" || timeout <= 0 || len(canaries.Canaries) == 0 || len(canaries.Canaries) > maxGatusStatusCanaries {
 		return nil, errors.New("invalid Gatus status URL")
 	}
+	basePath, ok := gatusStatusBasePath(parsed.Path)
+	if !ok {
+		return nil, errors.New("invalid Gatus status URL")
+	}
+	canaryCopy := canaries
+	canaryCopy.Canaries = append([]Canary(nil), canaries.Canaries...)
+	seenKeys := make(map[string]struct{}, len(canaryCopy.Canaries))
+	seenOperations := make(map[string]struct{}, len(canaryCopy.Canaries))
+	for _, canary := range canaryCopy.Canaries {
+		if !catalogOperationIDPattern.MatchString(canary.OperationID) || !gatusKeyPattern.MatchString(canary.GatusEndpointKey) || !validCadence(canary) {
+			return nil, errors.New("invalid Gatus status URL")
+		}
+		if _, duplicate := seenKeys[canary.GatusEndpointKey]; duplicate {
+			return nil, errors.New("invalid Gatus status URL")
+		}
+		if _, duplicate := seenOperations[canary.OperationID]; duplicate {
+			return nil, errors.New("invalid Gatus status URL")
+		}
+		seenKeys[canary.GatusEndpointKey] = struct{}{}
+		seenOperations[canary.OperationID] = struct{}{}
+	}
+	baseURL := *parsed
+	baseURL.Path = basePath
+	baseURL.RawPath = ""
+	baseURL.RawQuery = ""
+	baseURL.Fragment = ""
 	client := &http.Client{Timeout: timeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	return &GatusPublicStatusSource{statusURL: statusURL, client: client, canaries: canaries, now: time.Now}, nil
+	return &GatusPublicStatusSource{statusBaseURL: &baseURL, client: client, timeout: timeout, canaries: canaryCopy, now: time.Now}, nil
+}
+
+func gatusStatusBasePath(path string) (string, bool) {
+	const aggregateRoute = "/api/v1/endpoints/statuses"
+	if path == "" || path == "/" {
+		return "", true
+	}
+	if !strings.HasSuffix(path, aggregateRoute) {
+		return "", false
+	}
+	prefix := strings.TrimSuffix(path, aggregateRoute)
+	if prefix == "" {
+		return "", true
+	}
+	if !strings.HasPrefix(prefix, "/") || strings.HasSuffix(prefix, "/") {
+		return "", false
+	}
+	for _, segment := range strings.Split(strings.TrimPrefix(prefix, "/"), "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return "", false
+		}
+		for _, r := range segment {
+			if !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') && r != '-' && r != '_' {
+				return "", false
+			}
+		}
+	}
+	return prefix, true
 }
 
 type gatusPublicEndpoint struct {
-	Key     string              `json:"key"`
-	Results []gatusPublicResult `json:"results"`
+	Name    string          `json:"name,omitempty"`
+	Group   string          `json:"group,omitempty"`
+	Key     string          `json:"key"`
+	Results json.RawMessage `json:"results"`
+	Events  json.RawMessage `json:"events,omitempty"`
 }
+
 type gatusPublicResult struct {
-	Success   bool      `json:"success"`
+	Status           int                    `json:"status,omitempty"`
+	Hostname         string                 `json:"hostname,omitempty"`
+	Duration         int64                  `json:"duration"`
+	Errors           []string               `json:"errors,omitempty"`
+	ConditionResults []gatusPublicCondition `json:"conditionResults,omitempty"`
+	Success          bool                   `json:"success"`
+	Timestamp        time.Time              `json:"timestamp"`
+	Name             string                 `json:"name,omitempty"`
+}
+
+type gatusPublicCondition struct {
+	Condition string `json:"condition"`
+	Success   bool   `json:"success"`
+}
+
+type gatusPublicEvent struct {
+	Type      string    `json:"type"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
+func exactGatusJSONMember(member string) bool {
+	switch member {
+	case "name", "group", "key", "results", "events", "status", "hostname", "duration", "errors", "conditionResults", "success", "timestamp", "condition", "type":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *GatusPublicStatusSource) Snapshot(ctx context.Context) (PublicStatusDocument, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.statusURL, nil)
-	if err != nil {
+	if s == nil || s.statusBaseURL == nil || s.client == nil || s.timeout <= 0 {
 		return PublicStatusDocument{}, errors.New("public status source unavailable")
 	}
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return PublicStatusDocument{}, errors.New("public status source unavailable")
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "application/json") {
-		return PublicStatusDocument{}, errors.New("public status source unavailable")
+	snapshotCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+	resultsByCanary := make([][]gatusPublicResult, len(s.canaries.Canaries))
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	var firstErr error
+	var firstErrOnce sync.Once
+	workerCount := min(maxGatusStatusReadConcurrency, len(s.canaries.Canaries))
+	for range workerCount {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				canary := s.canaries.Canaries[index]
+				results, err := s.readEndpointStatus(snapshotCtx, canary.GatusEndpointKey)
+				if err != nil {
+					firstErrOnce.Do(func() {
+						firstErr = err
+						cancel()
+					})
+					continue
+				}
+				resultsByCanary[index] = results
+			}
+		}()
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxGatusStatusBytes+1))
-	if err != nil || len(data) > maxGatusStatusBytes {
-		return PublicStatusDocument{}, errors.New("public status source unavailable")
-	}
-	var endpoints []gatusPublicEndpoint
-	if err := json.Unmarshal(data, &endpoints); err != nil {
-		return PublicStatusDocument{}, errors.New("public status source unavailable")
-	}
-	resultsByKey := map[string][]gatusPublicResult{}
-	seen := map[string]bool{}
-	for _, endpoint := range endpoints {
-		if seen[endpoint.Key] {
-			return PublicStatusDocument{}, errors.New("public status source unavailable")
+
+	for index := range s.canaries.Canaries {
+		select {
+		case jobs <- index:
+		case <-snapshotCtx.Done():
+			break
 		}
-		seen[endpoint.Key] = true
-		resultsByKey[endpoint.Key] = append([]gatusPublicResult(nil), endpoint.Results...)
+		if snapshotCtx.Err() != nil {
+			break
+		}
+	}
+	close(jobs)
+	workers.Wait()
+	if firstErr != nil || snapshotCtx.Err() != nil {
+		return PublicStatusDocument{}, errors.New("public status source unavailable")
 	}
 	now := s.now().UTC()
 	if now.IsZero() || now.Year() < 2020 {
 		return PublicStatusDocument{}, errors.New("public status source unavailable")
 	}
 	operations := make([]PublicOperationStatus, 0, len(s.canaries.Canaries))
-	for _, canary := range s.canaries.Canaries {
+	for index, canary := range s.canaries.Canaries {
 		operation := PublicOperationStatus{OperationID: canary.OperationID, ObservationState: "not_observed", RawObservationState: "unknown", IncidentState: "unknown", ConsecutiveFailureThreshold: canary.ConsecutiveFailuresBeforeIncident, Availability: "unknown", Diagnosis: unknownPublicDiagnosis()}
-		results := resultsByKey[canary.GatusEndpointKey]
+		results := resultsByCanary[index]
 		operation.History = boundedPublicResultHistory(results, now)
 		if len(operation.History) > 0 {
 			started := operation.History[0].ReceivedAt
@@ -293,6 +401,137 @@ func (s *GatusPublicStatusSource) Snapshot(ctx context.Context) (PublicStatusDoc
 		return PublicStatusDocument{}, errors.New("public status source unavailable")
 	}
 	return document, nil
+}
+
+func (s *GatusPublicStatusSource) readEndpointStatus(ctx context.Context, key string) ([]gatusPublicResult, error) {
+	if !gatusKeyPattern.MatchString(key) {
+		return nil, errors.New("public status source unavailable")
+	}
+	target := *s.statusBaseURL
+	target.Path = strings.TrimSuffix(target.Path, "/") + "/api/v1/endpoints/" + url.PathEscape(key) + "/statuses"
+	target.RawQuery = "page=1&pageSize=50"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	if err != nil {
+		return nil, errors.New("public status source unavailable")
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, errors.New("public status source unavailable")
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxGatusEndpointStatusBytes+1))
+	if err != nil || len(data) > maxGatusEndpointStatusBytes {
+		return nil, errors.New("public status source unavailable")
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return []gatusPublicResult{}, nil
+	}
+	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "application/json") || validateUniqueJSONMembers(data) != nil {
+		return nil, errors.New("public status source unavailable")
+	}
+	var endpoint gatusPublicEndpoint
+	if err := decodeStrictJSON(data, &endpoint); err != nil || endpoint.Key != key || len(endpoint.Results) == 0 {
+		return nil, errors.New("public status source unavailable")
+	}
+	var rawResults []json.RawMessage
+	if err := decodeStrictJSON(endpoint.Results, &rawResults); err != nil || rawResults == nil || len(rawResults) > maxGatusEndpointStatusResults {
+		return nil, errors.New("public status source unavailable")
+	}
+	results := make([]gatusPublicResult, len(rawResults))
+	for index, rawResult := range rawResults {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(rawResult, &fields); err != nil {
+			return nil, errors.New("public status source unavailable")
+		}
+		successValue, present := fields["success"]
+		if !present || len(successValue) == 0 || string(successValue) == "null" {
+			return nil, errors.New("public status source unavailable")
+		}
+		var success bool
+		if err := json.Unmarshal(successValue, &success); err != nil {
+			return nil, errors.New("public status source unavailable")
+		}
+		if err := decodeStrictJSON(rawResult, &results[index]); err != nil || results[index].Timestamp.IsZero() {
+			return nil, errors.New("public status source unavailable")
+		}
+		results[index].Success = success
+	}
+	if len(endpoint.Events) > 0 && string(endpoint.Events) != "null" {
+		var events []gatusPublicEvent
+		if err := decodeStrictJSON(endpoint.Events, &events); err != nil || events == nil || len(events) > maxGatusEndpointStatusEvents {
+			return nil, errors.New("public status source unavailable")
+		}
+		for _, event := range events {
+			if event.Timestamp.IsZero() || (event.Type != "START" && event.Type != "HEALTHY" && event.Type != "UNHEALTHY") {
+				return nil, errors.New("public status source unavailable")
+			}
+		}
+	}
+	return results, nil
+}
+
+func validateUniqueJSONMembers(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := scanUniqueJSONValue(decoder, 0); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return errors.New("invalid JSON document")
+	}
+	return nil
+}
+
+func scanUniqueJSONValue(decoder *json.Decoder, depth int) error {
+	if depth > 32 {
+		return errors.New("JSON nesting limit exceeded")
+	}
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, isDelimiter := token.(json.Delim)
+	if !isDelimiter {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := make(map[string]struct{})
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok || !exactGatusJSONMember(key) {
+				return errors.New("invalid JSON object key")
+			}
+			if _, duplicate := seen[key]; duplicate {
+				return errors.New("duplicate JSON object key")
+			}
+			seen[key] = struct{}{}
+			if err := scanUniqueJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil || closing != json.Delim('}') {
+			return errors.New("invalid JSON object")
+		}
+	case '[':
+		for decoder.More() {
+			if err := scanUniqueJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil || closing != json.Delim(']') {
+			return errors.New("invalid JSON array")
+		}
+	default:
+		return errors.New("unexpected JSON delimiter")
+	}
+	return nil
 }
 
 func boundedPublicResultHistory(results []gatusPublicResult, now time.Time) []PublicResultHistoryPoint {
