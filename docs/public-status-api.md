@@ -87,6 +87,31 @@ The reviewed ten-canary `scope` remains explicit in every dependency response:
 it is neither whole-catalog coverage nor a data.go.kr/provider SLA. `observed_at`
 is per operation; stale and missing observations retain no incident claim.
 
+## `health-public` input files
+
+The public process requires the byte-pinned API metadata artifact and source
+pin, the reviewed operator-display artifact
+(`config/registry/operator-operation-display.v1.json`), and its exact Registry
+760 manifest/evidence subset
+(`config/registry/operation-display-registry-760/`). The display artifact
+contains operator-authored labels for four partial Registry identities; the
+evidence subset supplies only the KOSIS and Seoul document facts it binds.
+Missing or changed required inputs prevent startup, with a fixed failure-stage
+label and no raw path, parser error, or input value in the log.
+
+The complete-operation read model is a separate optional startup input. Its
+plan root, image-owned plan pin, and read-only attempt-store directory must be
+configured together using `REGISTRY_OPERATION_PLAN_ROOT`,
+`REGISTRY_OPERATION_PLAN_PIN`, and `HEALTH_OPERATION_ATTEMPT_STATE`. If none
+are configured, `health-public` still starts and serves the pinned API
+directory and the existing ten-canary compatibility views; full-plan pages
+remain unavailable. A partial or invalid plan configuration also fails closed
+to unavailable operation progress. The public process reads the durable store
+for current progress and never runs provider checks or fills missing results.
+For a full-coverage claim, the plan release, all pinned artifacts, the runtime
+binding, a complete read-model refresh, and the rendered-page acceptance must
+each be verified separately.
+
 ## CORS and caching
 
 `PUBLIC_STATUS_ALLOWED_ORIGINS` is required and contains comma-separated exact
