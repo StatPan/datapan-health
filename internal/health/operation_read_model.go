@@ -27,6 +27,7 @@ const (
 var (
 	ErrOperationReadModelUnavailable             = errors.New("operation read model unavailable")
 	ErrOperationReadModelQuery                   = errors.New("operation read model query is invalid")
+	operationSourceIDPattern                     = regexp.MustCompile(`^[a-z0-9]+(?:_[a-z0-9]+)*$`)
 	operationReadModelAPIIDPattern               = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 	operationReadModelRegistryOperationIDPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 	operationReadModelCursorVersion              = "datapan.health-registry-operations-cursor.v2"
@@ -68,6 +69,7 @@ type OperationReadModelAttempt struct {
 	SourceID            string
 	OperationID         string
 	AttemptState        string // claimed, request_started, observed, failed, unknown
+	ReceiptValidated    bool
 	RequestStarted      *bool
 	EverRequestStarted  bool
 	ResultState         string // healthy, unhealthy, indeterminate
@@ -78,6 +80,7 @@ type OperationReadModelAttempt struct {
 	GatusAcknowledgedAt time.Time
 	GatusReadbackAt     time.Time
 	GatusObservedState  string
+	UpdatedAt           time.Time
 }
 
 type OperationReadModelIdentityCounts struct {
@@ -200,6 +203,7 @@ type OperationReadModel struct {
 	inventoryUnknownScopes int
 	generatedAt            time.Time
 	rows                   []OperationReadModelRow
+	staticRows             []OperationReadModelRow
 	byIdentity             map[string]int
 	byAPI                  map[string][]int
 }
@@ -269,6 +273,7 @@ func NewOperationReadModel(plan PinnedOperationObservationPlan, metadataPin Regi
 		return model.rows[i].RegistryOperationID < model.rows[j].RegistryOperationID
 	})
 	model.reindex()
+	model.staticRows = append([]OperationReadModelRow(nil), model.rows...)
 	for _, attempt := range attempts {
 		if err := model.ApplyAttempt(attempt); err != nil {
 			return nil, ErrOperationReadModelUnavailable
@@ -292,7 +297,54 @@ func (model *OperationReadModel) ApplyAttempt(attempt OperationReadModelAttempt)
 	row := model.rows[index]
 	applyOperationReadModelAttempt(&row, attempt)
 	model.rows[index] = row
+	if attempt.UpdatedAt.After(model.generatedAt) {
+		model.generatedAt = attempt.UpdatedAt.UTC()
+	}
 	return nil
+}
+
+// RefreshAttempts atomically replaces cached attempt projections from one
+// bounded durable-store snapshot. It is intended for startup/background
+// refresh; page methods never read or stat operation files.
+func (model *OperationReadModel) RefreshAttempts(attempts []OperationReadModelAttempt, generatedAt time.Time) error {
+	if model == nil || generatedAt.IsZero() || len(attempts) > len(model.staticRows) {
+		return ErrOperationReadModelUnavailable
+	}
+	model.mu.Lock()
+	defer model.mu.Unlock()
+	rows := append([]OperationReadModelRow(nil), model.staticRows...)
+	seen := make(map[string]struct{}, len(attempts))
+	for _, attempt := range attempts {
+		if !validOperationReadModelAttempt(attempt) {
+			return ErrOperationReadModelUnavailable
+		}
+		key := operationReadModelIdentityKey(attempt.SourceID, attempt.OperationID)
+		if _, duplicate := seen[key]; duplicate {
+			return ErrOperationReadModelUnavailable
+		}
+		seen[key] = struct{}{}
+		index, ok := model.byIdentity[key]
+		if !ok {
+			return ErrOperationReadModelUnavailable
+		}
+		applyOperationReadModelAttempt(&rows[index], attempt)
+	}
+	model.rows = rows
+	model.generatedAt = generatedAt.UTC()
+	return nil
+}
+
+// RefreshFromStore obtains one bounded snapshot from the durable attempt
+// ledger and atomically publishes it into the in-memory index.
+func (model *OperationReadModel) RefreshFromStore(store *OperationAttemptStore, generatedAt time.Time) error {
+	if store == nil {
+		return ErrOperationReadModelUnavailable
+	}
+	attempts, err := store.SnapshotReadModelAttempts()
+	if err != nil {
+		return ErrOperationReadModelUnavailable
+	}
+	return model.RefreshAttempts(attempts, generatedAt)
 }
 
 // LookupAPIProgress returns exact per-API identity-set rollups. It accepts at
@@ -590,19 +642,45 @@ func operationMissingReason(record OperationObservationPlanRecord) string {
 }
 
 func validOperationReadModelAttempt(attempt OperationReadModelAttempt) bool {
-	if !operationSourceIDPattern.MatchString(attempt.SourceID) || attempt.OperationID == "" || len(attempt.OperationID) > 256 || !validOperationReadModelAttemptState(attempt.AttemptState) || !validOperationReadModelDeliveryState(attempt.GatusDeliveryState) {
+	if !operationSourceIDPattern.MatchString(attempt.SourceID) || attempt.OperationID == "" || len(attempt.OperationID) > 256 || !validOperationReadModelAttemptState(attempt.AttemptState) || !validOperationReadModelDeliveryState(attempt.GatusDeliveryState) || attempt.UpdatedAt.IsZero() {
 		return false
 	}
-	if attempt.RequestStarted != nil && attempt.AttemptState != "request_started" && attempt.AttemptState != "observed" && attempt.AttemptState != "failed" && attempt.AttemptState != "unknown" {
+	if attempt.RequestStarted != nil && !attempt.ReceiptValidated {
 		return false
 	}
-	if attempt.AttemptState == "observed" {
-		return attempt.RequestStarted != nil && *attempt.RequestStarted && validOperationReadModelResultState(attempt.ResultState) && attempt.ProviderObservedAt.IsZero() == false && attempt.HealthReceivedAt.IsZero() == false && !attempt.ProviderObservedAt.After(attempt.HealthReceivedAt) && validGatusReadback(attempt)
+	switch attempt.AttemptState {
+	case "claimed":
+		if attempt.ReceiptValidated || attempt.RequestStarted != nil {
+			return false
+		}
+	case "request_started", "observed":
+		if !attempt.ReceiptValidated || attempt.RequestStarted == nil || !*attempt.RequestStarted {
+			return false
+		}
+	case "failed":
+		if !attempt.ReceiptValidated || attempt.RequestStarted == nil {
+			return false
+		}
+	case "unknown":
+		if attempt.ReceiptValidated || attempt.RequestStarted != nil {
+			return false
+		}
 	}
-	if !attempt.ProviderObservedAt.IsZero() || !attempt.HealthReceivedAt.IsZero() {
+	if attempt.AttemptState == "observed" && attempt.ProviderObservedAt.IsZero() {
 		return false
 	}
-	if attempt.GatusDeliveryState == "acknowledged" || attempt.GatusDeliveryState == "readback_verified" {
+	hasObservation := !attempt.ProviderObservedAt.IsZero() || !attempt.HealthReceivedAt.IsZero() || attempt.ResultState != "" || attempt.ResultCategory != ""
+	if hasObservation {
+		if !validOperationReadModelResultState(attempt.ResultState) || !validOperationReadModelResultCategory(attempt.ResultCategory) || attempt.ProviderObservedAt.IsZero() || attempt.HealthReceivedAt.IsZero() || attempt.ProviderObservedAt.After(attempt.HealthReceivedAt) || attempt.HealthReceivedAt.After(attempt.UpdatedAt) {
+			return false
+		}
+		if attempt.ResultState == "healthy" && attempt.ResultCategory != "healthy" || attempt.ResultState == "unhealthy" && (attempt.ResultCategory == "healthy" || attempt.ResultCategory == "indeterminate") || attempt.ResultState == "indeterminate" && attempt.ResultCategory != "indeterminate" && attempt.ResultCategory != "observer_failure" {
+			return false
+		}
+		if !validGatusReadback(attempt) {
+			return false
+		}
+	} else if attempt.GatusDeliveryState != "not_ready" || !attempt.GatusAcknowledgedAt.IsZero() || !attempt.GatusReadbackAt.IsZero() || attempt.GatusObservedState != "" {
 		return false
 	}
 	return true
@@ -613,7 +691,7 @@ func validGatusReadback(attempt OperationReadModelAttempt) bool {
 	case "not_ready", "pending":
 		return attempt.GatusAcknowledgedAt.IsZero() && attempt.GatusReadbackAt.IsZero()
 	case "acknowledged":
-		return !attempt.GatusAcknowledgedAt.IsZero() && attempt.GatusReadbackAt.IsZero() && validGatusResultState(attempt.GatusObservedState)
+		return !attempt.GatusAcknowledgedAt.IsZero() && attempt.GatusReadbackAt.IsZero() && attempt.GatusObservedState == ""
 	case "readback_verified":
 		return !attempt.GatusAcknowledgedAt.IsZero() && !attempt.GatusReadbackAt.IsZero() && !attempt.GatusReadbackAt.Before(attempt.GatusAcknowledgedAt) && validGatusResultState(attempt.GatusObservedState)
 	default:
@@ -625,7 +703,7 @@ func applyOperationReadModelAttempt(row *OperationReadModelRow, attempt Operatio
 	row.AttemptState = attempt.AttemptState
 	row.RequestStarted = cloneBool(attempt.RequestStarted)
 	row.Attempted = row.Attempted || attempt.EverRequestStarted || attempt.RequestStarted != nil && *attempt.RequestStarted
-	if attempt.AttemptState == "observed" {
+	if !attempt.ProviderObservedAt.IsZero() {
 		row.ResultCategory = attempt.ResultCategory
 		row.ProviderObservedAt = cloneTime(attempt.ProviderObservedAt)
 		row.HealthReceivedAt = cloneTime(attempt.HealthReceivedAt)
@@ -695,8 +773,19 @@ func validRegistryAPIMetadataPin(pin RegistryAPIMetadataPin) bool {
 func validOperationReadModelDeliveryState(value string) bool {
 	return value == "not_ready" || value == "pending" || value == "acknowledged" || value == "readback_verified"
 }
+func validGatusResultState(value string) bool {
+	return value == "healthy" || value == "unhealthy" || value == "unknown"
+}
 func validOperationReadModelResultState(value string) bool {
 	return value == "healthy" || value == "unhealthy" || value == "indeterminate"
+}
+func validOperationReadModelResultCategory(value string) bool {
+	switch value {
+	case "healthy", "transport_failure", "timeout", "rate_limited", "credential_missing", "credential_rejected", "parameter_blocked", "provider_failure", "semantic_failure", "schema_drift", "unsupported", "observer_failure", "indeterminate":
+		return true
+	default:
+		return false
+	}
 }
 func cloneBool(value *bool) *bool {
 	if value == nil {

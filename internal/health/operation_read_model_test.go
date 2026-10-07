@@ -19,9 +19,9 @@ func TestOperationReadModelBuildsPinnedPageAndSeparatesProviderAndHealthTimes(t 
 	now := time.Date(2026, 10, 7, 2, 0, 0, 0, time.UTC)
 	requestStarted := true
 	model, err := NewOperationReadModel(plan, testRegistryAPIMetadataPin(0, 0), nil, []OperationReadModelAttempt{{
-		SourceID: "synthetic_test", OperationID: "synthetic-rest-list", AttemptState: "observed", RequestStarted: &requestStarted,
+		SourceID: "synthetic_test", OperationID: "synthetic-rest-list", AttemptState: "observed", ReceiptValidated: true, RequestStarted: &requestStarted, EverRequestStarted: true,
 		ResultState: "healthy", ResultCategory: "healthy", ProviderObservedAt: now.Add(-10 * time.Minute), HealthReceivedAt: now.Add(-9 * time.Minute),
-		GatusDeliveryState: "acknowledged", GatusAcknowledgedAt: now.Add(-8 * time.Minute), GatusObservedState: "healthy",
+		GatusDeliveryState: "acknowledged", GatusAcknowledgedAt: now.Add(-8 * time.Minute), UpdatedAt: now,
 	}}, now)
 	if err != nil {
 		t.Fatalf("construct read model: %v", err)
@@ -130,7 +130,7 @@ func testOperationReadModelForAPIProgress(t *testing.T, now time.Time) *Operatio
 	model := &OperationReadModel{registryRevision: strings.Repeat("a", 40), manifestSHA: strings.Repeat("b", 64), indexSHA: strings.Repeat("c", 64), planSchemaSHA: strings.Repeat("d", 64), pageSchemaSHA: strings.Repeat("e", 64), metadataPin: testRegistryAPIMetadataPin(2, 3), generatedAt: now, inventoryUnknownScopes: 1, rows: rows}
 	model.reindex()
 	requestStarted := true
-	if err := model.ApplyAttempt(OperationReadModelAttempt{SourceID: "data_go_kr", OperationID: operationID1, AttemptState: "observed", RequestStarted: &requestStarted, ResultState: "healthy", ResultCategory: "healthy", ProviderObservedAt: now.Add(-30 * time.Second), HealthReceivedAt: now.Add(-20 * time.Second), GatusDeliveryState: "readback_verified", GatusAcknowledgedAt: now.Add(-15 * time.Second), GatusReadbackAt: now.Add(-10 * time.Second), GatusObservedState: "healthy"}); err != nil {
+	if err := model.ApplyAttempt(OperationReadModelAttempt{SourceID: "data_go_kr", OperationID: operationID1, AttemptState: "observed", ReceiptValidated: true, RequestStarted: &requestStarted, EverRequestStarted: true, ResultState: "healthy", ResultCategory: "healthy", ProviderObservedAt: now.Add(-30 * time.Second), HealthReceivedAt: now.Add(-20 * time.Second), GatusDeliveryState: "readback_verified", GatusAcknowledgedAt: now.Add(-15 * time.Second), GatusReadbackAt: now.Add(-10 * time.Second), GatusObservedState: "healthy", UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	return model
