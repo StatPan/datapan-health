@@ -1,6 +1,6 @@
 {
   "schema_version": "datapan.health-registry-api-metadata-receipt.v1",
-  "generated_at": "2026-10-07T03:00:41Z",
+  "generated_at": "2026-10-07T03:02:35Z",
   "registry_revision": "d7dba637a06e345cba7ae058cba96fe53d3e532b",
   "source_sha256": "0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0",
   "catalog_sha256": "0503ddd9c93c31781c7920ccccdaf55aa5f3ed7e8061cb7dd16f0d8eb95611d2",

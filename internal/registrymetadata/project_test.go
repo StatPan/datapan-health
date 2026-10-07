@@ -137,13 +137,20 @@ func TestProjectBoundsAllOperationValuesBeforeTypedDecode(t *testing.T) {
 	tooManyNulls := strings.TrimSuffix(strings.Repeat("null,", registrymetadata.MaxSourceOperations+1), ",")
 	operationBomb := `[{"id":"12345678","provider":"data.go.kr","source":{"raw":{}},"OPERATIONS":[` + tooManyNulls + `]}]`
 	duplicateArrays := `[{"id":"12345678","provider":"data.go.kr","source":{"raw":{}},"operations":[null],"OPERATIONS":[null]}]`
+	perRecord := strings.TrimSuffix(strings.Repeat("null,", registrymetadata.MaxSourceOperations/2+1), ",")
+	aggregateBomb := `[{"id":"12345678","provider":"data.go.kr","source":{"raw":{}},"operations":[` + perRecord + `]},{"id":"12345679","provider":"data.go.kr","source":{"raw":{}},"operations":[` + perRecord + `]}]`
+	nesting := strings.Repeat("[", registrymetadata.MaxJSONDepth+2) + "0" + strings.Repeat("]", registrymetadata.MaxJSONDepth+2)
+	deepUnknownField := `[{"id":"12345678","provider":"data.go.kr","source":{"raw":{}},"ignored":` + nesting + `}]`
 	cases := []struct {
-		name      string
-		source    string
-		wantError string
+		name        string
+		source      string
+		apiEntities int
+		wantError   string
 	}{
-		{name: "case-folded LINK count bomb", source: operationBomb, wantError: "operation count exceeds"},
-		{name: "case-folded duplicate arrays", source: duplicateArrays, wantError: "duplicate operations fields"},
+		{name: "case-folded LINK count bomb", source: operationBomb, apiEntities: 1, wantError: "operation count exceeds"},
+		{name: "case-folded duplicate arrays", source: duplicateArrays, apiEntities: 1, wantError: "duplicate operations fields"},
+		{name: "aggregate LINK count bomb", source: aggregateBomb, apiEntities: 2, wantError: "source operation count exceeds budget"},
+		{name: "deep unknown field", source: deepUnknownField, apiEntities: 1, wantError: "nesting exceeds budget"},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -156,12 +163,12 @@ func TestProjectBoundsAllOperationValuesBeforeTypedDecode(t *testing.T) {
 				RegistryRevision: strings.Repeat("a", 40),
 				Source:           registrymetadata.SourcePin{Path: "data/data-go-kr.registry.json", SHA256: sourceSHA, SizeBytes: int64(len(test.source))},
 				Catalog:          registrymetadata.CatalogPin{Path: "config/registry/health-probe-catalog.json", SHA256: hex.EncodeToString(catalogHash[:]), EntryCount: 1},
-				ExpectedCounts:   registrymetadata.ExpectedCounts{APIEntities: 1, APIOperations: 1, Institutions: 1, MatchedHealthCanaries: 1},
+				ExpectedCounts:   registrymetadata.ExpectedCounts{APIEntities: test.apiEntities, APIOperations: 1, Institutions: 1, MatchedHealthCanaries: 1},
 				Artifact:         registrymetadata.ArtifactPin{Path: "config/registry/api-metadata.v1.json"},
 			}
 			_, _, err := registrymetadata.Project(strings.NewReader(test.source), []byte(catalog), pin)
 			if err == nil || !strings.Contains(err.Error(), test.wantError) {
-				t.Fatalf("operation array was not rejected before typed decode: %v", err)
+				t.Fatalf("unsafe source record passed bounded preflight: %v", err)
 			}
 		})
 	}
