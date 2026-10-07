@@ -20,12 +20,15 @@ const (
 	OperationHistoryAtomicTempReserveBytes = MaxOperationHistorySerializedReceipt + OperationHistoryEnvelopeReserveBytes
 	OperationHistoryJournalReserveBytes    = 4 * 1024
 	MaxOperationHistoryReservedBytes       = MaxOperationHistoryReceiptBytes + MaxOperationHistorySerializedReceipt + OperationHistoryEnvelopeReserveBytes + OperationHistoryAtomicTempReserveBytes + OperationHistoryJournalReserveBytes
+	MaxOperationHistoryBatchRecords        = 256
+	MaxOperationHistoryBatchBytes          = 8 * 1024 * 1024
 )
 
 var (
 	ErrOperationHistoryUnavailable       = errors.New("operation history archive is unavailable")
 	ErrOperationHistoryCapacity          = errors.New("operation history archive capacity is full")
 	ErrOperationHistoryReserved          = errors.New("operation history reservation is unavailable")
+	ErrOperationHistoryStale             = errors.New("operation history attempt generation is stale")
 	ErrOperationHistoryConflict          = errors.New("operation history identity conflicts with existing evidence")
 	ErrOperationHistoryCorrupt           = errors.New("operation history archive is corrupt")
 	operationHistorySourcePattern        = regexp.MustCompile(`^[a-z0-9]+(?:_[a-z0-9]+)*$`)
@@ -82,11 +85,12 @@ type OperationHistoryRecord struct {
 // must not derive or persist their own token values.
 type OperationHistoryReservation struct {
 	identityID string
+	token      string
 }
 
 func (reservation OperationHistoryReservation) Matches(identity OperationHistoryIdentity) bool {
 	identityID, err := operationHistoryIdentityKey(identity)
-	return err == nil && reservation.identityID != "" && reservation.identityID == identityID
+	return err == nil && reservation.identityID != "" && reservation.identityID == identityID && reservation.token != ""
 }
 
 func operationHistoryIdentityKey(identity OperationHistoryIdentity) (string, error) {
@@ -105,6 +109,55 @@ type OperationHistoryRecordRef struct {
 	RecordID   string    `json:"record_id"`
 	SHA256     string    `json:"sha256"`
 	AppendedAt time.Time `json:"appended_at"`
+}
+
+type OperationHistoryBatchRecord struct {
+	RecordID   string                 `json:"record_id"`
+	RecordSHA  string                 `json:"record_sha256"`
+	Sequence   uint64                 `json:"sequence"`
+	AppendedAt time.Time              `json:"appended_at"`
+	Record     OperationHistoryRecord `json:"record"`
+}
+
+type OperationHistoryBatch struct {
+	SchemaVersion  string                        `json:"schema_version"`
+	BatchID        string                        `json:"batch_id"`
+	RecordSetSHA   string                        `json:"record_set_sha256"`
+	ManifestSHA256 string                        `json:"manifest_sha256,omitempty"`
+	RecordsSHA256  string                        `json:"records_sha256,omitempty"`
+	Records        []OperationHistoryBatchRecord `json:"records"`
+}
+
+// OperationHistoryPublicationConfirmation is returned only after the batch
+// publisher has read back the exact immutable files from the pinned remote
+// revision and matched their local SHA-256 digests.
+type OperationHistoryPublicationConfirmation struct {
+	BatchID             string    `json:"batch_id"`
+	DatasetRepo         string    `json:"dataset_repo"`
+	Revision            string    `json:"revision"`
+	ManifestSHA256      string    `json:"manifest_sha256"`
+	RecordsSHA256       string    `json:"records_sha256"`
+	RecordSetSHA256     string    `json:"record_set_sha256"`
+	VerifiedAt          time.Time `json:"verified_at"`
+	verifiedByPublisher bool
+	sealSHA256          string
+}
+
+// OperationHistoryPublicationReadback is the public metadata returned by the
+// configured asynchronous publisher after it has verified exact remote bytes.
+type OperationHistoryPublicationReadback struct {
+	DatasetRepo     string
+	Revision        string
+	ManifestSHA256  string
+	RecordsSHA256   string
+	RecordSetSHA256 string
+	VerifiedAt      time.Time
+}
+
+// OperationHistoryBatchPublisher owns external upload and readback. It is
+// called only by the asynchronous publisher path, after local append succeeds.
+type OperationHistoryBatchPublisher interface {
+	PublishAndReadback(context.Context, OperationHistoryBatch) (OperationHistoryPublicationReadback, error)
 }
 
 // OperationHistoryAppender separates the synchronous local durability gate
