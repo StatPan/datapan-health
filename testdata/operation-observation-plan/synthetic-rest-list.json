@@ -211,13 +211,6 @@
     "inventory_status": "source_complete",
     "inventory_unknown": false,
     "provider": "synthetic-test-provider",
-    "source_artifacts": [
-      {
-        "bytes": 4248,
-        "path": "fixtures/operation-observation-plan/synthetic-source.json",
-        "sha256": "1532cc4a9d728d0cea6c614d4a0ade1f9ed22bfc33b28101de05f7855bf07d3c"
-      }
-    ],
     "source_id": "synthetic_test",
     "test_only": true
   }

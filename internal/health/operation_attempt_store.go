@@ -470,7 +470,7 @@ func (store *OperationAttemptStore) CompleteAttemptFromValidatedHistory(ctx cont
 		return ErrOperationAttemptUnavailable
 	}
 	sealed, probeResult, err := validator.ValidateStoredOperationPlanProbeRecord(ctx, candidate)
-	if err != nil || sealed.Validate() != nil || !sealed.Identity.MatchesOperationAttempt(claim) || !sealed.AttemptStartedAt.Equal(claim.StartedAt.UTC()) || sealed.ValidatedAt.After(ref.AppendedAt) {
+	if err != nil || sealed.Validate() != nil || !ref.MatchesValidatedRecord(sealed) || !sealed.Identity.MatchesOperationAttempt(claim) || !sealed.AttemptStartedAt.Equal(claim.StartedAt.UTC()) || sealed.ValidatedAt.After(ref.AppendedAt) {
 		return ErrOperationAttemptUnavailable
 	}
 	contentSHA, err := sealed.ContentSHA256()

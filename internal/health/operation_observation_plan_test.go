@@ -193,7 +193,13 @@ func writeSyntheticOperationObservationPlanVersion(t *testing.T, omitEvidence bo
 		content := []byte("synthetic release artifact " + path)
 		sha := digest(content)
 		writePlanTestFile(t, root, path, content)
-		artifact := RegistryReleaseManifestArtifact{Path: path, Kind: "source", Schema: "text/plain", Bytes: int64(len(content)), SHA256: sha}
+		schema := "text/plain"
+		if i == 0 {
+			// Registry manifests may leave unrelated source inputs without a
+			// schema label; their path, digest, size and kind remain bound.
+			schema = ""
+		}
+		artifact := RegistryReleaseManifestArtifact{Path: path, Kind: "source", Schema: schema, Bytes: int64(len(content)), SHA256: sha}
 		manifestArtifacts = append(manifestArtifacts, artifact)
 		if i == 0 {
 			continue

@@ -10,8 +10,8 @@ import (
 )
 
 func TestOperationObservationPlanSchemaMatchesRegistryContractPin(t *testing.T) {
-	const registryRevision = "0da541ff40fdc396ab855cc92520a56403de46d9"
-	const sourceSchemaDigest = "d5b441d04c642a99c320eee8355d4aa6541c3699561b64bb2bf297e207a09533"
+	const registryRevision = "da02fccaee4989c5c6dcf3b60e8e627ecd477cca"
+	const sourceSchemaDigest = "cafa93014d7a32ef072f74df1a730f681e5b206440e4a83e9cdf426f6686e162"
 	localDigest := sha256.Sum256(operationObservationPlanSchema)
 	if hex.EncodeToString(localDigest[:]) != sourceSchemaDigest {
 		t.Fatal("embedded operation-observation-plan schema differs from Registry pin")

@@ -23,8 +23,8 @@ import (
 const (
 	OperationObservationPlanSchemaVersion      = "datapan.operation-observation-plan.v1"
 	operationObservationPlanSchemaURI          = "https://schemas.datapan.dev/datapan.operation-observation-plan.v1.schema.json"
-	operationObservationPlanSchemaSHA256       = "d5b441d04c642a99c320eee8355d4aa6541c3699561b64bb2bf297e207a09533"
-	operationObservationSchemaRegistryRevision = "0da541ff40fdc396ab855cc92520a56403de46d9"
+	operationObservationPlanSchemaSHA256       = "cafa93014d7a32ef072f74df1a730f681e5b206440e4a83e9cdf426f6686e162"
+	operationObservationSchemaRegistryRevision = "da02fccaee4989c5c6dcf3b60e8e627ecd477cca"
 	maxOperationObservationIndexBytes          = 16 * 1024 * 1024
 	maxOperationObservationManifestBytes       = 16 * 1024 * 1024
 	maxOperationObservationShardBytes          = 16 * 1024 * 1024
@@ -273,7 +273,7 @@ func LoadPinnedOperationObservationPlan(root string, binding OperationObservatio
 	}
 	manifestArtifacts := make(map[string]RegistryReleaseManifestArtifact, len(release.Artifacts))
 	for _, artifact := range release.Artifacts {
-		if !safePlanRelativePath(artifact.Path) || artifact.Bytes <= 0 || !sha256Pattern.MatchString(artifact.SHA256) || artifact.Kind == "" || artifact.Schema == "" {
+		if !safePlanRelativePath(artifact.Path) || artifact.Bytes <= 0 || !sha256Pattern.MatchString(artifact.SHA256) || artifact.Kind == "" {
 			return PinnedOperationObservationPlan{}, errOperationObservationPlanInvalid
 		}
 		if _, exists := manifestArtifacts[artifact.Path]; exists {
