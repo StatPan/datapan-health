@@ -44,56 +44,56 @@ func main() {
 
 	canaries, err := health.LoadCanaryConfig(*canaryPath)
 	if err != nil {
-		fatal()
+		fatalAt(startupStageCanaryConfig)
 	}
 	if *doctor {
 		reference := time.Now().UTC()
 		if *scheduleCoverageReferenceAt != "" {
 			parsed, parseErr := time.Parse(time.RFC3339, *scheduleCoverageReferenceAt)
 			if parseErr != nil {
-				fatal()
+				fatalAt(startupStageDoctorReference)
 			}
 			reference = parsed.UTC()
 		}
 		schedule := health.ReadScheduleCoverageDoctorReport(*scheduleCoverageState, reference, *scheduleCoverageMaxAge)
 		report, err := health.BuildPublicStatusDoctorReportWithSchedule(context.Background(), health.DefaultOwnedServiceStatusSource(), len(canaries.Canaries), schedule)
 		if err != nil || json.NewEncoder(os.Stdout).Encode(report) != nil {
-			fatal()
+			fatalAt(startupStageDoctorReport)
 		}
 		return
 	}
 	registryMetadata, err := health.LoadRegistryAPIMetadata(*registryMetadataPath, *registryMetadataPinPath, canaries)
 	if err != nil {
-		fatal()
+		fatalAt(startupStageRegistryMetadata)
 	}
 	operationDisplay, err := health.LoadPublicOperationDisplayMetadata(*operationDisplayPath, *operationDisplayEvidenceRoot)
 	if err != nil {
-		fatal()
+		fatalAt(startupStageDisplayMetadata)
 	}
 	source, err := health.NewGatusPublicStatusSource(*gatusStatusURL, canaries, 5*time.Second)
 	if err != nil {
-		fatal()
+		fatalAt(startupStageGatusAdapter)
 	}
 	assertionContract, err := health.LoadAssertionPolicyContract(*assertionPinPath, canaries)
 	if err != nil {
-		fatal()
+		fatalAt(startupStageAssertionContract)
 	}
 	publicSource, err := health.NewDiagnosisOverlaySource(source, *diagnosisPath, assertionContract)
 	if err != nil {
-		fatal()
+		fatalAt(startupStageDiagnosisOverlay)
 	}
 	origins := splitOrigins(*originList)
 	cachedSource, err := health.NewCachedPublicStatusSource(publicSource, 5*time.Second, 5*time.Second)
 	if err != nil {
-		fatal()
+		fatalAt(startupStagePublicStatusCache)
 	}
 	readinessSource, err := health.NewSchedulerHealthSelfReadinessSource(*selfReadinessURL, canaries, time.Second)
 	if err != nil {
-		fatal()
+		fatalAt(startupStageSelfReadiness)
 	}
 	cachedReadiness, err := health.NewCachedHealthSelfReadinessSource(readinessSource, time.Second, time.Second)
 	if err != nil {
-		fatal()
+		fatalAt(startupStageSelfReadiness)
 	}
 	var operationSource health.PublicRegistryOperationsSource
 	operationConfigured, operationConfigValid := operationReadModelConfiguration(*operationPlanRoot, *operationPlanPinPath, *operationAttemptStorePath)
@@ -108,10 +108,10 @@ func main() {
 			FullRefreshInterval: *operationFullRefreshInterval, MaxPassDuration: 2 * time.Minute,
 		}
 		if health.ValidateOperationReadModelRefreshPolicy(policy) != nil {
-			fatal()
+			fatalAt(startupStageReadModel)
 		}
 		if *operationReadMaxAge < time.Minute || *operationReadMaxAge > 24*time.Hour {
-			fatal()
+			fatalAt(startupStageReadModel)
 		}
 		if metadataErr != nil {
 			log.Print("Registry operation read model unavailable: verified metadata is unavailable")
@@ -129,18 +129,38 @@ func main() {
 	}
 	handler, err := health.NewPublicStatusHandlerWithOperationDisplay(cachedSource, origins, registryMetadata, cachedReadiness, operationSource, operationDisplay)
 	if err != nil {
-		fatal()
+		fatalAt(startupStagePublicHandler)
 	}
 
 	guard, err := health.NewPublicReadGuard(handler, health.PublicReadLimits{RequestsPerSecond: *readRate, Burst: *readBurst, MaxConcurrent: *readConcurrent})
 	if err != nil {
-		fatal()
+		fatalAt(startupStageReadGuard)
 	}
 	server := &http.Server{Addr: *listen, Handler: guard, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 * 1024}
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		fatal()
+		fatalAt(startupStageListener)
 	}
 }
+
+type publicStartupFailureStage string
+
+const (
+	startupStageCanaryConfig      publicStartupFailureStage = "canary_config"
+	startupStageDoctorReference   publicStartupFailureStage = "doctor_reference"
+	startupStageDoctorReport      publicStartupFailureStage = "doctor_report"
+	startupStageRegistryMetadata  publicStartupFailureStage = "registry_metadata"
+	startupStageDisplayMetadata   publicStartupFailureStage = "display_metadata"
+	startupStageGatusAdapter      publicStartupFailureStage = "gatus_adapter"
+	startupStageAssertionContract publicStartupFailureStage = "assertion_contract"
+	startupStageDiagnosisOverlay  publicStartupFailureStage = "diagnosis_overlay"
+	startupStagePublicStatusCache publicStartupFailureStage = "public_status_cache"
+	startupStageSelfReadiness     publicStartupFailureStage = "self_readiness"
+	startupStageReadModel         publicStartupFailureStage = "read_model"
+	startupStagePublicHandler     publicStartupFailureStage = "public_handler"
+	startupStageReadGuard         publicStartupFailureStage = "read_guard"
+	startupStageListener          publicStartupFailureStage = "listener"
+	startupStageConfiguration     publicStartupFailureStage = "configuration"
+)
 
 func splitOrigins(value string) []string {
 	parts := strings.Split(value, ",")
@@ -160,8 +180,17 @@ func env(key, fallback string) string {
 	return fallback
 }
 
-func fatal() {
-	fmt.Fprintln(os.Stderr, "public status service failed")
+func fatalAt(stage publicStartupFailureStage) {
+	switch stage {
+	case startupStageCanaryConfig, startupStageDoctorReference, startupStageDoctorReport,
+		startupStageRegistryMetadata, startupStageDisplayMetadata, startupStageGatusAdapter,
+		startupStageAssertionContract, startupStageDiagnosisOverlay, startupStagePublicStatusCache,
+		startupStageSelfReadiness, startupStageReadModel, startupStagePublicHandler,
+		startupStageReadGuard, startupStageListener, startupStageConfiguration:
+	default:
+		stage = startupStageConfiguration
+	}
+	fmt.Fprintf(os.Stderr, "public status service failed at stage=%s\n", stage)
 	os.Exit(1)
 }
 
@@ -172,7 +201,7 @@ func envInt(key string, fallback int) int {
 	}
 	value, err := strconv.Atoi(raw)
 	if err != nil {
-		fatal()
+		fatalAt(startupStageConfiguration)
 	}
 	return value
 }
@@ -184,7 +213,7 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 	}
 	value, err := time.ParseDuration(raw)
 	if err != nil {
-		fatal()
+		fatalAt(startupStageConfiguration)
 	}
 	return value
 }
