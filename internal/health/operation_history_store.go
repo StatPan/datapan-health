@@ -307,7 +307,10 @@ func (store *OperationHistoryStore) AppendValidated(ctx context.Context, token O
 			} else if !errors.Is(err, os.ErrNotExist) {
 				return ErrOperationHistoryUnavailable
 			}
-			result = OperationHistoryRecordRef{RecordID: recordID, SHA256: contentSHA, AppendedAt: stored.AppendedAt}
+			result, err = newDurableOperationHistoryRecordRef(stored.Record, stored.AppendedAt)
+			if err != nil {
+				return err
+			}
 			return nil
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return ErrOperationHistoryUnavailable
@@ -317,7 +320,10 @@ func (store *OperationHistoryStore) AppendValidated(ctx context.Context, token O
 		} else if found {
 			switch {
 			case published.Identity == record.Identity && published.RecordSHA == contentSHA:
-				result = OperationHistoryRecordRef{RecordID: recordID, SHA256: contentSHA, AppendedAt: published.AppendedAt}
+				result, err = newDurableOperationHistoryRecordRef(record, published.AppendedAt)
+				if err != nil {
+					return err
+				}
 				return nil
 			case published.Identity == record.Identity:
 				return ErrOperationHistoryConflict
@@ -365,7 +371,10 @@ func (store *OperationHistoryStore) AppendValidated(ctx context.Context, token O
 		if err := store.finishMutationLocked(usage); err != nil {
 			return err
 		}
-		result = OperationHistoryRecordRef{RecordID: recordID, SHA256: contentSHA, AppendedAt: appendedAt}
+		result, err = newDurableOperationHistoryRecordRef(record, appendedAt)
+		if err != nil {
+			return err
+		}
 		return nil
 	})
 	if err != nil {

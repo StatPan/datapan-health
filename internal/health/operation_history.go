@@ -106,9 +106,69 @@ func operationHistoryIdentityKey(identity OperationHistoryIdentity) (string, err
 }
 
 type OperationHistoryRecordRef struct {
+	RecordID    string    `json:"record_id"`
+	SHA256      string    `json:"sha256"`
+	AppendedAt  time.Time `json:"appended_at"`
+	appendProof *operationHistoryAppendProof
+}
+
+// operationHistoryAppendProof is an in-process capability. It is minted only
+// after the store has durably appended the matching record or revalidated an
+// identical durable record during idempotent recovery. The exported ref fields
+// remain useful for persistence and diagnostics, but cannot by themselves
+// authorize an observation.
+type operationHistoryAppendProof struct {
+	refSHA256 string
+}
+
+// MatchesValidatedRecord proves this exact ref was minted by the archive store
+// for this validated record. JSON-decoded or caller-constructed refs have no
+// proof, and changing any exported field invalidates the private seal.
+func (ref OperationHistoryRecordRef) MatchesValidatedRecord(record OperationHistoryRecord) bool {
+	if ref.appendProof == nil || record.Validate() != nil || !utcNormalized(ref.AppendedAt) || ref.AppendedAt.Before(record.ValidatedAt) {
+		return false
+	}
+	recordID, err := operationHistoryIdentityID(record.Identity)
+	if err != nil {
+		return false
+	}
+	contentSHA, err := record.ContentSHA256()
+	if err != nil || ref.RecordID != recordID || ref.SHA256 != contentSHA {
+		return false
+	}
+	return ref.appendProof.refSHA256 == operationHistoryRecordRefSeal(ref)
+}
+
+type operationHistoryRecordRefWire struct {
 	RecordID   string    `json:"record_id"`
 	SHA256     string    `json:"sha256"`
 	AppendedAt time.Time `json:"appended_at"`
+}
+
+func operationHistoryRecordRefSeal(ref OperationHistoryRecordRef) string {
+	encoded, err := json.Marshal(operationHistoryRecordRefWire{RecordID: ref.RecordID, SHA256: ref.SHA256, AppendedAt: ref.AppendedAt})
+	if err != nil {
+		return ""
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
+}
+
+func newDurableOperationHistoryRecordRef(record OperationHistoryRecord, appendedAt time.Time) (OperationHistoryRecordRef, error) {
+	if record.Validate() != nil || !utcNormalized(appendedAt) || appendedAt.Before(record.ValidatedAt) {
+		return OperationHistoryRecordRef{}, ErrOperationHistoryUnavailable
+	}
+	recordID, err := operationHistoryIdentityID(record.Identity)
+	if err != nil {
+		return OperationHistoryRecordRef{}, ErrOperationHistoryUnavailable
+	}
+	contentSHA, err := record.ContentSHA256()
+	if err != nil {
+		return OperationHistoryRecordRef{}, ErrOperationHistoryUnavailable
+	}
+	ref := OperationHistoryRecordRef{RecordID: recordID, SHA256: contentSHA, AppendedAt: appendedAt}
+	ref.appendProof = &operationHistoryAppendProof{refSHA256: operationHistoryRecordRefSeal(ref)}
+	return ref, nil
 }
 
 type OperationHistoryBatchRecord struct {
