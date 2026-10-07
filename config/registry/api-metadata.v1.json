@@ -280862,7 +280862,7 @@
       "title_state": "present",
       "organization": "부산광역시",
       "organization_state": "present",
-      "description": "부산광역시에 소재하는 부동산중개업 관련자료로 국가공간정보포털과 연동되어 관련자료를 실시간 반영하고 있으며, 부산광역시 공공데이터 포털( )을 통해 접속 후 \"부산광역시_부동산중개업 정보\" 로 검색하면 관련자료를 다양한 형식의 미리보기(XML, JSON, CSV, XLSX, TXT) 다운로드 또는 API자료(GET /BusanRealtydealerInfoService/getRealtydealerListInfo) 다운로드 할 수 있음. 자료 구성은 공인중개사 소재지, 등록번호, 사업자 상호, 중개업자명, 상태구분명으로 구분되어 있음.",
+      "description": "부산광역시에 소재하는 부동산중개업 관련자료로 국가공간정보포털과 연동되어 관련자료를 실시간 반영하고 있으며, 부산광역시 공공데이터 포털( )을 통해 접속 후 \"부산광역시_부동산중개업 정보\" 로 검색하면 관련자료를 다양한 형식의 미리보기(XML, JSON, CSV, XLSX, TXT) 다운로드 또는 API자료(GET ) 다운로드 할 수 있음. 자료 구성은 공인중개사 소재지, 등록번호, 사업자 상호, 중개업자명, 상태구분명으로 구분되어 있음.",
       "description_state": "sanitized",
       "link_operation_count": 0,
       "operations": [

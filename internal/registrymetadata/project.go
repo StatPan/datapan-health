@@ -39,6 +39,7 @@ var (
 	healthOperationIDRE = regexp.MustCompile("^[a-z0-9-]{1,64}$")
 	urlPattern          = regexp.MustCompile("(?i)\\b(?:https?://|www\\.)[^\\s<>\"')]+")
 	domainPathPattern   = regexp.MustCompile("(?i)\\b(?:[a-z0-9-]+\\.)+(?:go\\.kr|or\\.kr|co\\.kr|ac\\.kr|com|net|org|io)(?:/[a-z0-9._~!$&'()*+,;=:@%/-]*)?(?:\\?[^\\s<>\"')]+)?")
+	barePathPattern     = regexp.MustCompile("(?i)(?:^|\\s)/[a-z0-9._~%+-]+(?:/[a-z0-9._~%+-]+)+")
 	queryPattern        = regexp.MustCompile("[?&][a-z0-9_.-]{1,64}=[^\\s&<>\"']*")
 	tagPattern          = regexp.MustCompile("(?s)<[^>]*>")
 	scriptStylePattern  = regexp.MustCompile("(?is)<(?:script|style|iframe|object|noscript)\\b[^>]*>.*?</(?:script|style|iframe|object|noscript)\\s*>")
@@ -533,6 +534,7 @@ func sanitizeText(input string) string {
 	value = tagPattern.ReplaceAllString(value, " ")
 	value = urlPattern.ReplaceAllString(value, " ")
 	value = domainPathPattern.ReplaceAllString(value, " ")
+	value = barePathPattern.ReplaceAllString(value, " ")
 	value = queryPattern.ReplaceAllString(value, " ")
 	var cleaned strings.Builder
 	for _, r := range value {
