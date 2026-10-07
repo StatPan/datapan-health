@@ -563,6 +563,12 @@ func (store *OperationHistoryStore) rebuildUsageLocked(ctx context.Context) erro
 	if err := cleanupOperationHistoryPartials(store.root); err != nil {
 		return err
 	}
+	// Keep a general rebuild marker durable while replaying publication. A crash
+	// after the publication transaction is removed must still force a usage
+	// rebuild rather than trusting the pre-publication usage snapshot.
+	if err := store.beginMutationLocked("rebuild", ""); err != nil {
+		return err
+	}
 	if _, err := os.Lstat(store.publicationTransactionPath()); err == nil {
 		transaction, readErr := store.readPublicationTransaction()
 		if readErr != nil {
@@ -576,9 +582,6 @@ func (store *OperationHistoryStore) rebuildUsageLocked(ctx context.Context) erro
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return ErrOperationHistoryCorrupt
-	}
-	if err := store.beginMutationLocked("rebuild", ""); err != nil {
-		return err
 	}
 	checkpoint, err := store.readCheckpoint()
 	if err != nil {

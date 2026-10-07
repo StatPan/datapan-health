@@ -434,6 +434,84 @@ func TestOperationHistoryPublicationCheckpointRecoversPartialCleanupAndFencesSta
 	}
 }
 
+func TestOperationHistoryPublicationReplayRetainsRebuildMarkerUntilUsageIsDurable(t *testing.T) {
+	root := t.TempDir()
+	maxBytes := MaxOperationHistoryReservedBytes*4 + operationHistoryPublicationHeadroom
+	store, err := OpenOperationHistoryStore(root, maxBytes, fixtureOperationHistoryValidator{})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	identity := fixtureOperationHistoryIdentity("00000000-0000-4000-8000-000000000029")
+	identity.Generation = 10
+	record := fixtureOperationHistoryRecord(t, identity, "healthy")
+	token, err := store.Reserve(context.Background(), identity)
+	if err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	if _, err := store.AppendValidated(context.Background(), token, record); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	batch, err := store.PendingOperationHistoryBatch(context.Background())
+	if err != nil || len(batch.Records) != 1 {
+		t.Fatalf("pending batch: %#v err=%v", batch, err)
+	}
+	batch.ManifestSHA256 = strings.Repeat("a", 64)
+	batch.RecordsSHA256 = strings.Repeat("b", 64)
+	confirmation, err := newVerifiedOperationHistoryPublicationConfirmation(batch, OperationHistoryPublicationReadback{
+		DatasetRepo:     "StatPan/datapan-health-operation-history",
+		Revision:        strings.Repeat("f", 40),
+		ManifestSHA256:  batch.ManifestSHA256,
+		RecordsSHA256:   batch.RecordsSHA256,
+		RecordSetSHA256: batch.RecordSetSHA,
+		VerifiedAt:      time.Date(2026, 10, 7, 1, 1, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("seal verified publication: %v", err)
+	}
+	transaction := operationHistoryPublicationTransaction{
+		SchemaVersion: OperationHistoryStoreSchemaVersion,
+		BatchID:       batch.BatchID,
+		RecordSetSHA:  batch.RecordSetSHA,
+		Confirmation:  confirmation,
+		Records:       operationHistoryBatchRefs(batch.Records),
+	}
+	transaction.IndexChanges, err = store.operationHistoryIndexChangesLocked(context.Background(), transaction.Records)
+	if err != nil {
+		t.Fatalf("snapshot index changes: %v", err)
+	}
+	transaction.TransactionSHA = operationHistoryPublicationTransactionDigest(transaction)
+	if err := writePrivateJSONAtomic(store.publicationTransactionPath(), transaction); err != nil {
+		t.Fatalf("persist publication transaction: %v", err)
+	}
+	oldUsage, err := store.readUsage()
+	if err != nil || oldUsage.VerifiedPublicationCount != 0 || oldUsage.RecordCount != 1 {
+		t.Fatalf("pre-replay usage: %#v err=%v", oldUsage, err)
+	}
+
+	// Force the rebuild-marker write to fail. Replay must not remove its own
+	// durable transaction before a general rebuild marker protects old usage.
+	if err := os.Mkdir(store.transactionPath(), 0o700); err != nil {
+		t.Fatalf("create marker-write failure: %v", err)
+	}
+	if err := store.rebuildUsageLocked(context.Background()); !errors.Is(err, ErrOperationHistoryUnavailable) {
+		t.Fatalf("rebuild without marker error=%v, want unavailable", err)
+	}
+	if _, err := os.Stat(store.publicationTransactionPath()); err != nil {
+		t.Fatalf("publication transaction was removed before rebuild marker became durable: %v", err)
+	}
+	if usage, err := store.readUsage(); err != nil || usage.VerifiedPublicationCount != 0 || usage.RecordCount != 1 {
+		t.Fatalf("failed marker write changed the old usage snapshot: %#v err=%v", usage, err)
+	}
+	if err := os.Remove(store.transactionPath()); err != nil {
+		t.Fatalf("remove marker-write failure: %v", err)
+	}
+
+	usage, err := store.ensureUsageLocked(context.Background())
+	if err != nil || usage.AcceptedRecordCount != 1 || usage.RecordCount != 0 || usage.VerifiedPublicationCount != 1 || usage.OperationKeyCount != 1 {
+		t.Fatalf("recovered publication usage: %#v err=%v", usage, err)
+	}
+}
+
 func TestOperationHistoryPublicationAcknowledgeCompactsVerifiedPrefix(t *testing.T) {
 	root := t.TempDir()
 	maxBytes := MaxOperationHistoryReservedBytes*4 + operationHistoryPublicationHeadroom
