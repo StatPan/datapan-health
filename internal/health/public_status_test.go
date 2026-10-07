@@ -566,11 +566,17 @@ func TestRegistryAPIMetadataHTMLDirectoryIsCompleteForPinnedSourceAndBounded(t *
 	} {
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, test.path, nil))
-		if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "data.go.kr 원본 시점의 Registry 목록") || !strings.Contains(recorder.Body.String(), "다른 제공처 전체 목록은 아닙니다") {
+		if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "공공데이터포털(data.go.kr) API의 Datapan Registry 저장본") || !strings.Contains(recorder.Body.String(), "다른 제공처 전체 API 목록은 포함하지 않습니다") {
 			t.Fatalf("bounded inventory route %s=%d", test.path, recorder.Code)
 		}
 		if test.path == "/datapan/" && strings.Count(recorder.Body.String(), `<article class="status-item">`) != publicAPIsPageSize {
 			t.Fatalf("first API page is not exactly bounded: cards=%d", strings.Count(recorder.Body.String(), `<article class="status-item">`))
+		}
+		if test.path == "/datapan/" && (!strings.Contains(recorder.Body.String(), "최근 수신 기록") || strings.Contains(recorder.Body.String(), "최근 유효 결과")) {
+			t.Fatal("legacy Gatus receipt counts imply validated API results")
+		}
+		if test.path == "/datapan/" && !strings.Contains(recorder.Body.String(), "전체 API 기능별 검사 현황을 확인할 수 없습니다") {
+			t.Fatal("directory omitted the unavailable full-operation status warning")
 		}
 		if test.path == "/datapan/?page=2" && !strings.Contains(recorder.Body.String(), "페이지 2 /") {
 			t.Fatalf("second inventory page missing: %s", recorder.Body.String()[:min(300, recorder.Body.Len())])
@@ -608,12 +614,12 @@ func TestRegistryAPIMetadataHTMLShowsOnlyPerOperationObservationState(t *testing
 	now := time.Now().UTC().Truncate(time.Second)
 	document := testPublicDocument(t)
 	statuses := []PublicOperationStatus{
-		{ObservationState: "current", RawObservationState: "succeeded", IncidentState: "operational", Availability: "operational", ObservedAt: timePointer(now.Add(-time.Minute)), HistoryStartedAt: timePointer(now.Add(-24 * time.Hour))},
-		{ObservationState: "current", RawObservationState: "failed", IncidentState: "pending", PendingCount: 1, Availability: "degraded", ObservedAt: timePointer(now.Add(-2 * time.Minute))},
-		{ObservationState: "current", RawObservationState: "failed", IncidentState: "confirmed", Availability: "degraded", ObservedAt: timePointer(now.Add(-3 * time.Minute))},
-		{ObservationState: "stale", RawObservationState: "unknown", IncidentState: "unknown", Availability: "unknown", ObservedAt: timePointer(now.Add(-time.Hour))},
+		{ObservationState: "current", RawObservationState: "succeeded", IncidentState: "operational", Availability: "operational", ObservedAt: publicStatusTimePointer(now.Add(-time.Minute)), HistoryStartedAt: publicStatusTimePointer(now.Add(-24 * time.Hour))},
+		{ObservationState: "current", RawObservationState: "failed", IncidentState: "pending", PendingCount: 1, Availability: "degraded", ObservedAt: publicStatusTimePointer(now.Add(-2 * time.Minute))},
+		{ObservationState: "current", RawObservationState: "failed", IncidentState: "confirmed", Availability: "degraded", ObservedAt: publicStatusTimePointer(now.Add(-3 * time.Minute))},
+		{ObservationState: "stale", RawObservationState: "unknown", IncidentState: "unknown", Availability: "unknown", ObservedAt: publicStatusTimePointer(now.Add(-time.Hour))},
 		{ObservationState: "not_observed", RawObservationState: "unknown", IncidentState: "unknown", Availability: "unknown"},
-		{ObservationState: "current", RawObservationState: "succeeded", IncidentState: "recovering", Availability: "operational", ObservedAt: timePointer(now.Add(-4 * time.Minute))},
+		{ObservationState: "current", RawObservationState: "succeeded", IncidentState: "recovering", Availability: "operational", ObservedAt: publicStatusTimePointer(now.Add(-4 * time.Minute))},
 	}
 	for index, status := range statuses {
 		if index >= len(metadata.HealthCanaryLinks) || index >= len(canaries.Canaries) {
@@ -662,7 +668,7 @@ func TestRegistryAPIMetadataHTMLShowsOnlyPerOperationObservationState(t *testing
 	}
 }
 
-func timePointer(value time.Time) *time.Time { return &value }
+func publicStatusTimePointer(value time.Time) *time.Time { return &value }
 
 func setPublicOperationStatus(t *testing.T, document *PublicStatusDocument, replacement PublicOperationStatus) {
 	t.Helper()

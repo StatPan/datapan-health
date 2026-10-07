@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -14,6 +16,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/StatPan/datapan-health/schemas"
 )
 
 const (
@@ -134,6 +138,7 @@ const publicStatusHTMLTemplate = `<!doctype html>
     {{if not .Directory}}<p>{{.Intro}}</p>{{end}}
   </header>
   {{if .SnapshotUnavailable}}<p class="notice warning" role="status">최근 결과를 불러오지 못했습니다. API 설명과 목록은 계속 볼 수 있지만, 기능별 상태는 확인할 수 없습니다.</p>{{end}}
+  {{if and .OperationReadModelUnavailable (not .Directory)}}<p class="notice warning" role="status">전체 API 기능별 검사 현황을 확인할 수 없습니다. 아래 결과 수신 이력은 현재 연결된 일부 검사 기능의 기록입니다.</p>{{end}}
   {{if .ServicesUnavailable}}<p class="notice warning" role="status">Datapan 서비스 상태를 확인할 수 없습니다. 잠시 후 다시 확인해 주세요.</p>{{end}}
   {{if .SelfReadiness}}
   <section class="status-item readiness-compact" aria-labelledby="self-readiness-heading">
@@ -149,7 +154,7 @@ const publicStatusHTMLTemplate = `<!doctype html>
     <dl class="summary directory-summary">
       <div><dt>API 정보</dt><dd>{{count .APIEntities}}개</dd></div>
       <div><dt>API 기능</dt><dd>{{count .APIOperations}}개</dd></div>
-      <div><dt>최근 유효 결과</dt><dd>{{.RecentObservations}}</dd></div>
+      <div><dt>최근 수신 기록</dt><dd>{{.RecentObservations}}</dd></div>
     </dl>
     <p class="notice warning directory-note">{{.ConfigNote}}</p>
     <form class="search" action="/datapan/" method="get" role="search">
@@ -168,10 +173,11 @@ const publicStatusHTMLTemplate = `<!doctype html>
         <p><strong>API 기능:</strong> {{count .APIOperations}}개 · <strong>외부 링크:</strong> {{count .LinkOperations}}개</p>
         <p><strong>검사 연결:</strong> {{count .ConfiguredOperations}}개 · <strong>검사 연결 전:</strong> {{count .UnconfiguredOperations}}개</p>
         <p><strong>최근 결과:</strong> {{.RecentObservations}}</p>
+        {{if .Progress}}<p><strong>전체 기능 검사 상태:</strong> <span class="badge {{.Progress.StatusClass}}">{{.Progress.StatusLabel}}</span></p><p><strong>검사 계획:</strong> {{count .Progress.PlannedFunctions}} / {{count .Progress.RegisteredFunctions}}개 기능 · <strong>최근 통과:</strong> {{count .Progress.CurrentPass}} · <strong>최근 실패:</strong> {{count .Progress.CurrentFail}} · <strong>판정 필요:</strong> {{count .Progress.CurrentIndeterminate}} · <strong>결과 없음:</strong> {{count .Progress.Unobserved}} · <strong>기한 지남:</strong> {{count .Progress.Stale}}{{if .Progress.Pending}} · <strong>진행 중:</strong> {{count .Progress.Pending}}{{end}}</p>{{end}}
         {{if .LatestCheck}}<p><strong>최근 결과 수신:</strong> <time datetime="{{.LatestCheck.ISO}}" title="{{.LatestCheck.FullKST}}">{{.LatestCheck.Relative}}</time> · {{.LatestCheck.FullKST}}</p>{{end}}
         {{if .HistoryStart}}<p><strong>이력 시작:</strong> <time datetime="{{.HistoryStart.ISO}}" title="{{.HistoryStart.FullKST}}">{{.HistoryStart.FullKST}}</time></p>{{end}}
         {{if .ObservedOperations}}
-        <p><strong>검사 연결된 기능:</strong></p>
+        <p><strong>기존 검사 수신 기록 (Gatus):</strong></p>
         <ul class="operation-list">
           {{range .ObservedOperations}}<li><strong>{{.Name}}</strong> · <span class="badge {{.StatusClass}}">{{.ObservationLabel}}</span>{{if .LastObservation}}<br><strong>최근 결과 수신:</strong> <time datetime="{{.LastObservation.ISO}}" title="{{.LastObservation.FullKST}}">{{.LastObservation.Relative}}</time> · {{.LastObservation.FullKST}}{{end}}{{if .ResultLabel}}<br><strong>최근 검사 결과:</strong> {{.ResultLabel}}{{end}}{{if .IncidentLabel}}<br><strong>연속 결과 판정:</strong> {{.IncidentLabel}}{{end}}{{if .CauseLabel}}<br><strong>실패 분류:</strong> {{.CauseLabel}}{{end}}{{if .NextActionLabel}}<br><strong>다음 확인:</strong> {{.NextActionLabel}}{{end}}{{if .History}}<p class="muted">검사 결과 수신 이력 · 최근 {{len .History}}건</p><ol class="history-strip" aria-label="API 검사 결과 수신 이력">{{range .History}}<li class="history-point {{.Class}}" role="img" aria-label="{{.Label}} · {{.FullKST}}" title="{{.Label}} · {{.FullKST}}"></li>{{end}}</ol>{{end}}</li>{{end}}
         </ul>
@@ -182,6 +188,21 @@ const publicStatusHTMLTemplate = `<!doctype html>
       <p class="status-item">검색 결과가 없습니다. 다른 API 이름, 기관 또는 기능으로 검색해 보세요.</p>
       {{end}}
     </div>
+    {{if .PartialScopes}}<section class="section" aria-labelledby="partial-scope-heading">
+      <h2 id="partial-scope-heading">다른 제공처의 부분 등록 기능</h2>
+      <p class="muted">아래 항목은 확인된 일부 기능이며, 제공처 전체 목록이나 사용 가능 판정을 뜻하지 않습니다.</p>
+      <ul class="operation-list">
+        {{range .PartialScopes}}<li class="status-item"><strong>{{.ProviderLabel}}</strong> · {{.OperationName}}
+          <p><strong>제공처 전체 목록:</strong> 부분 등록 · <span class="badge badge-unknown">미확인</span></p>
+          <p><strong>검사 결과:</strong> <span class="badge {{.StatusClass}}">{{.StatusLabel}}</span></p>
+          <p><strong>실행 조건:</strong> {{.AvailabilityLabel}}</p>
+          <p><strong>API 이름:</strong> {{.Title}}</p>
+          <p><strong>기관:</strong> {{.Organization}}</p>
+          <p><strong>기능 설명:</strong> {{.Purpose}}</p>
+        </li>{{end}}
+      </ul>
+    </section>{{end}}
+    {{if .PartialScopesUnavailable}}<p class="notice warning" role="status">다른 제공처의 부분 등록 기능을 출처가 확인된 검사 계획에서 찾을 수 없습니다.</p>{{end}}
     {{if .ShowPagination}}
     <nav class="pagination" aria-label="API 목록 페이지">
       {{if .PreviousURL}}<a href="{{.PreviousURL}}" rel="prev">이전 페이지</a>{{else}}<span></span>{{end}}
@@ -200,6 +221,19 @@ const publicStatusHTMLTemplate = `<!doctype html>
       <div><dt>API 기능 정보가 없는 등록 항목</dt><dd>{{count .OperationlessEntries}}개</dd></div>
       <div><dt>파일 자료 항목</dt><dd>{{count .FiledataEntries}}개</dd></div>
     </dl>
+    {{if .OperationPlan.Available}}<h3>전체 검사 계획 진행</h3><dl class="summary">
+      <div><dt>계획 등록 기능</dt><dd>{{count .OperationPlan.Known}}</dd></div>
+      <div><dt>전체 목록 미확인 제공처</dt><dd>{{count .OperationPlan.InventoryUnknownScopes}}곳</dd></div>
+      <div><dt>범위 확인이 필요한 기능</dt><dd>{{count .OperationPlan.InventoryUnknownOperations}}개</dd></div>
+      <div><dt>실행 조건 확인</dt><dd>{{count .OperationPlan.Admitted}}</dd></div>
+      <div><dt>실행 시도</dt><dd>{{count .OperationPlan.Attempted}}</dd></div>
+      <div><dt>결과 저장</dt><dd>{{count .OperationPlan.Persisted}}</dd></div>
+      <div><dt>Gatus 전달 확인</dt><dd>{{count .OperationPlan.Acknowledged}}</dd></div>
+      <div><dt>Gatus 결과 재확인</dt><dd>{{count .OperationPlan.ReadbackVerified}}</dd></div>
+      <div><dt>전달 대기</dt><dd>{{count .OperationPlan.DeliveryPending}}</dd></div>
+      <div><dt>결과 없음 또는 오래됨</dt><dd>{{count .OperationPlan.Missing}}</dd></div>
+      <div><dt>예정 시각 지남</dt><dd>{{count .OperationPlan.Late}}</dd></div>
+    </dl>{{if .OperationPlan.GeneratedAt}}<p>검사 진행 자료 갱신: <time datetime="{{.OperationPlan.GeneratedAt.ISO}}" title="{{.OperationPlan.GeneratedAt.FullKST}}">{{.OperationPlan.GeneratedAt.FullKST}}</time></p>{{end}}{{end}}
     <p>API 설명은 Datapan Registry에 저장된 고정된 원본 시점의 정보입니다. 최신 포털 등록 현황을 뜻하지 않습니다.</p>
     <p>API 설명 출처 revision: <code>{{.MetadataRevision}}</code></p>
     <p>검사 설정 revision: <code>{{.ObservationRevision}}</code></p>
@@ -217,11 +251,51 @@ const publicStatusHTMLTemplate = `<!doctype html>
       <p><strong>API 기능:</strong> {{.DetailAPIOperations}}개</p>
       <p><strong>외부 링크:</strong> {{.DetailLinkOperations}}개</p>
         <p><strong>검사 연결:</strong> {{.DetailConfigured}}개 · <strong>최근 결과:</strong> {{.DetailRecentObservations}}</p>
+      {{if .DetailProgress}}<p><strong>전체 기능 검사 상태:</strong> <span class="badge {{.DetailProgress.StatusClass}}">{{.DetailProgress.StatusLabel}}</span> · 계획 {{count .DetailProgress.PlannedFunctions}} / {{count .DetailProgress.RegisteredFunctions}} · 통과 {{count .DetailProgress.CurrentPass}} · 실패 {{count .DetailProgress.CurrentFail}} · 판정 필요 {{count .DetailProgress.CurrentIndeterminate}} · 결과 없음 {{count .DetailProgress.Unobserved}} · 기한 지남 {{count .DetailProgress.Stale}}</p>{{end}}
       <p class="muted">검사 결과는 연결된 개별 API 기능에만 표시합니다.</p>
     </article>
     {{if .DetailLinkOperations}}
     <p class="notice">이 API에는 외부 링크 {{.DetailLinkOperations}}개가 있습니다. 아래 API 기능 목록에는 REST 또는 SOAP 방식으로 제공되는 기능을 표시합니다.</p>
     {{end}}
+    {{if .ReadModelOperationsAvailable}}
+    <h2>현재 검사 계획의 API 기능 결과</h2>
+    <p class="muted">{{.OperationPageInfo}}</p>
+    <ol class="operation-list">
+      {{range .Operations}}
+      <li class="status-item">
+        <h3>{{.Name}}</h3>
+        <p>제공 방식: {{.Protocol}} · {{.NameState}}</p>
+        {{if .Description}}<p><strong>기능 설명:</strong> {{.Description}}</p>{{end}}
+        <p><strong>검사 결과:</strong> <span class="badge {{.StatusClass}}">{{.ObservationLabel}}</span></p>
+        {{if .AvailabilityLabel}}<p><strong>실행 조건:</strong> {{.AvailabilityLabel}}</p>{{end}}
+        {{if .AttemptLabel}}<p><strong>검사 진행:</strong> {{.AttemptLabel}}</p>{{end}}
+        {{if .ResultLabel}}<p><strong>최근 API 관측:</strong> {{.ResultLabel}}</p>{{end}}
+        {{if .ProviderObservedAt}}<p><strong>API 관측 시각:</strong> <time datetime="{{.ProviderObservedAt.ISO}}" title="{{.ProviderObservedAt.FullKST}}">{{.ProviderObservedAt.FullKST}}</time></p>{{end}}
+        {{if .HealthReceivedAt}}<p><strong>관제 저장 시각:</strong> <time datetime="{{.HealthReceivedAt.ISO}}" title="{{.HealthReceivedAt.FullKST}}">{{.HealthReceivedAt.FullKST}}</time></p>{{end}}
+        {{if .CauseLabel}}<p><strong>확인된 분류:</strong> {{.CauseLabel}}</p>{{end}}
+        {{if .NextActionLabel}}<p><strong>다음 확인:</strong> {{.NextActionLabel}}</p>{{end}}
+        {{if .DeliveryLabel}}<p><strong>Gatus 전달:</strong> {{.DeliveryLabel}}</p>{{end}}
+        {{if .GatusAcknowledgedAt}}<p><strong>Gatus 접수 확인:</strong> <time datetime="{{.GatusAcknowledgedAt.ISO}}" title="{{.GatusAcknowledgedAt.FullKST}}">{{.GatusAcknowledgedAt.FullKST}}</time></p>{{end}}
+        {{if .GatusReadbackAt}}<p><strong>Gatus 재확인:</strong> <time datetime="{{.GatusReadbackAt.ISO}}" title="{{.GatusReadbackAt.FullKST}}">{{.GatusReadbackAt.FullKST}}</time></p>{{end}}
+        {{if .LegacyGatus}}<details class="legacy-history"><summary>기존 검사 수신 기록: <span class="badge {{.LegacyGatus.StatusClass}}">{{.LegacyGatus.StatusLabel}}</span></summary>
+          <p>Gatus에 결과가 접수된 이력입니다. 원래 API 요청 시각과 다를 수 있습니다.</p>
+          {{if .LegacyGatus.LastReceived}}<p><strong>최근 결과 수신:</strong> <time datetime="{{.LegacyGatus.LastReceived.ISO}}" title="{{.LegacyGatus.LastReceived.FullKST}}">{{.LegacyGatus.LastReceived.FullKST}}</time></p>{{end}}
+          {{if .LegacyGatus.IncidentLabel}}<p><strong>연속 결과 판정:</strong> {{.LegacyGatus.IncidentLabel}}</p>{{end}}
+          {{if .LegacyGatus.CauseLabel}}<p><strong>기존 실패 분류:</strong> {{.LegacyGatus.CauseLabel}}</p>{{end}}
+          {{if .LegacyGatus.NextActionLabel}}<p><strong>다음 확인:</strong> {{.LegacyGatus.NextActionLabel}}</p>{{end}}
+          {{if .LegacyGatus.History}}<p class="muted">검사 결과 수신 이력 · 최근 {{len .LegacyGatus.History}}건</p><ol class="history-strip" aria-label="기존 API 검사 결과 수신 이력">{{range .LegacyGatus.History}}<li class="history-point {{.Class}}" role="img" aria-label="{{.Label}} · {{.FullKST}}" title="{{.Label}} · {{.FullKST}}"></li>{{end}}</ol>{{end}}
+          <p class="muted">출처: 기존 Gatus 검사 수신 기록 · Registry 저장본 revision <code>{{.LegacyGatus.DiagnosticRegistryRevision}}</code> · 검사 카탈로그 revision <code>{{.LegacyGatus.ObservationCatalogRevision}}</code> · 카탈로그 SHA-256 <code>{{.LegacyGatus.CatalogSHA256}}</code></p>
+        </details>{{end}}
+      </li>
+      {{else}}
+      <li class="status-item">현재 검사 계획에서 이 API의 기능을 찾을 수 없습니다. 등록 기능 중 계획에 포함되지 않은 항목은 위 계획 대비 수에서 확인할 수 있습니다.</li>
+      {{end}}
+    </ol>
+    {{if .OperationCursorPaging}}<nav class="pagination" aria-label="검사 계획 기능 목록">
+      <span>한 페이지 최대 50개 · {{.OperationPageInfo}}</span>
+      {{if .OperationNextURL}}<a href="{{.OperationNextURL}}" rel="next">다음 API 기능</a>{{end}}
+    </nav>{{end}}
+    {{else}}
     <h2>API 기능별 검사 결과</h2>
     <p class="muted">{{.OperationPageInfo}}</p>
     <ol class="operation-list">
@@ -242,6 +316,7 @@ const publicStatusHTMLTemplate = `<!doctype html>
       <li class="status-item">이 API에 등록된 REST·SOAP 기능이 없습니다.</li>
       {{end}}
     </ol>
+    {{end}}
     {{if .ShowPagination}}
     <nav class="pagination" aria-label="API 기능 페이지">
       {{if .PreviousURL}}<a href="{{.PreviousURL}}" rel="prev">이전 기능</a>{{else}}<span></span>{{end}}
@@ -315,34 +390,41 @@ type publicHTMLPage struct {
 	Dependencies bool
 	Services     bool
 
-	SnapshotUnavailable     bool
-	ServicesUnavailable     bool
-	SelfReadiness           *publicHTMLReadiness
-	NotFound                bool
-	MetadataRevision        string
-	ObservationRevision     string
-	ScopeNote               string
-	ConfigNote              string
-	APIEntities             int
-	APIOperations           int
-	LinkOperations          int
-	FiledataEntries         int
-	Institutions            int
-	ConfiguredOperations    int
-	RecentObservations      string
-	UnconfiguredOperations  int
-	ConfiguredWithoutRecent string
-	OperationlessEntries    int
+	SnapshotUnavailable           bool
+	OperationReadModelUnavailable bool
+	ServicesUnavailable           bool
+	SelfReadiness                 *publicHTMLReadiness
+	NotFound                      bool
+	MetadataRevision              string
+	ObservationRevision           string
+	ScopeNote                     string
+	ConfigNote                    string
+	APIEntities                   int
+	APIOperations                 int
+	LinkOperations                int
+	FiledataEntries               int
+	Institutions                  int
+	ConfiguredOperations          int
+	RecentObservations            string
+	UnconfiguredOperations        int
+	ConfiguredWithoutRecent       string
+	OperationlessEntries          int
 
-	SearchQuery    string
-	PageInfo       string
-	SortNote       string
-	PageNumber     int
-	PageCount      int
-	ShowPagination bool
-	PreviousURL    string
-	NextURL        string
-	APIs           []publicHTMLAPI
+	SearchQuery                  string
+	PageInfo                     string
+	SortNote                     string
+	PageNumber                   int
+	PageCount                    int
+	ShowPagination               bool
+	PreviousURL                  string
+	NextURL                      string
+	APIs                         []publicHTMLAPI
+	OperationPlan                publicHTMLOperationPlan
+	PartialScopes                []publicHTMLPartialScope
+	PartialScopesUnavailable     bool
+	ReadModelOperationsAvailable bool
+	OperationCursorPaging        bool
+	OperationNextURL             string
 
 	DetailTitle              string
 	DetailOrganization       string
@@ -351,6 +433,7 @@ type publicHTMLPage struct {
 	DetailLinkOperations     int
 	DetailConfigured         int
 	DetailRecentObservations string
+	DetailProgress           *publicHTMLAPIProgress
 	OperationPageInfo        string
 	Operations               []publicHTMLOperation
 	DependencyRows           []publicHTMLOperation
@@ -379,6 +462,7 @@ type publicHTMLHistoryPoint struct {
 }
 
 type publicHTMLAPI struct {
+	RegistryAPIID          string
 	Title                  string
 	Organization           string
 	Description            string
@@ -390,27 +474,92 @@ type publicHTMLAPI struct {
 	LatestCheck            *publicHTMLTime
 	HistoryStart           *publicHTMLTime
 	ObservedOperations     []publicHTMLOperation
+	Progress               *publicHTMLAPIProgress
 	DetailURL              string
 }
 
+type publicHTMLAPIProgress struct {
+	RegisteredFunctions  int
+	PlannedFunctions     int
+	ConfiguredAdmitted   int
+	Attempted            int
+	CurrentPass          int
+	CurrentFail          int
+	CurrentIndeterminate int
+	Pending              int
+	Stale                int
+	Unobserved           int
+	StatusLabel          string
+	StatusClass          string
+}
+
+type publicHTMLPartialScope struct {
+	ProviderLabel     string
+	OperationName     string
+	Title             string
+	Organization      string
+	Purpose           string
+	AvailabilityLabel string
+	StatusLabel       string
+	StatusClass       string
+}
+
+type publicHTMLOperationPlan struct {
+	Available                  bool
+	Known                      int
+	InventoryUnknownScopes     int
+	InventoryUnknownOperations int
+	Admitted                   int
+	Claimed                    int
+	Attempted                  int
+	Persisted                  int
+	Acknowledged               int
+	ReadbackVerified           int
+	DeliveryPending            int
+	Missing                    int
+	Late                       int
+	GeneratedAt                *publicHTMLTime
+}
+
 type publicHTMLOperation struct {
-	Name             string
-	Protocol         string
-	NameState        string
-	ObservationLabel string
-	StatusClass      string
-	LastObservation  *publicHTMLTime
-	HistoryStart     *publicHTMLTime
-	ResultLabel      string
-	IncidentLabel    string
-	CauseLabel       string
-	NextActionLabel  string
-	History          []publicHTMLHistoryPoint
-	Title            string
-	Organization     string
-	Description      string
-	OperationName    string
-	DetailURL        string
+	Name                string
+	Protocol            string
+	NameState           string
+	ObservationLabel    string
+	StatusClass         string
+	LastObservation     *publicHTMLTime
+	HistoryStart        *publicHTMLTime
+	ResultLabel         string
+	IncidentLabel       string
+	CauseLabel          string
+	NextActionLabel     string
+	AttemptLabel        string
+	DeliveryLabel       string
+	AvailabilityLabel   string
+	LegacyGatus         *publicHTMLLegacyGatus
+	History             []publicHTMLHistoryPoint
+	Title               string
+	Organization        string
+	Description         string
+	OperationName       string
+	DetailURL           string
+	ProviderObservedAt  *publicHTMLTime
+	HealthReceivedAt    *publicHTMLTime
+	GatusAcknowledgedAt *publicHTMLTime
+	GatusReadbackAt     *publicHTMLTime
+}
+
+type publicHTMLLegacyGatus struct {
+	StatusLabel                string
+	StatusClass                string
+	IncidentLabel              string
+	CauseLabel                 string
+	NextActionLabel            string
+	LastReceived               *publicHTMLTime
+	History                    []publicHTMLHistoryPoint
+	DiagnosticRegistryRevision string
+	ObservationCatalogRevision string
+	CatalogSHA256              string
 }
 
 type publicHTMLTime struct {
@@ -451,6 +600,16 @@ func (h *PublicStatusHandler) serveDatapanHTML(w http.ResponseWriter, r *http.Re
 	switch request.kind {
 	case "directory":
 		page = buildPublicHTMLDirectory(*h.registry, statusByOperation, statusAvailable, request, now)
+		apiIDs := make([]string, 0, len(page.APIs))
+		registered := make(map[string]int, len(page.APIs))
+		for _, api := range page.APIs {
+			apiIDs = append(apiIDs, api.RegistryAPIID)
+			registered[api.RegistryAPIID] = api.APIOperations
+		}
+		attachPublicOperationReadModel(&page, *h.registry, h.operations, apiIDs, registered, now)
+		if page.OperationPlan.Available {
+			attachPublicPartialScopes(&page, h.operations, now)
+		}
 	case "detail":
 		api, found := h.registry.APIByID(request.apiID)
 		if !found {
@@ -458,6 +617,21 @@ func (h *PublicStatusHandler) serveDatapanHTML(w http.ResponseWriter, r *http.Re
 			return
 		}
 		page = buildPublicHTMLAPIDetail(*h.registry, api, statusByOperation, statusAvailable, request, now)
+		attachPublicOperationReadModel(&page, *h.registry, h.operations, []string{api.RegistryAPIID}, map[string]int{api.RegistryAPIID: len(api.Operations)}, now)
+		if h.operations != nil {
+			if request.page > 1 && request.cursor == "" {
+				writePublicHTMLError(w, r, http.StatusBadRequest)
+				return
+			}
+			pageStatus := attachPublicOperationDetailRows(&page, *h.registry, h.operations, api.RegistryAPIID, request, statusByOperation, statusAvailable, statusDocument, now)
+			if pageStatus == http.StatusBadRequest {
+				writePublicHTMLError(w, r, pageStatus)
+				return
+			}
+		} else if request.cursor != "" || request.query != "" {
+			writePublicHTMLError(w, r, http.StatusServiceUnavailable)
+			return
+		}
 	case "dependencies":
 		page = buildPublicHTMLDependencies(*h.registry, statusDocument, statusAvailable, now)
 	case "services":
@@ -478,6 +652,620 @@ func (h *PublicStatusHandler) serveDatapanHTML(w http.ResponseWriter, r *http.Re
 		return
 	}
 	servePublicHTMLBytes(w, r, output.Bytes(), request.query != "")
+}
+
+func attachPublicOperationReadModel(page *publicHTMLPage, metadata RegistryAPIMetadata, source PublicRegistryOperationsSource, apiIDs []string, registered map[string]int, now time.Time) {
+	if page == nil {
+		return
+	}
+	page.OperationReadModelUnavailable = true
+	if page.Directory {
+		page.ConfigNote = fmt.Sprintf("전체 API 기능별 검사 현황을 확인할 수 없습니다. 기존 검사 연결은 %s / %s개 기능이며, 나머지 기능의 상태는 미확인입니다.", formatPublicCount(metadata.Counts.MatchedHealthCanaries), formatPublicCount(metadata.Counts.APIOperations))
+	}
+	if source == nil || len(apiIDs) > operationReadModelMaximumAPIIDs {
+		return
+	}
+	base, err := source.PageOperations(OperationPageQuery{Limit: 1}, now)
+	if err != nil || !validPublicOperationReadModelPage(base, metadata, now) {
+		return
+	}
+	progressRows, err := source.LookupAPIProgress(apiIDs, now)
+	if err != nil || len(progressRows) != len(apiIDs) {
+		return
+	}
+	wanted := make(map[string]struct{}, len(apiIDs))
+	for _, apiID := range apiIDs {
+		if _, duplicate := wanted[apiID]; duplicate {
+			return
+		}
+		wanted[apiID] = struct{}{}
+	}
+	progressByAPI := make(map[string]OperationAPIProgress, len(progressRows))
+	for _, progress := range progressRows {
+		if _, ok := wanted[progress.APIID]; !ok || !validPublicAPIProgress(progress, registered[progress.APIID]) {
+			return
+		}
+		if _, duplicate := progressByAPI[progress.APIID]; duplicate {
+			return
+		}
+		progressByAPI[progress.APIID] = progress
+	}
+	if len(progressByAPI) != len(wanted) {
+		return
+	}
+	page.OperationPlan = publicHTMLOperationPlan{
+		Available: true, Known: base.IdentityCounts.Known,
+		InventoryUnknownScopes: base.IdentityCounts.InventoryUnknownScopes, InventoryUnknownOperations: base.IdentityCounts.InventoryUnknownOperations,
+		Admitted: base.IdentityCounts.Admitted,
+		Claimed:  base.IdentityCounts.Claimed, Attempted: base.IdentityCounts.Attempted,
+		Persisted: base.IdentityCounts.Persisted, Acknowledged: base.IdentityCounts.Acknowledged,
+		ReadbackVerified: base.IdentityCounts.ReadbackVerified, DeliveryPending: base.IdentityCounts.DeliveryPending,
+		Missing: base.IdentityCounts.Missing, Late: base.IdentityCounts.Late,
+	}
+	generatedAt := publicHTMLTimeValue(base.ReadModelGeneratedAt, now)
+	page.OperationPlan.GeneratedAt = &generatedAt
+	page.OperationReadModelUnavailable = false
+	if page.Directory {
+		page.ConfigNote = fmt.Sprintf("현재 기존 검사 연결은 %s개 API 기능입니다. Registry 검사 계획에는 %s개 기능이 있으며, 전체 목록이 확인되지 않은 제공처 %s곳은 아래에 부분 등록 상태로 표시합니다.", formatPublicCount(metadata.Counts.MatchedHealthCanaries), formatPublicCount(base.IdentityCounts.Known), formatPublicCount(base.IdentityCounts.InventoryUnknownScopes))
+	}
+	for index := range page.APIs {
+		progress := progressByAPI[page.APIs[index].RegistryAPIID]
+		page.APIs[index].Progress = publicHTMLAPIProgressValue(progress, page.APIs[index].APIOperations)
+	}
+	if page.Detail {
+		for apiID, expected := range registered {
+			if progress, ok := progressByAPI[apiID]; ok {
+				page.DetailProgress = publicHTMLAPIProgressValue(progress, expected)
+				break
+			}
+		}
+	}
+}
+
+func validPublicOperationReadModelPage(page OperationReadModelPage, metadata RegistryAPIMetadata, now time.Time) bool {
+	return validPublicOperationPage(page, metadata, "", "", 1, maxOperationObservationOperations, now)
+}
+
+func validPublicOperationPage(page OperationReadModelPage, metadata RegistryAPIMetadata, apiID, query string, limit, totalMaximum int, now time.Time) bool {
+	if page.SchemaVersion != RegistryOperationsPageSchemaVersion || page.GeneratedAt.IsZero() || page.GeneratedAt.After(now) || page.ReadModelGeneratedAt.IsZero() || page.ReadModelGeneratedAt.After(now) || page.APIID != apiID || page.Query != normalizeOperationReadModelQuery(query) || page.Limit != limit || page.TotalAfterSearch < 0 || page.TotalAfterSearch > totalMaximum || len(page.Operations) > limit || page.MetadataRegistryRevision != metadata.RegistryRevision || page.MetadataSourceSHA256 != metadata.Source.SHA256 || page.MetadataCatalogSHA256 != metadata.Catalog.SHA256 || page.MetadataArtifactSHA256 != acceptedRegistryAPIMetadataSHA256 || page.MetadataAPIEntityCount != metadata.Counts.APIEntities || page.MetadataOperationCount != metadata.Counts.APIOperations || page.PlanSchemaSHA256 != operationObservationPlanSchemaSHA256 || page.PageSchemaSHA256 != schemas.HealthRegistryOperationsPageV2SchemaSHA256() || !validPublicOperationIdentityCounts(page.IdentityCounts) {
+		return false
+	}
+	if page.NextCursor != "" && (len(page.NextCursor) > 1024 || !publicOperationCursorPattern.MatchString(page.NextCursor)) {
+		return false
+	}
+	encoded, err := json.Marshal(page)
+	return err == nil && len(encoded) <= 512*1024 && schemas.ValidateHealthRegistryOperationsPageV2(encoded) == nil
+}
+
+func attachPublicOperationDetailRows(page *publicHTMLPage, metadata RegistryAPIMetadata, source PublicRegistryOperationsSource, apiID string, request publicHTMLRequest, legacyStatuses map[string]PublicOperationStatus, legacyAvailable bool, legacyDocument PublicStatusDocument, now time.Time) int {
+	if page == nil || source == nil || request.query != "" && unsafePublicHTMLSearch(request.query) {
+		return http.StatusServiceUnavailable
+	}
+	operationPage, err := source.PageOperations(OperationPageQuery{APIID: apiID, Query: request.query, Cursor: request.cursor, Limit: operationReadModelMaximumPage}, now)
+	if err != nil {
+		if errors.Is(err, ErrOperationReadModelQuery) {
+			return http.StatusBadRequest
+		}
+		page.OperationReadModelUnavailable = true
+		return http.StatusServiceUnavailable
+	}
+	if !validPublicOperationAPIPage(operationPage, metadata, apiID, request.query, now) {
+		page.OperationReadModelUnavailable = true
+		return http.StatusServiceUnavailable
+	}
+	api, ok := metadata.APIByID(apiID)
+	if !ok {
+		page.OperationReadModelUnavailable = true
+		return http.StatusServiceUnavailable
+	}
+	known := make(map[string]struct{}, len(api.Operations))
+	for _, operation := range api.Operations {
+		known[operation.RegistryOperationID] = struct{}{}
+	}
+	rows := make([]publicHTMLOperation, 0, len(operationPage.Operations))
+	seen := make(map[string]struct{}, len(operationPage.Operations))
+	for _, operation := range operationPage.Operations {
+		if operation.SourceID != "data_go_kr" || operation.APIID == nil || *operation.APIID != apiID {
+			page.OperationReadModelUnavailable = true
+			return http.StatusServiceUnavailable
+		}
+		if _, ok := known[operation.RegistryOperationID]; !ok {
+			page.OperationReadModelUnavailable = true
+			return http.StatusServiceUnavailable
+		}
+		if _, duplicate := seen[operation.RegistryOperationID]; duplicate || operation.ValidatePublicProjection(now) != nil {
+			page.OperationReadModelUnavailable = true
+			return http.StatusServiceUnavailable
+		}
+		seen[operation.RegistryOperationID] = struct{}{}
+		row := publicHTMLReadModelOperation(operation, now)
+		row.AvailabilityLabel = publicOperationAvailabilityLabel(operation)
+		if legacyAvailable {
+			if _, linked := metadata.CanaryLinkByOperationID(operation.RegistryOperationID); linked {
+				if legacy, found := legacyStatuses[operation.RegistryOperationID]; found && hasLegacyGatusEvidence(legacy) {
+					row.LegacyGatus = publicHTMLLegacyGatusRow(operation, metadata, legacy, legacyDocument, now)
+				}
+			}
+		}
+		rows = append(rows, row)
+	}
+	page.Operations = rows
+	page.ReadModelOperationsAvailable = true
+	page.OperationCursorPaging = true
+	page.ShowPagination = false
+	page.PreviousURL = ""
+	page.NextURL = ""
+	page.OperationNextURL = ""
+	page.OperationPageInfo = fmt.Sprintf("관측 계획 기능 %s개 중 이 페이지 %s개", formatPublicCount(operationPage.TotalAfterSearch), formatPublicCount(len(rows)))
+	if operationPage.NextCursor != "" {
+		page.OperationNextURL = apiCursorPageURL(apiID, operationPage.NextCursor, request.query)
+	}
+	return http.StatusOK
+}
+
+func validPublicOperationAPIPage(page OperationReadModelPage, metadata RegistryAPIMetadata, apiID, query string, now time.Time) bool {
+	return validPublicOperationPage(page, metadata, apiID, query, operationReadModelMaximumPage, maxOperationObservationOperations, now)
+}
+
+type publicPartialRegistryOperation struct {
+	sourceID      string
+	operationID   string
+	provider      string
+	providerLabel string
+}
+
+var publicPartialRegistryOperations = []publicPartialRegistryOperation{
+	{sourceID: "ecos", operationID: "ecos-statistic-search-102y004", provider: "ECOS", providerLabel: "ECOS"},
+	{sourceID: "kosis", operationID: "kosis-statistics-data-dt-1b41", provider: "KOSIS", providerLabel: "KOSIS"},
+	{sourceID: "open_assembly", operationID: "open-assembly-opensrvapi-list", provider: "open.assembly.go.kr", providerLabel: "국회 Open API"},
+	{sourceID: "seoul_open_data", operationID: "seoul-open-data-subway-station-list", provider: "data.seoul.go.kr", providerLabel: "서울 열린데이터광장"},
+}
+
+func attachPublicPartialScopes(page *publicHTMLPage, source PublicRegistryOperationsSource, now time.Time) {
+	if page == nil {
+		return
+	}
+	page.PartialScopesUnavailable = true
+	lookup, ok := source.(PublicRegistryOperationLookupSource)
+	if !ok || page.OperationPlan.InventoryUnknownScopes != len(publicPartialRegistryOperations) || page.OperationPlan.InventoryUnknownOperations < len(publicPartialRegistryOperations) {
+		return
+	}
+	identities := make([]RegistryOperationLookupIdentity, 0, len(publicPartialRegistryOperations))
+	for _, expected := range publicPartialRegistryOperations {
+		identities = append(identities, RegistryOperationLookupIdentity{SourceID: expected.sourceID, OperationID: expected.operationID})
+	}
+	operations, err := lookup.LookupPublicOperationRows(identities, now)
+	if err != nil || len(operations) != len(publicPartialRegistryOperations) {
+		return
+	}
+	rows := make([]publicHTMLPartialScope, 0, len(publicPartialRegistryOperations))
+	for index, expected := range publicPartialRegistryOperations {
+		operation := operations[index]
+		if operation.SourceID != expected.sourceID || operation.RegistryOperationID != expected.operationID || operation.APIID != nil || operation.Provider != expected.provider || operation.MissingReason != "inventory_unknown" || operation.ValidatePublicProjection(now) != nil {
+			return
+		}
+		name := publicReadModelField(operation.OperationName, operation.OperationNameState, "API 기능 이름")
+		if operation.OperationName == operation.RegistryOperationID {
+			name = "API 기능 이름 없음 (원본 미제공)"
+		}
+		statusLabel, statusClass := publicPartialOperationObservation(operation)
+		rows = append(rows, publicHTMLPartialScope{
+			ProviderLabel:     expected.providerLabel,
+			OperationName:     name,
+			Title:             publicReadModelField(operation.Title, operation.TitleState, "API 이름"),
+			Organization:      publicReadModelField(operation.Organization, operation.OrganizationState, "기관 정보"),
+			Purpose:           publicReadModelField(operation.Purpose, operation.PurposeState, "기능 설명"),
+			AvailabilityLabel: publicPartialOperationAvailability(operation),
+			StatusLabel:       statusLabel, StatusClass: statusClass,
+		})
+	}
+	page.PartialScopes = rows
+	page.PartialScopesUnavailable = false
+}
+
+func publicPartialOperationObservation(operation OperationReadModelRow) (label, statusClass string) {
+	switch operation.ObservationState {
+	case "current_pass":
+		return "최근 검사 결과 통과", "badge-good"
+	case "current_fail":
+		return "최근 검사 결과 실패", "badge-bad"
+	case "current_indeterminate":
+		return "현재 결과로 상태 판정 불가", "badge-warn"
+	case "stale":
+		return "최근 결과가 검사 주기를 지남", "badge-unknown"
+	case "unobserved":
+		if operation.MissingReason == "future_observation" {
+			return "관측 시각 확인 필요", "badge-warn"
+		}
+		return "검증된 검사 결과 없음", "badge-unknown"
+	default:
+		return "검사 상태 확인 불가", "badge-warn"
+	}
+}
+
+func publicPartialOperationAvailability(operation OperationReadModelRow) string {
+	var states []string
+	if operation.RequestPlanState != "complete" {
+		states = append(states, "요청 조건 미확인")
+	}
+	if operation.RuntimeBindingState != "bound" {
+		states = append(states, "검사 실행 연결 전")
+	}
+	if operation.AdmissionState != "admitted" {
+		states = append(states, "실행 조건 확인 전")
+	}
+	if len(states) == 0 {
+		return "실행 조건 확인됨 · 실제 검사 결과와 별도"
+	}
+	return strings.Join(states, " · ")
+}
+
+func publicHTMLReadModelOperation(operation OperationReadModelRow, now time.Time) publicHTMLOperation {
+	name := publicReadModelField(operation.OperationName, operation.OperationNameState, "API 기능 이름")
+	protocol := "제공 방식 미확인"
+	if operation.Protocol == "REST" || operation.Protocol == "SOAP" {
+		protocol = operation.Protocol
+	}
+	row := publicHTMLOperation{
+		Name: name, Protocol: protocol, NameState: metadataStateLabel(operation.OperationNameState),
+		Title:        publicReadModelField(operation.Title, operation.TitleState, "API 이름"),
+		Organization: publicReadModelField(operation.Organization, operation.OrganizationState, "기관 정보"),
+		Description:  publicReadModelField(operation.Purpose, operation.PurposeState, "기능 설명"),
+		StatusClass:  "badge-unknown",
+	}
+	if operation.ProviderObservedAt != nil {
+		value := publicHTMLTimeValue(*operation.ProviderObservedAt, now)
+		row.ProviderObservedAt = &value
+	}
+	if operation.HealthReceivedAt != nil {
+		value := publicHTMLTimeValue(*operation.HealthReceivedAt, now)
+		row.HealthReceivedAt = &value
+	}
+	if operation.GatusAcknowledgedAt != nil {
+		value := publicHTMLTimeValue(*operation.GatusAcknowledgedAt, now)
+		row.GatusAcknowledgedAt = &value
+	}
+	if operation.GatusReadbackAt != nil {
+		value := publicHTMLTimeValue(*operation.GatusReadbackAt, now)
+		row.GatusReadbackAt = &value
+	}
+	switch operation.ObservationState {
+	case "current_pass":
+		row.ObservationLabel, row.StatusClass, row.ResultLabel = "최근 검사 결과 통과", "badge-good", "검증된 API 결과 통과"
+	case "current_fail":
+		row.ObservationLabel, row.StatusClass, row.ResultLabel = "최근 검사 결과 실패", "badge-bad", "검증된 API 결과 실패"
+		row.CauseLabel, row.NextActionLabel = publicOperationCategoryDiagnosis(operation.ResultCategory)
+	case "current_indeterminate":
+		row.ObservationLabel, row.StatusClass, row.ResultLabel = "현재 결과로 상태 판정 불가", "badge-warn", "추가 확인 필요"
+	case "stale":
+		row.ObservationLabel, row.StatusClass = "최근 결과가 검사 주기를 지남", "badge-unknown"
+		row.ResultLabel = publicLastResultLabel(operation.ResultState)
+	case "unobserved":
+		row.ObservationLabel, row.StatusClass = "아직 새 검사 기록 없음", "badge-unknown"
+		if operation.MissingReason == "future_observation" {
+			row.ObservationLabel, row.StatusClass = "관측 시각 확인 필요", "badge-warn"
+		}
+	default:
+		row.ObservationLabel, row.StatusClass = "검사 상태 확인 불가", "badge-warn"
+	}
+	if operation.AttemptState != "none" {
+		row.AttemptLabel = publicOperationAttemptLabel(operation.AttemptState, operation.RequestStarted)
+	}
+	row.DeliveryLabel = publicOperationDeliveryLabel(operation.GatusDeliveryState)
+	if operation.ResultState != "" && operation.ResultState != "healthy" && operation.ResultState != "unhealthy" && operation.ResultState != "indeterminate" {
+		row.ResultLabel = "결과 상태를 확인할 수 없습니다"
+	}
+	return row
+}
+
+func publicOperationAvailabilityLabel(operation OperationReadModelRow) string {
+	var states []string
+	if operation.RequestPlanState != "complete" {
+		states = append(states, "요청 조건 미완료")
+	}
+	if operation.RuntimeBindingState != "bound" {
+		states = append(states, "검사 실행 연결 전")
+	}
+	if operation.AdmissionState != "admitted" {
+		states = append(states, "실행 조건 확인 전")
+	}
+	if reason := publicOperationMissingReasonLabel(operation.MissingReason); reason != "" {
+		states = append(states, reason)
+	}
+	if len(states) == 0 {
+		if operation.HealthReceivedAt == nil {
+			return "계획상 실행 조건 확인됨 · 새 검사 결과 없음"
+		}
+		return "계획상 실행 조건 확인됨"
+	}
+	return strings.Join(deduplicatePublicLabels(states), " · ")
+}
+
+func publicOperationMissingReasonLabel(reason string) string {
+	switch reason {
+	case "inventory_unknown":
+		return "제공처 전체 목록 미확인"
+	case "test_only":
+		return "시험용 기능"
+	case "request_plan_incomplete":
+		return "요청 조건 미완료"
+	case "runtime_unbound":
+		return "검사 실행 연결 전"
+	case "not_admitted":
+		return "실행 조건 확인 전"
+	case "unsupported_contract":
+		return "검사 지원 조건 미확인"
+	case "future_observation":
+		return "관측 시각 확인 필요"
+	case "no_validated_observation":
+		return "검증된 검사 결과 없음"
+	default:
+		return ""
+	}
+}
+
+func deduplicatePublicLabels(labels []string) []string {
+	seen := make(map[string]struct{}, len(labels))
+	result := make([]string, 0, len(labels))
+	for _, label := range labels {
+		if label == "" {
+			continue
+		}
+		if _, exists := seen[label]; exists {
+			continue
+		}
+		seen[label] = struct{}{}
+		result = append(result, label)
+	}
+	return result
+}
+
+func hasLegacyGatusEvidence(status PublicOperationStatus) bool {
+	return status.ObservedAt != nil || status.HistoryStartedAt != nil || len(status.History) > 0 || status.RawObservationState == "succeeded" || status.RawObservationState == "failed"
+}
+
+func publicHTMLLegacyGatusRow(operation OperationReadModelRow, metadata RegistryAPIMetadata, status PublicOperationStatus, document PublicStatusDocument, now time.Time) *publicHTMLLegacyGatus {
+	if !commitPattern.MatchString(document.DiagnosticRegistryRevision) || !commitPattern.MatchString(document.ObservationCatalogRevision) || document.ObservationCatalogRevision != metadata.healthCatalogRevision || !sha256Pattern.MatchString(metadata.Catalog.SHA256) {
+		return nil
+	}
+	link, linked := metadata.CanaryLinkByOperationID(operation.RegistryOperationID)
+	if !linked {
+		return nil
+	}
+	api, found := metadata.APIByID(link.RegistryAPIID)
+	if !found {
+		return nil
+	}
+	var registryOperation RegistryAPIMetadataOperation
+	for _, candidate := range api.Operations {
+		if candidate.RegistryOperationID == operation.RegistryOperationID {
+			registryOperation = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil
+	}
+	legacy := publicHTMLStatusRow(registryOperation, metadata, map[string]PublicOperationStatus{operation.RegistryOperationID: status}, true, now)
+	return &publicHTMLLegacyGatus{
+		StatusLabel: legacy.ObservationLabel, StatusClass: legacy.StatusClass,
+		IncidentLabel: legacy.IncidentLabel, CauseLabel: legacy.CauseLabel,
+		NextActionLabel: legacy.NextActionLabel, LastReceived: legacy.LastObservation,
+		History: legacy.History, DiagnosticRegistryRevision: document.DiagnosticRegistryRevision,
+		ObservationCatalogRevision: document.ObservationCatalogRevision, CatalogSHA256: metadata.Catalog.SHA256,
+	}
+}
+
+func publicReadModelField(value, state, label string) string {
+	if state != "present" {
+		return metadataFieldText("", state, label)
+	}
+	if len(value) > 512 {
+		return label + "을 안전하게 공개할 수 없습니다"
+	}
+	if safe := safeOperationReadText(value); safe != "" {
+		return safe
+	}
+	return label + "을 안전하게 공개할 수 없습니다"
+}
+
+func publicLastResultLabel(state string) string {
+	switch state {
+	case "healthy":
+		return "마지막 관측 결과 통과 (현재 결과는 오래됨)"
+	case "unhealthy":
+		return "마지막 관측 결과 실패 (현재 결과는 오래됨)"
+	case "indeterminate":
+		return "마지막 관측 결과로 상태 판정 불가"
+	default:
+		return "마지막 관측 결과를 확인할 수 없습니다"
+	}
+}
+
+func publicOperationMissingLabel(reason, attempt string) string {
+	switch reason {
+	case "inventory_unknown":
+		return "등록 범위를 확인할 수 없음"
+	case "test_only":
+		return "시험용 항목 · 실제 검사 결과 없음"
+	case "request_plan_incomplete":
+		return "요청 조건을 확인하는 중"
+	case "runtime_unbound":
+		return "검사 실행 연결 전"
+	case "not_admitted":
+		return "실행 조건 확인 전"
+	case "unsupported_contract":
+		return "지원 조건 확인 전"
+	case "future_observation":
+		return "관측 시각 확인 필요"
+	case "no_validated_observation":
+		return "검증된 검사 결과 없음"
+	}
+	switch attempt {
+	case "claimed":
+		return "검사 실행 대기"
+	case "request_started":
+		return "검사 결과 저장 대기"
+	case "failed":
+		return "검사 실행 단계에서 실패"
+	case "unknown":
+		return "최근 검사 상태 확인 필요"
+	default:
+		return "최근 검사 결과 없음"
+	}
+}
+
+func publicOperationAttemptLabel(state string, requestStarted *bool) string {
+	switch state {
+	case "claimed":
+		return "검사 작업 대기 중"
+	case "request_started":
+		if requestStarted != nil && *requestStarted {
+			return "검사 요청 시작 기록 있음 · 결과 저장 전"
+		}
+		return "검사 실행 단계 진행 중"
+	case "observed":
+		return "검사 결과 저장됨"
+	case "failed":
+		return "검사 실행 또는 결과 저장 단계 실패"
+	case "unknown":
+		return "검사 실행 상태 확인 필요"
+	default:
+		return ""
+	}
+}
+
+func publicOperationDeliveryLabel(state string) string {
+	switch state {
+	case "pending":
+		return "Gatus 전달 대기"
+	case "acknowledged":
+		return "Gatus 접수 확인 · 저장 재확인 전"
+	case "readback_verified":
+		return "Gatus 저장 재확인"
+	default:
+		return "Gatus 전달 전"
+	}
+}
+
+func publicOperationCategoryDiagnosis(category string) (string, string) {
+	switch category {
+	case "transport_failure":
+		return "검사 연결 단계에서 실패 분류됨", "데이터 제공처 운영 상태와 검사 환경을 확인하세요."
+	case "timeout":
+		return "검사 응답 시간 초과로 분류됨", "제공처 응답 상태와 허용 시간 조건을 확인하세요."
+	case "rate_limited":
+		return "요청 제한 결과로 분류됨", "API 사용 한도와 제공처 요청 간격 조건을 확인하세요."
+	case "credential_missing", "credential_rejected":
+		return "인증 또는 사용 승인 확인 필요", "인증 설정과 포털의 기능별 사용 조건을 확인하세요."
+	case "parameter_blocked":
+		return "요청 입력 조건 확인 필요", "필수 입력값과 제공처의 요청 규칙을 확인하세요."
+	case "provider_failure":
+		return "제공처 실패 결과로 분류됨", "제공처 공지와 API 사용 조건을 확인하세요."
+	case "semantic_failure", "schema_drift":
+		return "응답 형식 또는 내용 확인 필요", "최신 API 명세와 응답 기준을 확인하세요."
+	case "unsupported":
+		return "지원 여부 확인 필요", "현재 검사 지원 범위와 API 조건을 확인하세요."
+	case "observer_failure":
+		return "검사 처리 상태 확인 필요", "Datapan 관제 상태와 검사 기록을 확인하세요."
+	case "indeterminate":
+		return "결과만으로 상태를 확정할 수 없음", "추가 검사 결과와 사용 조건을 확인하세요."
+	default:
+		return "현재 기록만으로 실패 원인을 확인할 수 없습니다.", "추가 검사 결과와 공급처 공지, API 사용 조건을 확인하세요."
+	}
+}
+
+func validPublicOperationIdentityCounts(counts OperationReadModelIdentityCounts) bool {
+	values := []int{counts.Known, counts.Admitted, counts.Claimed, counts.Attempted, counts.Persisted, counts.InventoryUnknownScopes, counts.InventoryUnknownOperations, counts.Acknowledged, counts.ReadbackVerified, counts.DeliveryPending, counts.Missing, counts.Late}
+	for _, value := range values {
+		if value < 0 || value > 100_000 {
+			return false
+		}
+	}
+	return counts.Admitted <= counts.Known && counts.Claimed <= counts.Known && counts.Attempted <= counts.Known && counts.Persisted <= counts.Attempted && counts.InventoryUnknownOperations <= counts.Known && counts.InventoryUnknownScopes <= counts.Known && counts.Acknowledged <= counts.Persisted && counts.ReadbackVerified <= counts.Acknowledged && counts.DeliveryPending <= counts.Persisted && counts.Missing <= counts.Known && counts.Late <= counts.Missing
+}
+
+func validPublicAPIProgress(progress OperationAPIProgress, registeredFunctions int) bool {
+	if !operationReadModelAPIIDPattern.MatchString(progress.APIID) || registeredFunctions < 0 || progress.TotalFunctions < 0 || progress.TotalFunctions > registeredFunctions {
+		return false
+	}
+	values := []int{progress.ConfiguredAdmitted, progress.Claimed, progress.Attempted, progress.CurrentPass, progress.CurrentFail, progress.CurrentIndeterminate, progress.Pending, progress.Stale, progress.Unobserved, progress.DeliveryPending, progress.ReadbackVerified}
+	for _, value := range values {
+		if value < 0 || value > progress.TotalFunctions {
+			return false
+		}
+	}
+	if progress.ConfiguredAdmitted > progress.TotalFunctions || progress.Attempted > progress.TotalFunctions || progress.CurrentPass+progress.CurrentFail+progress.CurrentIndeterminate+progress.Stale+progress.Unobserved != progress.TotalFunctions {
+		return false
+	}
+	missingReasons := 0
+	for reason, count := range progress.MissingReasons {
+		if count < 0 || count > progress.Unobserved || !publicMissingOperationReason(reason) {
+			return false
+		}
+		missingReasons += count
+	}
+	return missingReasons <= progress.Unobserved && progress.CoverageState == publicAPIProgressCoverageState(progress)
+}
+
+func publicMissingOperationReason(reason string) bool {
+	switch reason {
+	case "inventory_unknown", "test_only", "request_plan_incomplete", "runtime_unbound", "not_admitted", "unsupported_contract", "no_validated_observation", "future_observation":
+		return true
+	default:
+		return false
+	}
+}
+
+func publicAPIProgressCoverageState(progress OperationAPIProgress) string {
+	if progress.TotalFunctions == 0 {
+		return "no_registered_operations"
+	}
+	if progress.CurrentPass+progress.CurrentFail+progress.CurrentIndeterminate == progress.TotalFunctions {
+		if progress.CurrentIndeterminate > 0 {
+			return "current_indeterminate"
+		}
+		return "current"
+	}
+	if progress.CurrentPass+progress.CurrentFail+progress.CurrentIndeterminate > 0 {
+		return "partial"
+	}
+	if progress.Stale > 0 {
+		return "stale"
+	}
+	return "unobserved"
+}
+
+func publicHTMLAPIProgressValue(progress OperationAPIProgress, registeredFunctions int) *publicHTMLAPIProgress {
+	result := &publicHTMLAPIProgress{
+		RegisteredFunctions: registeredFunctions, PlannedFunctions: progress.TotalFunctions,
+		ConfiguredAdmitted: progress.ConfiguredAdmitted, Attempted: progress.Attempted,
+		CurrentPass: progress.CurrentPass, CurrentFail: progress.CurrentFail,
+		CurrentIndeterminate: progress.CurrentIndeterminate,
+		Pending:              progress.Pending, Stale: progress.Stale, Unobserved: progress.Unobserved,
+		StatusClass: "badge-warn",
+	}
+	switch {
+	case progress.CurrentFail > 0:
+		result.StatusLabel, result.StatusClass = "최근 검사 실패 결과 있음", "badge-bad"
+	case progress.CurrentIndeterminate > 0:
+		result.StatusLabel = "일부 검사 결과 판정 필요"
+	case progress.TotalFunctions == 0:
+		result.StatusLabel = "검사 계획에 포함되지 않음"
+	case progress.TotalFunctions == registeredFunctions && progress.CurrentPass == registeredFunctions:
+		result.StatusLabel, result.StatusClass = "모든 API 기능 최근 통과", "badge-good"
+	case progress.CurrentPass+progress.CurrentFail > 0:
+		result.StatusLabel = "일부 기능만 최근 확인"
+	case progress.Stale > 0:
+		result.StatusLabel = "최근 결과가 기한을 지남"
+	default:
+		result.StatusLabel = "최근 기능별 결과 없음"
+	}
+	if progress.TotalFunctions < registeredFunctions && result.StatusClass == "badge-good" {
+		result.StatusLabel, result.StatusClass = "검사 계획 일부 · 결과 확인", "badge-warn"
+	}
+	return result
 }
 
 func projectPublicHTMLReadiness(value HealthSelfReadiness, available bool, now time.Time) *publicHTMLReadiness {
@@ -583,10 +1371,11 @@ func publicServiceUnknownReason(reason string) string {
 }
 
 type publicHTMLRequest struct {
-	kind  string
-	apiID string
-	page  int
-	query string
+	kind   string
+	apiID  string
+	page   int
+	query  string
+	cursor string
 }
 
 func parsePublicHTMLRequest(r *http.Request) (publicHTMLRequest, int) {
@@ -612,7 +1401,7 @@ func parsePublicHTMLRequest(r *http.Request) (publicHTMLRequest, int) {
 		allowed["page"], allowed["q"] = true, true
 	} else if detail {
 		request.kind = "detail"
-		allowed["page"] = true
+		allowed["page"], allowed["q"], allowed["cursor"] = true, true, true
 		request.apiID = strings.TrimSuffix(strings.TrimPrefix(path, "/datapan/apis/"), "/")
 		if !registryAPIIDPattern.MatchString(request.apiID) {
 			return publicHTMLRequest{}, http.StatusNotFound
@@ -635,7 +1424,7 @@ func parsePublicHTMLRequest(r *http.Request) (publicHTMLRequest, int) {
 		request.page = page
 	}
 	if rawQuery := values.Get("q"); rawQuery != "" {
-		if !directory || !utf8.ValidString(rawQuery) || len(rawQuery) > maxPublicHTMLSearchBytes || utf8.RuneCountInString(rawQuery) > maxPublicHTMLSearchRunes || unsafePublicHTMLSearch(rawQuery) {
+		if (!directory && !detail) || !utf8.ValidString(rawQuery) || len(rawQuery) > maxPublicHTMLSearchBytes || detail && len(rawQuery) > operationReadModelMaximumQueryBytes || utf8.RuneCountInString(rawQuery) > maxPublicHTMLSearchRunes || unsafePublicHTMLSearch(rawQuery) {
 			return publicHTMLRequest{}, http.StatusBadRequest
 		}
 		for _, character := range rawQuery {
@@ -645,6 +1434,13 @@ func parsePublicHTMLRequest(r *http.Request) (publicHTMLRequest, int) {
 		}
 		request.query = strings.TrimSpace(rawQuery)
 	}
+	if rawCursor, present := values["cursor"]; present {
+		cursor := rawCursor[0]
+		if !detail || cursor == "" || len(cursor) > 1024 || !publicOperationCursorPattern.MatchString(cursor) || values.Get("page") != "" {
+			return publicHTMLRequest{}, http.StatusBadRequest
+		}
+		request.cursor = cursor
+	}
 	if (dependencies || services) && len(values) > 0 {
 		return publicHTMLRequest{}, http.StatusBadRequest
 	}
@@ -652,7 +1448,7 @@ func parsePublicHTMLRequest(r *http.Request) (publicHTMLRequest, int) {
 }
 
 func buildPublicHTMLDirectory(metadata RegistryAPIMetadata, statusByOperation map[string]PublicOperationStatus, statusAvailable bool, request publicHTMLRequest, now time.Time) publicHTMLPage {
-	const coverage = "data.go.kr 원본 시점의 Registry 목록입니다. 최신 포털이나 다른 제공처 전체 목록은 아닙니다."
+	const coverage = "공공데이터포털(data.go.kr) API의 Datapan Registry 저장본입니다. 최신 포털 현황이나 다른 제공처 전체 API 목록은 포함하지 않습니다."
 	page := publicHTMLPage{
 		PageTitle: "Datapan API 상태",
 		Intro:     "기관별 API 기능과 검사 결과를 확인합니다.",
@@ -713,6 +1509,7 @@ func buildPublicHTMLDirectory(metadata RegistryAPIMetadata, statusByOperation ma
 	for _, api := range items {
 		stats := apiObservationStats(metadata, api, statusByOperation, statusAvailable, now)
 		apiRow := publicHTMLAPI{
+			RegistryAPIID: api.RegistryAPIID,
 			Title:         metadataFieldText(api.Title, api.TitleState, "API 이름"),
 			Organization:  metadataFieldText(api.Organization, api.OrganizationState, "기관"),
 			Description:   truncatePublicText(metadataFieldText(api.Description, api.DescriptionState, "기능 설명"), 320),
@@ -1056,6 +1853,15 @@ func directoryPageURL(query string, page int) string {
 
 func apiPageURL(apiID string, page int) string {
 	return buildPublicHTMLDirectoryAPIURL(apiID) + "?page=" + strconv.Itoa(page)
+}
+
+func apiCursorPageURL(apiID, cursor, query string) string {
+	values := url.Values{}
+	values.Set("cursor", cursor)
+	if query != "" {
+		values.Set("q", query)
+	}
+	return buildPublicHTMLDirectoryAPIURL(apiID) + "?" + values.Encode()
 }
 
 func pagesFor(items, pageSize int) int {

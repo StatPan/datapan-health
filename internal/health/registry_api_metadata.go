@@ -35,22 +35,25 @@ var (
 // RegistryAPIMetadata is the bounded, source-derived display projection. It
 // contains no endpoint, request, credential, or response fields.
 type RegistryAPIMetadata struct {
-	SchemaVersion         string                     `json:"schema_version"`
-	RegistryRevision      string                     `json:"registry_revision"`
-	Scope                 registryMetadataScope      `json:"scope"`
-	Source                registryMetadataSource     `json:"source"`
-	Catalog               registryMetadataCatalog    `json:"catalog"`
-	Counts                RegistryAPIMetadataCounts  `json:"counts"`
-	APIs                  []RegistryAPIMetadataAPI   `json:"apis"`
-	HealthCanaryLinks     []RegistryHealthCanaryLink `json:"health_canary_links"`
-	healthCatalogRevision string
-	byID                  map[string]int
-	operationByID         map[string]RegistryAPIMetadataOperation
-	canaryByOpID          map[string]RegistryHealthCanaryLink
-	canaryByHealthID      map[string]RegistryHealthCanaryLink
-	canaryDisplays        []RegistryCanaryDisplay
-	orderedAPIIndices     []int
-	searchText            []string
+	SchemaVersion            string                     `json:"schema_version"`
+	RegistryRevision         string                     `json:"registry_revision"`
+	Scope                    registryMetadataScope      `json:"scope"`
+	Source                   registryMetadataSource     `json:"source"`
+	Catalog                  registryMetadataCatalog    `json:"catalog"`
+	Counts                   RegistryAPIMetadataCounts  `json:"counts"`
+	APIs                     []RegistryAPIMetadataAPI   `json:"apis"`
+	HealthCanaryLinks        []RegistryHealthCanaryLink `json:"health_canary_links"`
+	healthCatalogRevision    string
+	verifiedArtifactSHA256   string
+	verifiedSourceSHA256     string
+	verifiedProjectionSHA256 string
+	byID                     map[string]int
+	operationByID            map[string]RegistryAPIMetadataOperation
+	canaryByOpID             map[string]RegistryHealthCanaryLink
+	canaryByHealthID         map[string]RegistryHealthCanaryLink
+	canaryDisplays           []RegistryCanaryDisplay
+	orderedAPIIndices        []int
+	searchText               []string
 }
 
 type registryMetadataScope struct {
@@ -172,6 +175,14 @@ func LoadRegistryAPIMetadata(path, pinPath string, canaries CanaryConfig) (Regis
 		return RegistryAPIMetadata{}, errors.New("invalid Registry API metadata")
 	}
 	metadata.healthCatalogRevision = canaries.ConsumptionProvenance.RegistryDatasetRevision
+	metadata.verifiedArtifactSHA256 = artifactSHA
+	metadata.verifiedSourceSHA256 = metadata.Source.SHA256
+	projection, err := json.Marshal(metadata)
+	if err != nil {
+		return RegistryAPIMetadata{}, errors.New("invalid Registry API metadata")
+	}
+	projectionSum := sha256.Sum256(projection)
+	metadata.verifiedProjectionSHA256 = hex.EncodeToString(projectionSum[:])
 	return metadata, nil
 }
 

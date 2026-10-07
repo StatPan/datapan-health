@@ -13,8 +13,10 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/StatPan/datapan-health/schemas"
 )
@@ -25,7 +27,53 @@ const (
 	maxPublicHistoryPoints    = 50
 )
 
-var publicActionIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,95}$`)
+var (
+	publicActionIDPattern        = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,95}$`)
+	publicOperationCursorPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+)
+
+func parsePublicOperationPageQuery(parsed *url.URL) (OperationPageQuery, error) {
+	if parsed == nil || len(parsed.RawQuery) > maxPublicHTMLRawQueryBytes {
+		return OperationPageQuery{}, ErrOperationReadModelQuery
+	}
+	values, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return OperationPageQuery{}, ErrOperationReadModelQuery
+	}
+	query := OperationPageQuery{Limit: operationReadModelMaximumPage}
+	for key, entries := range values {
+		if len(entries) != 1 {
+			return OperationPageQuery{}, ErrOperationReadModelQuery
+		}
+		value := entries[0]
+		switch key {
+		case "api_id":
+			if !operationReadModelAPIIDPattern.MatchString(value) {
+				return OperationPageQuery{}, ErrOperationReadModelQuery
+			}
+			query.APIID = value
+		case "cursor":
+			if len(value) > 1024 || !publicOperationCursorPattern.MatchString(value) {
+				return OperationPageQuery{}, ErrOperationReadModelQuery
+			}
+			query.Cursor = value
+		case "limit":
+			limit, parseErr := strconv.Atoi(value)
+			if parseErr != nil || limit < 1 || limit > operationReadModelMaximumPage {
+				return OperationPageQuery{}, ErrOperationReadModelQuery
+			}
+			query.Limit = limit
+		case "q":
+			if len(value) > operationReadModelMaximumQueryBytes || !utf8.ValidString(value) || unsafePublicHTMLSearch(value) {
+				return OperationPageQuery{}, ErrOperationReadModelQuery
+			}
+			query.Query = strings.TrimSpace(value)
+		default:
+			return OperationPageQuery{}, ErrOperationReadModelQuery
+		}
+	}
+	return query, nil
+}
 
 type PublicStatusDocument struct {
 	SchemaVersion              string                  `json:"schema_version"`
@@ -331,11 +379,31 @@ func projectIncidentState(results []gatusPublicResult, threshold int) (rawState,
 }
 
 type PublicStatusHandler struct {
-	source    PublicStatusSource
-	services  PublicServiceStatusSource
-	readiness HealthSelfReadinessSource
-	origins   map[string]bool
-	registry  *RegistryAPIMetadata
+	source     PublicStatusSource
+	services   PublicServiceStatusSource
+	readiness  HealthSelfReadinessSource
+	origins    map[string]bool
+	registry   *RegistryAPIMetadata
+	operations PublicRegistryOperationsSource
+}
+
+// PublicRegistryOperationsSource serves a bounded page over the already
+// verified in-memory operation projection. Implementations must not call
+// providers, Gatus, or scan durable state during a request.
+type PublicRegistryOperationsSource interface {
+	LookupAPIProgress(apiIDs []string, at time.Time) ([]OperationAPIProgress, error)
+	PageOperations(query OperationPageQuery, at time.Time) (OperationReadModelPage, error)
+}
+
+type RegistryOperationLookupIdentity struct {
+	SourceID    string
+	OperationID string
+}
+
+// PublicRegistryOperationLookupSource performs a bounded exact-identity lookup
+// against the same verified in-memory plan used by the public page reader.
+type PublicRegistryOperationLookupSource interface {
+	LookupPublicOperationRows(identities []RegistryOperationLookupIdentity, at time.Time) ([]OperationReadModelRow, error)
 }
 
 func NewPublicStatusHandler(source PublicStatusSource, origins []string) (*PublicStatusHandler, error) {
@@ -367,12 +435,24 @@ func NewPublicStatusHandlerWithRegistryMetadataAndSelfReadiness(source PublicSta
 	return handler, nil
 }
 
+// NewPublicStatusHandlerWithRegistryOperations composes the current ten-canary
+// v1 views with a separately pinned, bounded full-operation read model.
+func NewPublicStatusHandlerWithRegistryOperations(source PublicStatusSource, origins []string, metadata RegistryAPIMetadata, readiness HealthSelfReadinessSource, operations PublicRegistryOperationsSource) (*PublicStatusHandler, error) {
+	handler, err := NewPublicStatusHandlerWithRegistryMetadataAndSelfReadiness(source, origins, metadata, readiness)
+	if err != nil {
+		return nil, err
+	}
+	handler.operations = operations
+	return handler, nil
+}
+
 func (h *PublicStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if isDatapanHTMLRoute(r.URL.Path) {
 		h.serveDatapanHTML(w, r)
 		return
 	}
-	if r.URL.RawQuery != "" {
+	operationPageRoute := r.URL.Path == "/datapan/v2/operations"
+	if r.URL.RawQuery != "" && !operationPageRoute {
 		writePublicError(w, http.StatusNotFound)
 		return
 	}
@@ -392,6 +472,15 @@ func (h *PublicStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	if origin != "" {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 	}
+	var operationQuery OperationPageQuery
+	if operationPageRoute {
+		var queryErr error
+		operationQuery, queryErr = parsePublicOperationPageQuery(r.URL)
+		if queryErr != nil {
+			writePublicError(w, http.StatusBadRequest)
+			return
+		}
+	}
 	if r.Method == http.MethodOptions {
 		if origin == "" || (r.Header.Get("Access-Control-Request-Method") != http.MethodGet && r.Header.Get("Access-Control-Request-Method") != http.MethodHead) || r.Header.Get("Access-Control-Request-Headers") != "" {
 			writePublicError(w, http.StatusForbidden)
@@ -410,6 +499,19 @@ func (h *PublicStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	var data []byte
 	var err error
 	switch r.URL.Path {
+	case "/datapan/v2/operations":
+		if h.operations == nil {
+			err = ErrOperationReadModelUnavailable
+		} else {
+			var document OperationReadModelPage
+			document, err = h.operations.PageOperations(operationQuery, time.Now().UTC())
+			if err == nil {
+				data, err = json.Marshal(document)
+				if err == nil && schemas.ValidateHealthRegistryOperationsPageV2(data) != nil {
+					err = errors.New("Registry operations page invalid")
+				}
+			}
+		}
 	case "/datapan/v1/services":
 		var document ServiceStatusDocument
 		document, err = h.services.Snapshot(r.Context())
@@ -466,7 +568,7 @@ func isDatapanJSONRoute(path string) bool {
 	// The installed Infra adapter strips /datapan before forwarding this
 	// existing status route. Keep that private contract on the same read-only
 	// handler and admission budget; public ingress still owns its allowlist.
-	return path == "/datapan/v1/services" || path == "/datapan/v1/dependencies" || path == "/datapan/v1/status" || path == "/v1/status"
+	return path == "/datapan/v1/services" || path == "/datapan/v1/dependencies" || path == "/datapan/v1/status" || path == "/v1/status" || path == "/datapan/v2/operations"
 }
 
 func isDatapanHTMLRoute(path string) bool {
