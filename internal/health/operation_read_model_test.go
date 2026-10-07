@@ -19,7 +19,7 @@ func TestOperationReadModelBuildsPinnedPageAndSeparatesProviderAndHealthTimes(t 
 	now := time.Date(2026, 10, 7, 2, 0, 0, 0, time.UTC)
 	requestStarted := true
 	model, err := NewOperationReadModel(plan, testRegistryAPIMetadataPin(0, 0), nil, []OperationReadModelAttempt{{
-		SourceID: "synthetic_test", OperationID: "synthetic-rest-list", AttemptState: "observed", ReceiptValidated: true, RequestStarted: &requestStarted, EverRequestStarted: true,
+		SourceID: "synthetic_test", OperationID: "synthetic-rest-list", AttemptState: "observed", ObservationAttemptState: "observed", ReceiptValidated: true, RequestStarted: &requestStarted, EverRequestStarted: true,
 		ResultState: "healthy", ResultCategory: "healthy", ProviderObservedAt: now.Add(-10 * time.Minute), HealthReceivedAt: now.Add(-9 * time.Minute),
 		GatusDeliveryState: "acknowledged", GatusAcknowledgedAt: now.Add(-8 * time.Minute), UpdatedAt: now,
 	}}, now)
@@ -122,15 +122,15 @@ func testOperationReadModelForAPIProgress(t *testing.T, now time.Time) *Operatio
 	operationID2 := strings.Repeat("a", 63) + "2"
 	operationID3 := strings.Repeat("a", 63) + "3"
 	rows := []OperationReadModelRow{
-		{SourceID: "data_go_kr", RegistryOperationID: operationID1, APIID: stringPointer("api-1"), Provider: "data.go.kr", AdapterID: "data-go-kr", Protocol: "REST", Title: "한글 제목", TitleState: "present", OperationNameState: "present", Organization: "기관", OrganizationState: "present", Purpose: "한글 목적", PurposeState: "present", RequestPlanState: "complete", RuntimeBindingState: "bound", AdmissionState: "admitted", ObservationPeriodSeconds: int64Pointer(300), AttemptState: "none", ObservationState: "unobserved", GatusDeliveryState: "not_ready"},
-		{SourceID: "data_go_kr", RegistryOperationID: operationID2, APIID: stringPointer("api-1"), Provider: "data.go.kr", AdapterID: "data-go-kr", Protocol: "REST", Title: "다른 제목", TitleState: "present", OperationNameState: "present", Organization: "기관", OrganizationState: "present", Purpose: "다른 목적", PurposeState: "present", RequestPlanState: "complete", RuntimeBindingState: "unbound", AdmissionState: "not_admitted", ObservationState: "unobserved", MissingReason: "runtime_unbound", AttemptState: "none", GatusDeliveryState: "not_ready"},
-		{SourceID: "data_go_kr", RegistryOperationID: operationID3, APIID: stringPointer("api-2"), Provider: "data.go.kr", AdapterID: "data-go-kr", Protocol: "SOAP", Title: "두 번째", TitleState: "present", OperationNameState: "present", Organization: "기관", OrganizationState: "present", Purpose: "다른 목적", PurposeState: "present", RequestPlanState: "complete", RuntimeBindingState: "bound", AdmissionState: "admitted", ObservationPeriodSeconds: int64Pointer(300), AttemptState: "observed", RequestStarted: &pass, ObservationState: "current_fail", ResultCategory: "provider_failure", ProviderObservedAt: timePointer(now.Add(-30 * time.Second)), HealthReceivedAt: timePointer(now.Add(-20 * time.Second)), GatusDeliveryState: "not_ready"},
-		{SourceID: "ecos", RegistryOperationID: "ecos-statistic-search-102y004", Provider: "ECOS", AdapterID: "ecos", Protocol: "REST", TitleState: "missing", OrganizationState: "missing", PurposeState: "missing", RequestPlanState: "incomplete", RuntimeBindingState: "unbound", AdmissionState: "not_admitted", ObservationState: "unobserved", MissingReason: "inventory_unknown", AttemptState: "none", GatusDeliveryState: "not_ready"},
+		{SourceID: "data_go_kr", RegistryOperationID: operationID1, APIID: stringPointer("api-1"), Provider: "data.go.kr", AdapterID: "data-go-kr", Protocol: "REST", Title: "한글 제목", TitleState: "present", OperationName: "함수 1", OperationNameState: "present", Organization: "기관", OrganizationState: "present", Purpose: "한글 목적", PurposeState: "present", RequestPlanState: "complete", RuntimeBindingState: "bound", AdmissionState: "admitted", ObservationPeriodSeconds: int64Pointer(300), AttemptState: "none", ObservationAttemptState: "none", ObservationState: "unobserved", GatusDeliveryState: "not_ready"},
+		{SourceID: "data_go_kr", RegistryOperationID: operationID2, APIID: stringPointer("api-1"), Provider: "data.go.kr", AdapterID: "data-go-kr", Protocol: "REST", Title: "다른 제목", TitleState: "present", OperationName: "함수 2", OperationNameState: "present", Organization: "기관", OrganizationState: "present", Purpose: "다른 목적", PurposeState: "present", RequestPlanState: "complete", RuntimeBindingState: "unbound", AdmissionState: "not_admitted", ObservationPeriodSeconds: nil, AttemptState: "none", ObservationAttemptState: "none", ObservationState: "unobserved", MissingReason: "runtime_unbound", GatusDeliveryState: "not_ready"},
+		{SourceID: "data_go_kr", RegistryOperationID: operationID3, APIID: stringPointer("api-2"), Provider: "data.go.kr", AdapterID: "data-go-kr", Protocol: "SOAP", Title: "두 번째", TitleState: "present", OperationName: "함수 3", OperationNameState: "present", Organization: "기관", OrganizationState: "present", Purpose: "다른 목적", PurposeState: "present", RequestPlanState: "complete", RuntimeBindingState: "bound", AdmissionState: "admitted", ObservationPeriodSeconds: int64Pointer(300), AttemptState: "observed", ObservationAttemptState: "observed", RequestStarted: &pass, Attempted: true, ObservationState: "current_fail", ResultState: "unhealthy", ResultCategory: "provider_failure", ProviderObservedAt: timePointer(now.Add(-30 * time.Second)), HealthReceivedAt: timePointer(now.Add(-20 * time.Second)), GatusDeliveryState: "not_ready"},
+		{SourceID: "ecos", RegistryOperationID: "ecos-statistic-search-102y004", Provider: "ECOS", AdapterID: "ecos", Protocol: "REST", OperationNameState: "missing", TitleState: "missing", OrganizationState: "missing", PurposeState: "missing", RequestPlanState: "incomplete", RuntimeBindingState: "unbound", AdmissionState: "not_admitted", ObservationState: "unobserved", MissingReason: "inventory_unknown", AttemptState: "none", ObservationAttemptState: "none", GatusDeliveryState: "not_ready"},
 	}
 	model := &OperationReadModel{registryRevision: strings.Repeat("a", 40), manifestSHA: strings.Repeat("b", 64), indexSHA: strings.Repeat("c", 64), planSchemaSHA: strings.Repeat("d", 64), pageSchemaSHA: strings.Repeat("e", 64), metadataPin: testRegistryAPIMetadataPin(2, 3), generatedAt: now, inventoryUnknownScopes: 1, rows: rows}
 	model.reindex()
 	requestStarted := true
-	if err := model.ApplyAttempt(OperationReadModelAttempt{SourceID: "data_go_kr", OperationID: operationID1, AttemptState: "observed", ReceiptValidated: true, RequestStarted: &requestStarted, EverRequestStarted: true, ResultState: "healthy", ResultCategory: "healthy", ProviderObservedAt: now.Add(-30 * time.Second), HealthReceivedAt: now.Add(-20 * time.Second), GatusDeliveryState: "readback_verified", GatusAcknowledgedAt: now.Add(-15 * time.Second), GatusReadbackAt: now.Add(-10 * time.Second), GatusObservedState: "healthy", UpdatedAt: now}); err != nil {
+	if err := model.ApplyAttempt(OperationReadModelAttempt{SourceID: "data_go_kr", OperationID: operationID1, AttemptState: "observed", ObservationAttemptState: "observed", ReceiptValidated: true, RequestStarted: &requestStarted, EverRequestStarted: true, ResultState: "healthy", ResultCategory: "healthy", ProviderObservedAt: now.Add(-30 * time.Second), HealthReceivedAt: now.Add(-20 * time.Second), GatusDeliveryState: "readback_verified", GatusAcknowledgedAt: now.Add(-15 * time.Second), GatusReadbackAt: now.Add(-10 * time.Second), GatusObservedState: "healthy", UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	return model
@@ -151,6 +151,118 @@ func TestOperationReadModelProjectionDoesNotExposeProviderTargetsOrRows(t *testi
 		if strings.Contains(string(raw), forbidden) {
 			t.Fatalf("public projection contains forbidden field/value marker %q", forbidden)
 		}
+	}
+}
+
+func TestOperationReadModelPreservesIndeterminateAndRejectsContradictoryOrFutureEvidence(t *testing.T) {
+	now := time.Date(2026, 10, 7, 8, 0, 0, 0, time.UTC)
+	operationID := strings.Repeat("f", 64)
+	model := &OperationReadModel{
+		registryRevision: strings.Repeat("a", 40), manifestSHA: strings.Repeat("b", 64), indexSHA: strings.Repeat("c", 64),
+		planSchemaSHA: strings.Repeat("d", 64), pageSchemaSHA: schemas.HealthRegistryOperationsPageV2SchemaSHA256(),
+		metadataPin: testRegistryAPIMetadataPin(0, 0), generatedAt: now,
+		rows: []OperationReadModelRow{{
+			SourceID: "data_go_kr", RegistryOperationID: operationID, APIID: stringPointer("api-indeterminate"),
+			Provider: "data.go.kr", AdapterID: "data-go-kr", Protocol: "REST", OperationNameState: "missing",
+			TitleState: "missing", OrganizationState: "missing", PurposeState: "missing",
+			RequestPlanState: "complete", RuntimeBindingState: "bound", AdmissionState: "admitted",
+			ObservationPeriodSeconds: int64Pointer(300), AttemptState: "none", ObservationAttemptState: "none",
+			ObservationState: "unobserved", GatusDeliveryState: "not_ready",
+		}},
+	}
+	model.reindex()
+	started := true
+	base := OperationReadModelAttempt{
+		SourceID: "data_go_kr", OperationID: operationID, AttemptState: "observed", ObservationAttemptState: "observed",
+		ReceiptValidated: true, RequestStarted: &started, EverRequestStarted: true,
+		ProviderObservedAt: now.Add(-20 * time.Second), HealthReceivedAt: now.Add(-10 * time.Second), UpdatedAt: now,
+		GatusDeliveryState: "not_ready",
+	}
+	indeterminate := base
+	indeterminate.ResultState, indeterminate.ResultCategory = "indeterminate", "observer_failure"
+	if err := model.ApplyAttempt(indeterminate); err != nil {
+		t.Fatalf("apply indeterminate receipt: %v", err)
+	}
+	progress, err := model.LookupAPIProgress([]string{"api-indeterminate"}, now)
+	if err != nil || progress[0].CurrentIndeterminate != 1 || progress[0].CurrentFail != 0 || progress[0].CoverageState != "current_indeterminate" {
+		t.Fatalf("indeterminate result was misreported as a provider failure or pass: %#v %v", progress, err)
+	}
+	page, err := model.PageOperations(OperationPageQuery{APIID: "api-indeterminate", Limit: 10}, now)
+	if err != nil || len(page.Operations) != 1 || page.Operations[0].ObservationState != "current_indeterminate" || page.Operations[0].ResultState != "indeterminate" || page.Operations[0].ResultCategory != "observer_failure" {
+		t.Fatalf("indeterminate state did not survive the public projection: %#v %v", page, err)
+	}
+
+	contradictory := base
+	contradictory.ResultState, contradictory.ResultCategory = "unhealthy", "healthy"
+	if err := model.ApplyAttempt(contradictory); !errors.Is(err, ErrOperationReadModelUnavailable) {
+		t.Fatalf("unhealthy/healthy contradictory result pair was accepted: %v", err)
+	}
+	unknownCategory := base
+	unknownCategory.ResultState, unknownCategory.ResultCategory = "unhealthy", "provider-secret-description"
+	if err := model.ApplyAttempt(unknownCategory); !errors.Is(err, ErrOperationReadModelUnavailable) {
+		t.Fatalf("unrecognized category reached the public model: %v", err)
+	}
+
+	future := base
+	future.ProviderObservedAt = now.Add(time.Minute)
+	future.HealthReceivedAt = now.Add(time.Minute + 5*time.Second)
+	future.UpdatedAt = now.Add(time.Minute + 10*time.Second)
+	future.ResultState, future.ResultCategory = "healthy", "healthy"
+	if err := model.ApplyAttempt(future); err != nil {
+		t.Fatalf("persist well-formed future timestamp for fail-closed evaluation: %v", err)
+	}
+	page, err = model.PageOperations(OperationPageQuery{APIID: "api-indeterminate", Limit: 10}, now)
+	if err != nil || len(page.Operations) != 1 || page.Operations[0].ObservationState != "unobserved" || page.Operations[0].MissingReason != "future_observation" || page.Operations[0].NextDueAt != nil {
+		t.Fatalf("future provider timestamp counted as current coverage: %#v %v", page, err)
+	}
+	progress, err = model.LookupAPIProgress([]string{"api-indeterminate"}, now)
+	if err != nil || progress[0].CurrentPass != 0 || progress[0].CurrentFail != 0 || progress[0].CurrentIndeterminate != 0 || progress[0].Unobserved != 1 || progress[0].MissingReasons["future_observation"] != 1 {
+		t.Fatalf("future observation was counted in API coverage: %#v %v", progress, err)
+	}
+
+	badAck := base
+	badAck.ResultState, badAck.ResultCategory = "healthy", "healthy"
+	badAck.GatusDeliveryState = "acknowledged"
+	badAck.GatusAcknowledgedAt = now.Add(-15 * time.Second) // earlier than Health persistence
+	if err := model.ApplyAttempt(badAck); !errors.Is(err, ErrOperationReadModelUnavailable) {
+		t.Fatalf("Gatus acknowledgement before Health persistence was accepted: %v", err)
+	}
+	badReadback := base
+	badReadback.ResultState, badReadback.ResultCategory = "healthy", "healthy"
+	badReadback.GatusDeliveryState = "readback_verified"
+	badReadback.GatusAcknowledgedAt = now.Add(-12 * time.Second)
+	badReadback.GatusReadbackAt = now.Add(-11 * time.Second)
+	badReadback.GatusObservedState = "healthy"
+	if err := model.ApplyAttempt(badReadback); !errors.Is(err, ErrOperationReadModelUnavailable) {
+		t.Fatalf("Gatus readback before Health persistence was accepted: %v", err)
+	}
+
+	futureAck := base
+	futureAck.ResultState, futureAck.ResultCategory = "healthy", "healthy"
+	futureAck.GatusDeliveryState = "acknowledged"
+	futureAck.GatusAcknowledgedAt = now.Add(10 * time.Second)
+	futureAck.UpdatedAt = now.Add(20 * time.Second)
+	if err := model.ApplyAttempt(futureAck); err != nil {
+		t.Fatalf("apply a later but internally ordered acknowledgement: %v", err)
+	}
+	page, err = model.PageOperations(OperationPageQuery{APIID: "api-indeterminate", Limit: 10}, now)
+	if err != nil || len(page.Operations) != 1 || page.Operations[0].ObservationState != "current_pass" || page.Operations[0].GatusDeliveryState != "pending" || page.Operations[0].GatusAcknowledgedAt != nil {
+		t.Fatalf("future Gatus acknowledgement was projected before its evaluation time: %#v %v", page, err)
+	}
+
+	futureReadback := base
+	futureReadback.ResultState, futureReadback.ResultCategory = "healthy", "healthy"
+	futureReadback.GatusDeliveryState = "readback_verified"
+	futureReadback.GatusAcknowledgedAt = now.Add(-5 * time.Second)
+	futureReadback.GatusReadbackAt = now.Add(10 * time.Second)
+	futureReadback.GatusObservedState = "healthy"
+	futureReadback.UpdatedAt = now.Add(20 * time.Second)
+	if err := model.ApplyAttempt(futureReadback); err != nil {
+		t.Fatalf("apply later internally ordered Gatus readback: %v", err)
+	}
+	page, err = model.PageOperations(OperationPageQuery{APIID: "api-indeterminate", Limit: 10}, now)
+	if err != nil || len(page.Operations) != 1 || page.Operations[0].GatusDeliveryState != "acknowledged" || page.Operations[0].GatusReadbackAt != nil || page.Operations[0].GatusObservedState != "" {
+		t.Fatalf("future Gatus readback was projected before its evaluation time: %#v %v", page, err)
 	}
 }
 

@@ -337,7 +337,7 @@ func (store *OperationAttemptStore) ClaimDelivery(sourceID, operationID, attempt
 			return ErrOperationAttemptUnavailable
 		}
 		attempt := findOperationAttempt(&state, attemptID, generation)
-		if attempt == nil || attempt.State != "observed" || attempt.Result == nil || attempt.DeliveryState == "acknowledged" || attempt.DeliveryState == "readback_verified" {
+		if attempt == nil || attempt.State != "observed" || attempt.Result == nil || now.Before(attempt.Result.ReceivedAt) || attempt.DeliveryState == "acknowledged" || attempt.DeliveryState == "readback_verified" {
 			return ErrOperationAttemptFenced
 		}
 		if attempt.DeliveryState == "pending" && now.Before(attempt.DeliveryStartedAt.Add(lease)) {
@@ -494,7 +494,7 @@ func operationReadModelAttemptFromState(state operationAttemptState) (OperationR
 	}
 	latest := state.Attempts[len(state.Attempts)-1]
 	projection := OperationReadModelAttempt{
-		SourceID: state.SourceID, OperationID: state.OperationID, AttemptState: latest.State,
+		SourceID: state.SourceID, OperationID: state.OperationID, AttemptState: latest.State, ObservationAttemptState: "none",
 		ReceiptValidated: latest.ReceiptValidated, RequestStarted: cloneBool(latest.RequestStarted),
 		EverRequestStarted: state.EverRequestStarted, GatusDeliveryState: "not_ready", UpdatedAt: latest.StartedAt,
 	}
@@ -514,6 +514,7 @@ func operationReadModelAttemptFromState(state operationAttemptState) (OperationR
 		}
 		projection.ResultState = attempt.Result.State
 		projection.ResultCategory = attempt.Result.Category
+		projection.ObservationAttemptState = "observed"
 		projection.ProviderObservedAt = attempt.Result.ObservedAt
 		projection.HealthReceivedAt = attempt.Result.ReceivedAt
 		switch attempt.DeliveryState {
@@ -668,7 +669,7 @@ func validOperationDeliveryClaim(claim OperationDeliveryClaim) bool {
 func validOperationObservationResult(result OperationObservationResult) bool {
 	validState := result.State == "healthy" || result.State == "unhealthy" || result.State == "indeterminate"
 	validCategory := result.Category == "healthy" || result.Category == "transport_failure" || result.Category == "timeout" || result.Category == "rate_limited" || result.Category == "credential_missing" || result.Category == "credential_rejected" || result.Category == "parameter_blocked" || result.Category == "provider_failure" || result.Category == "semantic_failure" || result.Category == "schema_drift" || result.Category == "unsupported" || result.Category == "observer_failure" || result.Category == "indeterminate"
-	if result.State == "healthy" && result.Category != "healthy" || result.State == "unhealthy" && (result.Category == "healthy" || result.Category == "indeterminate") || result.State == "indeterminate" && result.Category != "indeterminate" && result.Category != "observer_failure" {
+	if !validOperationReadModelResultPair(result.State, result.Category) {
 		return false
 	}
 	return validState && validCategory && !result.ObservedAt.IsZero() && (result.ReceivedAt.IsZero() || !result.ReceivedAt.Before(result.ObservedAt)) && sha256Pattern.MatchString(result.ReceiptSHA) && result.LatencyMS >= 0 && result.LatencyMS <= int64((365*24*time.Hour)/time.Millisecond)
@@ -718,7 +719,10 @@ func validOperationAttemptState(state operationAttemptState, sourceID, operation
 		if attempt.DeliveryState == "pending" && (attempt.DeliveryAttempts < 1 || attempt.DeliveryStartedAt.IsZero()) {
 			return false
 		}
-		if (attempt.DeliveryState == "acknowledged" || attempt.DeliveryState == "readback_verified") && (attempt.DeliveryAckAt.IsZero() || attempt.DeliveryAttempts < 1 || attempt.DeliveryAckAt.Before(attempt.DeliveryStartedAt)) {
+		if attempt.DeliveryState == "pending" && attempt.DeliveryStartedAt.Before(attempt.Result.ReceivedAt) {
+			return false
+		}
+		if (attempt.DeliveryState == "acknowledged" || attempt.DeliveryState == "readback_verified") && (attempt.DeliveryAckAt.IsZero() || attempt.DeliveryAttempts < 1 || attempt.DeliveryAckAt.Before(attempt.DeliveryStartedAt) || attempt.DeliveryAckAt.Before(attempt.Result.ReceivedAt)) {
 			return false
 		}
 		if attempt.DeliveryState == "readback_verified" && (attempt.GatusReceivedAt.IsZero() || !validGatusResultState(attempt.GatusResultState)) {
