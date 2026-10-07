@@ -33,21 +33,23 @@ const (
 )
 
 var (
-	sha256Pattern       = regexp.MustCompile("^[a-f0-9]{64}$")
-	commitPattern       = regexp.MustCompile("^[a-f0-9]{40}$")
-	identifierPattern   = regexp.MustCompile("^[A-Za-z0-9._-]{1,128}$")
-	healthOperationIDRE = regexp.MustCompile("^[a-z0-9-]{1,64}$")
-	urlPattern          = regexp.MustCompile("(?i)\\b(?:https?://|www\\.)[^\\s<>\"')]+")
-	domainPathPattern   = regexp.MustCompile("(?i)\\b(?:[a-z0-9-]+\\.)+(?:go\\.kr|or\\.kr|co\\.kr|ac\\.kr|com|net|org|io)(?:/[a-z0-9._~!$&'()*+,;=:@%/-]*)?(?:\\?[^\\s<>\"')]+)?")
-	barePathPattern     = regexp.MustCompile("(?i)(?:^|\\s)/[a-z0-9._~%+-]+(?:/[a-z0-9._~%+-]+)+")
-	queryPattern        = regexp.MustCompile("[?&][a-z0-9_.-]{1,64}=[^\\s&<>\"']*")
-	tagPattern          = regexp.MustCompile("(?s)<[^>]*>")
-	scriptStylePattern  = regexp.MustCompile("(?is)<(?:script|style|iframe|object|noscript)\\b[^>]*>.*?</(?:script|style|iframe|object|noscript)\\s*>")
-	pairedXMLPattern    = regexp.MustCompile("(?is)<(?:request|response|row|item|result|data)\\b[^>]*>.*?</(?:request|response|row|item|result|data)\\s*>")
-	fencedCodePattern   = regexp.MustCompile("(?s)(?:```|~~~).*?(?:```|~~~)")
-	inlineCodePattern   = regexp.MustCompile("`[^`]*`")
-	markdownLinkPattern = regexp.MustCompile("\\[([^]]{1,256})\\]\\([^)]{1,1000}\\)")
-	exampleMarker       = regexp.MustCompile("(?i)(요청\\s*(?:예시|샘플)|응답\\s*(?:예시|샘플)|request\\s+(?:example|sample)|response\\s+(?:example|sample)|(?:example|sample)\\s+(?:request|response))")
+	sha256Pattern        = regexp.MustCompile("^[a-f0-9]{64}$")
+	commitPattern        = regexp.MustCompile("^[a-f0-9]{40}$")
+	identifierPattern    = regexp.MustCompile("^[A-Za-z0-9._-]{1,128}$")
+	healthOperationIDRE  = regexp.MustCompile("^[a-z0-9-]{1,64}$")
+	urlPattern           = regexp.MustCompile("(?i)\\b(?:https?://|www\\.)[^\\s<>\"')]+")
+	domainPathPattern    = regexp.MustCompile("(?i)\\b(?:[a-z0-9-]+\\.)+(?:go\\.kr|or\\.kr|co\\.kr|ac\\.kr|com|net|org|io)(?:/[a-z0-9._~!$&'()*+,;=:@%/-]*)?(?:\\?[^\\s<>\"')]+)?")
+	barePathPattern      = regexp.MustCompile("(?i)(?:^|\\s)/[a-z0-9._~%+-]+(?:/[a-z0-9._~%+-]+)+")
+	queryPattern         = regexp.MustCompile("[?&][a-z0-9_.-]{1,64}=[^\\s&<>\"']*")
+	credentialPattern    = regexp.MustCompile("(?i)(?:\\b(?:service[ _-]?key|api[ _-]?key|authorization|auth(?:key)?|access[ _-]?token|client[ _-]?secret|password|passwd|token|secret(?:[ _-]?key)?|credential(?:[ _-]?value)?)\\b|(?:서비스\\s*키|인증\\s*키|API\\s*키|비밀\\s*키|시크릿\\s*키|접근\\s*토큰|비밀번호|암호))\\s*[:=]\\s*(?:\"[^\"]*\"|'[^']*'|(?:Bearer|Basic)\\s+[^\\s,;]+|[^\\s,;]+)")
+	authorizationPattern = regexp.MustCompile("(?i)\\b(?:Bearer|Basic)\\s+[^\\s,;]+")
+	tagPattern           = regexp.MustCompile("(?s)<[^>]*>")
+	scriptStylePattern   = regexp.MustCompile("(?is)<(?:script|style|iframe|object|noscript)\\b[^>]*>.*?</(?:script|style|iframe|object|noscript)\\s*>")
+	pairedXMLPattern     = regexp.MustCompile("(?is)<(?:request|response|row|item|result|data)\\b[^>]*>.*?</(?:request|response|row|item|result|data)\\s*>")
+	fencedCodePattern    = regexp.MustCompile("(?s)(?:```|~~~).*?(?:```|~~~)")
+	inlineCodePattern    = regexp.MustCompile("`[^`]*`")
+	markdownLinkPattern  = regexp.MustCompile("\\[([^]]{1,256})\\]\\([^)]{1,1000}\\)")
+	exampleMarker        = regexp.MustCompile("(?i)(요청\\s*(?:예시|샘플)|응답\\s*(?:예시|샘플)|request\\s+(?:example|sample)|response\\s+(?:example|sample)|(?:example|sample)\\s+(?:request|response))")
 )
 
 type SourcePin struct {
@@ -288,6 +290,7 @@ func Project(source io.Reader, catalogBytes []byte, pin Pin) (MetadataArtifact, 
 		HealthCanaryLinks: make([]HealthCanaryLink, 0, pin.Catalog.EntryCount),
 	}
 	counts := Counts{}
+	totalSourceOperations := 0
 	seenAPIIDs := make(map[string]struct{}, pin.ExpectedCounts.APIEntities)
 	seenOperationIDs := make(map[string]struct{}, pin.ExpectedCounts.APIOperations)
 	institutions := make(map[string]struct{}, pin.ExpectedCounts.Institutions)
@@ -301,6 +304,14 @@ func Project(source io.Reader, catalogBytes []byte, pin Pin) (MetadataArtifact, 
 		if !more {
 			break
 		}
+		recordOperationCount, err := countOperationValues(record)
+		if err != nil {
+			return MetadataArtifact{}, nil, err
+		}
+		if recordOperationCount > MaxSourceOperations-totalSourceOperations {
+			return MetadataArtifact{}, nil, errors.New("registry source operation count exceeds budget")
+		}
+		totalSourceOperations += recordOperationCount
 		var spec sourceSpec
 		if err := json.Unmarshal(record, &spec); err != nil {
 			return MetadataArtifact{}, nil, errors.New("registry source record is invalid")
@@ -459,6 +470,9 @@ func Project(source io.Reader, catalogBytes []byte, pin Pin) (MetadataArtifact, 
 	if len(artifact.APIs) != counts.APIEntities || counts.APIOperations != len(seenOperationIDs) || len(artifact.HealthCanaryLinks) != pin.Catalog.EntryCount {
 		return MetadataArtifact{}, nil, errors.New("registry metadata identity reconciliation failed")
 	}
+	if counts.APIOperations+counts.LinkOperations != totalSourceOperations {
+		return MetadataArtifact{}, nil, errors.New("registry metadata operation category reconciliation failed")
+	}
 	artifact.Counts = counts
 	sort.Slice(artifact.APIs, func(i, j int) bool { return artifact.APIs[i].RegistryAPIID < artifact.APIs[j].RegistryAPIID })
 	sort.Slice(artifact.HealthCanaryLinks, func(i, j int) bool {
@@ -528,6 +542,8 @@ func sanitizeText(input string) string {
 	value = inlineCodePattern.ReplaceAllString(value, " ")
 	value = markdownLinkPattern.ReplaceAllString(value, "$1")
 	value = redactStructuredJSON(value)
+	value = credentialPattern.ReplaceAllString(value, " ")
+	value = authorizationPattern.ReplaceAllString(value, " ")
 	if loc := exampleMarker.FindStringIndex(value); loc != nil {
 		value = value[:loc[0]]
 	}
@@ -789,4 +805,104 @@ func appendBoundedByte(buffer *bytes.Buffer, value byte) error {
 		return errors.New("registry source record exceeds size budget")
 	}
 	return buffer.WriteByte(value)
+}
+
+// countOperationValues applies the same case-insensitive field-name matching
+// as encoding/json but rejects ambiguous duplicate spellings. It traverses
+// bounded raw JSON without allocating an operations slice.
+func countOperationValues(record []byte) (int, error) {
+	decoder := json.NewDecoder(bytes.NewReader(record))
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') {
+		return 0, errors.New("registry source record is invalid")
+	}
+	total := 0
+	seenOperations := false
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return 0, errors.New("registry source record is invalid")
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return 0, errors.New("registry source record is invalid")
+		}
+		if strings.EqualFold(key, "operations") {
+			if seenOperations {
+				return 0, errors.New("registry source record has duplicate operations fields")
+			}
+			seenOperations = true
+			value, err := decoder.Token()
+			if err != nil {
+				return 0, errors.New("registry source operations field is invalid")
+			}
+			if value == nil {
+				continue
+			}
+			if value != json.Delim('[') {
+				return 0, errors.New("registry source operations field is invalid")
+			}
+			for decoder.More() {
+				total++
+				if total > MaxSourceOperations {
+					return 0, errors.New("registry source operation count exceeds record budget")
+				}
+				if err := skipJSONValue(decoder); err != nil {
+					return 0, errors.New("registry source operations field is invalid")
+				}
+			}
+			closing, err := decoder.Token()
+			if err != nil || closing != json.Delim(']') {
+				return 0, errors.New("registry source operations field is invalid")
+			}
+			continue
+		}
+		if err := skipJSONValue(decoder); err != nil {
+			return 0, errors.New("registry source record is invalid")
+		}
+	}
+	closing, err := decoder.Token()
+	if err != nil || closing != json.Delim('}') || ensureEOF(decoder) != nil {
+		return 0, errors.New("registry source record is invalid")
+	}
+	return total, nil
+}
+
+func skipJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		for decoder.More() {
+			if _, err := decoder.Token(); err != nil {
+				return err
+			}
+			if err := skipJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil || closing != json.Delim('}') {
+			return errors.New("invalid object")
+		}
+	case '[':
+		for decoder.More() {
+			if err := skipJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil || closing != json.Delim(']') {
+			return errors.New("invalid array")
+		}
+	default:
+		return errors.New("unexpected JSON delimiter")
+	}
+	return nil
 }

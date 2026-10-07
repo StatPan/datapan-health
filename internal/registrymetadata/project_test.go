@@ -17,7 +17,7 @@ func TestProjectStreamsAndRedactsPinnedMetadata(t *testing.T) {
   {
     "id":"12345678","provider":"data.go.kr",
     "title":"<script>alert(1)</script>안전 API https://evil.example/path?token=discard",
-    "organization":"기관 A","description":"기능 설명 https://example.com/path?serviceKey=discard /v1/rows {\"rows\":[{\"secret\":\"discard\"}]}",
+    "organization":"기관 A","description":"기능 설명 https://example.com/path?serviceKey=discard /v1/rows {\"rows\":[{\"secret\":\"discard\"}]} serviceKey=SYNTHETIC_SECRET Authorization: Bearer SYNTHETIC_BEARER api_key: \"SYNTHETIC_QUOTED\" 일반 설명 유지",
     "source":{"system":"data.go.kr","raw":{"api_type":"REST","list_type":"PR0027"}},
     "operations":[
       {"name":"확인 조회","endpoint":"https://provider.example/open?serviceKey=discard","source":{"system":"data.go.kr","raw":{"list_id":"12345678","operation_seq":"44"}}}
@@ -67,7 +67,7 @@ func TestProjectStreamsAndRedactsPinnedMetadata(t *testing.T) {
 	if artifact.APIs[0].TitleState != "sanitized" || artifact.APIs[0].Title != "안전 API" {
 		t.Fatalf("unsafe title projection = %q (%s)", artifact.APIs[0].Title, artifact.APIs[0].TitleState)
 	}
-	if artifact.APIs[0].DescriptionState != "sanitized" || artifact.APIs[0].Description != "기능 설명" {
+	if artifact.APIs[0].DescriptionState != "sanitized" || artifact.APIs[0].Description != "기능 설명 일반 설명 유지" {
 		t.Fatalf("unsafe description projection = %q (%s)", artifact.APIs[0].Description, artifact.APIs[0].DescriptionState)
 	}
 	if artifact.APIs[1].Operations == nil || artifact.APIs[1].LinkOperationCount != 1 || len(artifact.APIs[1].Operations) != 0 {
@@ -79,7 +79,7 @@ func TestProjectStreamsAndRedactsPinnedMetadata(t *testing.T) {
 	if len(artifact.HealthCanaryLinks) != 1 || artifact.HealthCanaryLinks[0].RegistryAPIID != "12345678" || artifact.HealthCanaryLinks[0].UpstreamOperationSeq != "44" {
 		t.Fatalf("canary alias did not join exactly: %+v", artifact.HealthCanaryLinks)
 	}
-	for _, prohibited := range []string{"https://", "evil.example", "provider.example", "serviceKey=", "token=discard", "/v1/rows", "secret", "<script>", "rows"} {
+	for _, prohibited := range []string{"https://", "evil.example", "provider.example", "serviceKey=", "token=discard", "/v1/rows", "secret", "SYNTHETIC_SECRET", "SYNTHETIC_BEARER", "SYNTHETIC_QUOTED", "<script>", "rows"} {
 		if strings.Contains(string(encoded), prohibited) {
 			t.Fatalf("artifact contains prohibited source content %q", prohibited)
 		}
@@ -130,6 +130,40 @@ func TestProjectRejectsOversizedRecordBeforeDecoding(t *testing.T) {
 	_, _, err := registrymetadata.Project(strings.NewReader(source), []byte(catalog), pin)
 	if err == nil || !strings.Contains(err.Error(), "record exceeds size budget") {
 		t.Fatalf("oversized record was not rejected before decoding: %v", err)
+	}
+}
+
+func TestProjectBoundsAllOperationValuesBeforeTypedDecode(t *testing.T) {
+	tooManyNulls := strings.TrimSuffix(strings.Repeat("null,", registrymetadata.MaxSourceOperations+1), ",")
+	operationBomb := `[{"id":"12345678","provider":"data.go.kr","source":{"raw":{}},"OPERATIONS":[` + tooManyNulls + `]}]`
+	duplicateArrays := `[{"id":"12345678","provider":"data.go.kr","source":{"raw":{}},"operations":[null],"OPERATIONS":[null]}]`
+	cases := []struct {
+		name      string
+		source    string
+		wantError string
+	}{
+		{name: "case-folded LINK count bomb", source: operationBomb, wantError: "operation count exceeds"},
+		{name: "case-folded duplicate arrays", source: duplicateArrays, wantError: "duplicate operations fields"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			sourceHash := sha256.Sum256([]byte(test.source))
+			sourceSHA := hex.EncodeToString(sourceHash[:])
+			catalog := `{"schema_version":"datapan.health-probe-catalog.v1","source_registry":{"sha256":"` + sourceSHA + `"},"entries":[{"operation_id":"dpr-op-00000001","provider":"data.go.kr","aliases":{"dataset_id":"12345678","operation_name":"조회","upstream_operation_seq":"44","cli_operation_key":"` + strings.Repeat("a", 64) + `"}}]}`
+			catalogHash := sha256.Sum256([]byte(catalog))
+			pin := registrymetadata.Pin{
+				SchemaVersion:    registrymetadata.PinSchemaVersion,
+				RegistryRevision: strings.Repeat("a", 40),
+				Source:           registrymetadata.SourcePin{Path: "data/data-go-kr.registry.json", SHA256: sourceSHA, SizeBytes: int64(len(test.source))},
+				Catalog:          registrymetadata.CatalogPin{Path: "config/registry/health-probe-catalog.json", SHA256: hex.EncodeToString(catalogHash[:]), EntryCount: 1},
+				ExpectedCounts:   registrymetadata.ExpectedCounts{APIEntities: 1, APIOperations: 1, Institutions: 1, MatchedHealthCanaries: 1},
+				Artifact:         registrymetadata.ArtifactPin{Path: "config/registry/api-metadata.v1.json"},
+			}
+			_, _, err := registrymetadata.Project(strings.NewReader(test.source), []byte(catalog), pin)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("operation array was not rejected before typed decode: %v", err)
+			}
+		})
 	}
 }
 
