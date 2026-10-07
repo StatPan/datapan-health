@@ -11,6 +11,10 @@ import (
 
 var errOperationPlanWorkerUnavailable = errors.New("operation-plan worker is unavailable")
 
+const operationPlanPostChildCommitTimeout = 15 * time.Second
+
+const operationPlanPreDispatchCleanupTimeout = 5 * time.Second
+
 // OperationPlanProbeExecutor is the worker's single-operation child boundary.
 // The production constructor accepts only an attested OperationPlanProbeRunner;
 // same-package tests may instantiate the worker with a deterministic executor
@@ -71,18 +75,22 @@ type OperationPlanWorkerResult struct {
 }
 
 func NewOperationPlanWorker(config OperationPlanWorkerConfig) (*OperationPlanWorker, error) {
-	if !validVerifiedOperationPlanRuntime(config.Runtime) || config.Runner == nil || config.Attempts == nil || config.Quotas == nil || config.History == nil || config.HistoryValidator.Expectations == nil || config.HistoryValidator.ValidatorRevision == "" || config.RuntimeLock.Validate() != nil || config.Architecture == "" || config.AttemptLease < maxOperationPlanProbeDeadline || config.AttemptLease > maxOperationAttemptLease || config.QuotaLease < maxOperationPlanProbeDeadline || config.QuotaLease > maxOperationQuotaLease {
-		return nil, errOperationPlanWorkerUnavailable
-	}
 	productionRunner, ok := config.Runner.(*OperationPlanProbeRunner)
 	if !ok || productionRunner == nil {
 		return nil, errOperationPlanWorkerUnavailable
 	}
-	resolver, ok := config.HistoryValidator.Expectations.(*PinnedOperationPlanProbeExpectationResolver)
-	if !ok || resolver == nil || resolver.plan.RegistryRevision() != config.Runtime.Plan.RegistryRevision() || resolver.plan.binding.ReleaseManifestSHA256 != config.Runtime.Plan.binding.ReleaseManifestSHA256 || resolver.plan.IndexSHA256() != config.Runtime.Plan.IndexSHA256() {
+	if err := productionRunner.VerifyExecutable(); err != nil {
 		return nil, errOperationPlanWorkerUnavailable
 	}
-	if err := productionRunner.VerifyExecutable(); err != nil {
+	return newOperationPlanWorker(config, productionRunner.config)
+}
+
+func newOperationPlanWorker(config OperationPlanWorkerConfig, runnerConfig OperationPlanProbeConfig) (*OperationPlanWorker, error) {
+	if !validVerifiedOperationPlanRuntime(config.Runtime) || config.Runner == nil || config.Attempts == nil || config.Quotas == nil || config.History == nil || config.HistoryValidator.Expectations == nil || config.HistoryValidator.ValidatorRevision == "" || config.RuntimeLock.Validate() != nil || config.Architecture == "" || config.AttemptLease < maxOperationPlanProbeDeadline || config.AttemptLease > maxOperationAttemptLease || config.QuotaLease < maxOperationPlanProbeDeadline || config.QuotaLease > maxOperationQuotaLease {
+		return nil, errOperationPlanWorkerUnavailable
+	}
+	resolver, ok := config.HistoryValidator.Expectations.(*PinnedOperationPlanProbeExpectationResolver)
+	if !ok || resolver == nil || resolver.plan.RegistryRevision() != config.Runtime.Plan.RegistryRevision() || resolver.plan.binding.ReleaseManifestSHA256 != config.Runtime.Plan.binding.ReleaseManifestSHA256 || resolver.plan.IndexSHA256() != config.Runtime.Plan.IndexSHA256() {
 		return nil, errOperationPlanWorkerUnavailable
 	}
 	verifiedTargets, err := exactActivePlanTargets(config.Runtime.Plan, config.Runtime.IdentityMapping)
@@ -106,7 +114,7 @@ func NewOperationPlanWorker(config OperationPlanWorkerConfig) (*OperationPlanWor
 			return nil, errOperationPlanWorkerUnavailable
 		}
 		expected, expectedErr := operationPlanProbeExpected(config.Runtime.Plan, target.Record, target.ShardSHA256, validationAttemptID, config.RuntimeLock, config.Architecture, validationTime)
-		if expectedErr != nil || !validOperationProbeExpectation(expected, productionRunner.config) {
+		if expectedErr != nil || !validOperationProbeExpectation(expected, runnerConfig) {
 			return nil, errOperationPlanWorkerUnavailable
 		}
 		worker.targets[key] = cloneOperationPlanWorkerTarget(target)
@@ -152,7 +160,7 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 	reservation, err := worker.history.Reserve(ctx, identity)
 	if err != nil {
 		if reservation.Matches(identity) {
-			_ = worker.history.CancelReservation(ctx, identity, reservation)
+			_ = cancelOperationHistoryReservation(worker.history, identity, reservation)
 		}
 		reason := operationAttemptReasonChildUnavailable
 		if errors.Is(err, ErrOperationHistoryCapacity) {
@@ -163,7 +171,7 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 	quotaNow := time.Now().UTC()
 	quotaClaims, err := worker.quotas.AcquireMany(target.Record.QuotaPolicies, attemptID, quotaNow, worker.quotaLease)
 	if err != nil {
-		cancelErr := worker.history.CancelReservation(ctx, identity, reservation)
+		cancelErr := cancelOperationHistoryReservation(worker.history, identity, reservation)
 		reason := operationAttemptReasonChildUnavailable
 		if errors.Is(err, ErrOperationQuotaExhausted) {
 			reason = operationAttemptReasonQuotaCapacity
@@ -177,10 +185,11 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 		}
 		return deferred, nil
 	}
-	deadline := time.Now().UTC().Add(target.Record.RequestTimeout + maxOperationPlanProbeProcessOverhead)
-	if !deadline.After(time.Now()) || deadline.Sub(time.Now()) > maxOperationPlanProbeDeadline || !deadline.Before(claim.ExpiresAt) {
-		_ = worker.quotas.ReleaseMany(quotaClaims, time.Now().UTC())
-		return worker.deferBeforeDispatch(claim, result, operationAttemptReasonChildUnavailable, time.Now().UTC(), worker.history, reservation)
+	deadlineNow := time.Now().UTC()
+	deadline, deadlineOK := operationPlanProbeExecutionDeadline(deadlineNow, target.Record.RequestTimeout, claim.ExpiresAt, attemptID, quotaClaims)
+	if !deadlineOK {
+		_ = worker.quotas.ReleaseMany(quotaClaims, deadlineNow)
+		return worker.deferBeforeDispatch(claim, result, operationAttemptReasonChildUnavailable, deadlineNow, worker.history, reservation)
 	}
 	probeResult, _, runErr := worker.runner.Run(ctx, expected, deadline)
 	quotaReleaseErr := worker.quotas.ReleaseMany(quotaClaims, time.Now().UTC())
@@ -193,13 +202,19 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 		}
 		return result, errOperationPlanWorkerUnavailable
 	}
+	// A valid receipt may already exist in memory even if the scheduler context
+	// was canceled as the child returned. Preserve and commit that evidence with
+	// a short independent cleanup deadline; dropping it would leave a request
+	// that may have reached the provider without its validated receipt.
+	commitCtx, cancelCommit := context.WithTimeout(context.Background(), operationPlanPostChildCommitTimeout)
+	defer cancelCommit()
 	record, err := worker.historyValidator.newRecord(identity, probeResult, expected, claim.StartedAt)
 	if err != nil {
 		_ = worker.attempts.FailAttempt(claim, time.Now().UTC())
 		result.AttemptState = "unknown"
 		return result, errOperationPlanWorkerUnavailable
 	}
-	ref, err := worker.history.AppendValidated(ctx, reservation, record)
+	ref, err := worker.history.AppendValidated(commitCtx, reservation, record)
 	if err != nil || !ref.MatchesValidatedRecord(record) {
 		_ = worker.attempts.FailAttempt(claim, time.Now().UTC())
 		result.AttemptState = "unknown"
@@ -207,22 +222,22 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 	}
 	completedAt := time.Now().UTC()
 	if !probeResult.RequestStarted {
-		err = worker.attempts.RecordBlockedAttemptFromValidatedHistory(ctx, claim, record, ref, worker.historyValidator, completedAt)
+		err = worker.attempts.RecordBlockedAttemptFromValidatedHistory(commitCtx, claim, record, ref, worker.historyValidator, completedAt)
 		result.AttemptState = "failed"
 		result.ExecutionBlockReason, _ = operationPlanProbeBlockedReason(probeResult.ReasonCode)
 	} else if probeResult.ObservedAt.IsZero() {
-		err = worker.attempts.RecordRequestStartedFromValidatedHistory(ctx, claim, record, ref, worker.historyValidator, completedAt)
+		err = worker.attempts.RecordRequestStartedFromValidatedHistory(commitCtx, claim, record, ref, worker.historyValidator, completedAt)
 		result.AttemptState = "request_started"
 		result.RequestStarted = true
 	} else {
-		err = worker.attempts.CompleteAttemptFromValidatedHistory(ctx, claim, record, ref, worker.historyValidator, completedAt)
+		err = worker.attempts.CompleteAttemptFromValidatedHistory(commitCtx, claim, record, ref, worker.historyValidator, completedAt)
 		result.AttemptState = "observed"
 		result.RequestStarted = true
 		state, category := operationObservationClassification(probeResult)
 		if category == "response_semantics_unestablished" && state == "indeterminate" {
 			result.DeliveryState = "not_applicable"
 		} else {
-			result.DeliveryState = "pending"
+			result.DeliveryState = "not_ready"
 		}
 	}
 	if err != nil || quotaReleaseErr != nil {
@@ -230,6 +245,22 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 	}
 	result.ReceiptSHA256 = probeResult.ReceiptSHA256
 	return result, nil
+}
+
+func operationPlanProbeExecutionDeadline(now time.Time, requestTimeout time.Duration, attemptExpiresAt time.Time, attemptID string, quotaClaims []OperationQuotaClaim) (time.Time, bool) {
+	if now.IsZero() || attemptExpiresAt.IsZero() || requestTimeout <= 0 || !quotaAttemptIDPattern.MatchString(attemptID) || len(quotaClaims) == 0 {
+		return time.Time{}, false
+	}
+	deadline := now.UTC().Add(requestTimeout + maxOperationPlanProbeProcessOverhead)
+	if !deadline.After(now) || deadline.Sub(now) > maxOperationPlanProbeDeadline || !deadline.Before(attemptExpiresAt) {
+		return time.Time{}, false
+	}
+	for _, claim := range quotaClaims {
+		if claim.Generation == 0 || claim.AttemptID != attemptID || claim.ExpiresAt.IsZero() || !deadline.Before(claim.ExpiresAt) {
+			return time.Time{}, false
+		}
+	}
+	return deadline, true
 }
 
 // DeliverOne retries a pending external result or its readback without ever
@@ -279,7 +310,7 @@ func (worker *OperationPlanWorker) deferBeforeDispatch(claim OperationAttemptCla
 			Generation: claim.Generation, RegistryRevision: claim.Binding.RegistryRevision,
 			ReleaseManifestSHA256: claim.Binding.ReleaseManifestSHA, IndexSHA256: claim.Binding.IndexSHA, ShardSHA256: claim.Binding.ShardSHA,
 		}
-		if history.CancelReservation(context.Background(), identity, reservation) != nil {
+		if cancelOperationHistoryReservation(history, identity, reservation) != nil {
 			return result, errOperationPlanWorkerUnavailable
 		}
 	}
@@ -289,6 +320,15 @@ func (worker *OperationPlanWorker) deferBeforeDispatch(claim OperationAttemptCla
 	result.AttemptState = "deferred"
 	result.ExecutionBlockReason = reason
 	return result, nil
+}
+
+func cancelOperationHistoryReservation(history OperationHistoryAppender, identity OperationHistoryIdentity, reservation OperationHistoryReservation) error {
+	if history == nil || !reservation.Matches(identity) {
+		return errOperationPlanWorkerUnavailable
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), operationPlanPreDispatchCleanupTimeout)
+	defer cancel()
+	return history.CancelReservation(ctx, identity, reservation)
 }
 
 func sameOperationPlanWorkerTargets(left, right []OperationPlanWorkerTarget) bool {
