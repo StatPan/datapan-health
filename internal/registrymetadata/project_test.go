@@ -17,7 +17,7 @@ func TestProjectStreamsAndRedactsPinnedMetadata(t *testing.T) {
   {
     "id":"12345678","provider":"data.go.kr",
     "title":"<script>alert(1)</script>안전 API https://evil.example/path?token=discard",
-    "organization":"기관 A","description":"기능 설명 https://example.com/path?serviceKey=discard {\"rows\":[{\"secret\":\"discard\"}]}",
+    "organization":"기관 A","description":"기능 설명 https://example.com/path?serviceKey=discard /v1/rows {\"rows\":[{\"secret\":\"discard\"}]}",
     "source":{"system":"data.go.kr","raw":{"api_type":"REST","list_type":"PR0027"}},
     "operations":[
       {"name":"확인 조회","endpoint":"https://provider.example/open?serviceKey=discard","source":{"system":"data.go.kr","raw":{"list_id":"12345678","operation_seq":"44"}}}
@@ -79,7 +79,7 @@ func TestProjectStreamsAndRedactsPinnedMetadata(t *testing.T) {
 	if len(artifact.HealthCanaryLinks) != 1 || artifact.HealthCanaryLinks[0].RegistryAPIID != "12345678" || artifact.HealthCanaryLinks[0].UpstreamOperationSeq != "44" {
 		t.Fatalf("canary alias did not join exactly: %+v", artifact.HealthCanaryLinks)
 	}
-	for _, prohibited := range []string{"https://", "evil.example", "provider.example", "serviceKey=", "token=discard", "secret", "<script>", "rows"} {
+	for _, prohibited := range []string{"https://", "evil.example", "provider.example", "serviceKey=", "token=discard", "/v1/rows", "secret", "<script>", "rows"} {
 		if strings.Contains(string(encoded), prohibited) {
 			t.Fatalf("artifact contains prohibited source content %q", prohibited)
 		}
