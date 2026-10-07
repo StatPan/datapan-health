@@ -459,6 +459,26 @@ func TestRegistryMetadataLoaderBindsVerifiedProjectionToArtifact(t *testing.T) {
 	}
 }
 
+func TestLegacyDetailFallbackLabelsGatusAndShowsSourceProvenance(t *testing.T) {
+	metadata := testRegistryAPIMetadata(t)
+	link := metadata.HealthCanaryLinks[0]
+	legacyDocument := legacyGatusDocumentForOperation(t, link.HealthOperationID, true, time.Now().UTC())
+	handler, err := NewPublicStatusHandlerWithRegistryMetadata(staticPublicSource{document: legacyDocument}, []string{"https://datapan.statpan.com"}, metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, buildPublicHTMLDirectoryAPIURL(link.RegistryAPIID), nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("legacy detail status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	for _, want := range []string{"기존 검사 수신 기록 (Gatus)", "Gatus에 결과가 접수된 이력", "Registry 저장본 revision", "검사 카탈로그 revision", "카탈로그 SHA-256"} {
+		if !strings.Contains(recorder.Body.String(), want) {
+			t.Errorf("legacy detail missing %q", want)
+		}
+	}
+}
+
 func legacyGatusDocumentForOperation(t *testing.T, healthOperationID string, healthy bool, now time.Time) PublicStatusDocument {
 	t.Helper()
 	document := testPublicDocument(t)

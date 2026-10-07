@@ -172,7 +172,7 @@ const publicStatusHTMLTemplate = `<!doctype html>
         <p><strong>기능:</strong> {{.Description}}</p>
         <p><strong>API 기능:</strong> {{count .APIOperations}}개 · <strong>외부 링크:</strong> {{count .LinkOperations}}개</p>
         <p><strong>검사 연결:</strong> {{count .ConfiguredOperations}}개 · <strong>검사 연결 전:</strong> {{count .UnconfiguredOperations}}개</p>
-        <p><strong>최근 결과:</strong> {{.RecentObservations}}</p>
+        <p><strong>기존 Gatus 수신 결과:</strong> {{.RecentObservations}}</p>
         {{if .Progress}}<p><strong>전체 기능 검사 상태:</strong> <span class="badge {{.Progress.StatusClass}}">{{.Progress.StatusLabel}}</span></p><p><strong>검사 계획:</strong> {{count .Progress.PlannedFunctions}} / {{count .Progress.RegisteredFunctions}}개 기능 · <strong>최근 통과:</strong> {{count .Progress.CurrentPass}} · <strong>최근 실패:</strong> {{count .Progress.CurrentFail}} · <strong>판정 필요:</strong> {{count .Progress.CurrentIndeterminate}} · <strong>결과 없음:</strong> {{count .Progress.Unobserved}} · <strong>기한 지남:</strong> {{count .Progress.Stale}}{{if .Progress.Pending}} · <strong>진행 중:</strong> {{count .Progress.Pending}}{{end}}</p>{{end}}
         {{if .LatestCheck}}<p><strong>최근 결과 수신:</strong> <time datetime="{{.LatestCheck.ISO}}" title="{{.LatestCheck.FullKST}}">{{.LatestCheck.Relative}}</time> · {{.LatestCheck.FullKST}}</p>{{end}}
         {{if .HistoryStart}}<p><strong>이력 시작:</strong> <time datetime="{{.HistoryStart.ISO}}" title="{{.HistoryStart.FullKST}}">{{.HistoryStart.FullKST}}</time></p>{{end}}
@@ -239,6 +239,7 @@ const publicStatusHTMLTemplate = `<!doctype html>
     <p>검사 설정 revision: <code>{{.ObservationRevision}}</code></p>
     <p>{{.SortNote}}</p>
     <p>최근 결과 시각과 막대 이력은 Gatus 관제에 결과가 접수된 시각입니다. 원래 API 요청 시각과 다를 수 있습니다. 외부 링크는 API 기능 검사 수에 포함하지 않습니다.</p>
+    {{if .LegacyProvenance}}<p>기존 검사 수신 기록의 Registry 설정 revision: <code>{{.LegacyProvenance.DiagnosticRegistryRevision}}</code> · 검사 카탈로그 revision: <code>{{.LegacyProvenance.ObservationCatalogRevision}}</code></p>{{end}}
   </details>
   {{end}}
 
@@ -296,8 +297,15 @@ const publicStatusHTMLTemplate = `<!doctype html>
       {{if .OperationNextURL}}<a href="{{.OperationNextURL}}" rel="next">다음 API 기능</a>{{end}}
     </nav>{{end}}
     {{else}}
-    <h2>API 기능별 검사 결과</h2>
+    <h2>기존 검사 수신 기록 (Gatus)</h2>
     <p class="muted">{{.OperationPageInfo}}</p>
+    <p class="muted">이 기록은 Gatus에 결과가 접수된 이력입니다. 원래 API 요청 시각과 다를 수 있습니다.</p>
+    {{if .LegacyProvenance}}<details class="notice directory-details"><summary>기존 검사 수신 기록 출처</summary>
+      <p>검사 설정의 Registry 저장본 revision: <code>{{.LegacyProvenance.DiagnosticRegistryRevision}}</code></p>
+      <p>검사 카탈로그 revision: <code>{{.LegacyProvenance.ObservationCatalogRevision}}</code></p>
+      <p>API 설명 저장본 revision: <code>{{.LegacyProvenance.MetadataRegistryRevision}}</code></p>
+      <p>검사 카탈로그 SHA-256: <code>{{.LegacyProvenance.CatalogSHA256}}</code></p>
+    </details>{{end}}
     <ol class="operation-list">
       {{range .Operations}}
       <li class="status-item">
@@ -332,6 +340,13 @@ const publicStatusHTMLTemplate = `<!doctype html>
   <section class="section" aria-labelledby="dependency-heading">
     <h2 id="dependency-heading">검사 결과</h2>
     <p class="notice">{{.ConfigNote}}</p>
+    {{if .LegacyProvenance}}<details class="notice directory-details"><summary>기존 검사 수신 기록 출처</summary>
+      <p>결과는 Gatus에 접수된 시각이며 원래 API 요청 시각과 다를 수 있습니다.</p>
+      <p>검사 설정의 Registry 저장본 revision: <code>{{.LegacyProvenance.DiagnosticRegistryRevision}}</code></p>
+      <p>검사 카탈로그 revision: <code>{{.LegacyProvenance.ObservationCatalogRevision}}</code></p>
+      <p>API 설명 저장본 revision: <code>{{.LegacyProvenance.MetadataRegistryRevision}}</code></p>
+      <p>검사 카탈로그 SHA-256: <code>{{.LegacyProvenance.CatalogSHA256}}</code></p>
+    </details>{{end}}
     <div class="status-list">
       {{range .DependencyRows}}
       <article class="status-item">
@@ -425,6 +440,7 @@ type publicHTMLPage struct {
 	ReadModelOperationsAvailable bool
 	OperationCursorPaging        bool
 	OperationNextURL             string
+	LegacyProvenance             *publicHTMLLegacyProvenance
 
 	DetailTitle              string
 	DetailOrganization       string
@@ -562,6 +578,13 @@ type publicHTMLLegacyGatus struct {
 	CatalogSHA256              string
 }
 
+type publicHTMLLegacyProvenance struct {
+	DiagnosticRegistryRevision string
+	ObservationCatalogRevision string
+	MetadataRegistryRevision   string
+	CatalogSHA256              string
+}
+
 type publicHTMLTime struct {
 	ISO      string
 	FullKST  string
@@ -642,6 +665,7 @@ func (h *PublicStatusHandler) serveDatapanHTML(w http.ResponseWriter, r *http.Re
 		return
 	}
 	page.SelfReadiness = readiness
+	page.LegacyProvenance = publicHTMLLegacyProvenanceValue(*h.registry, statusDocument, statusAvailable)
 	if page.NotFound {
 		writePublicHTMLError(w, r, http.StatusNotFound)
 		return
@@ -1025,7 +1049,8 @@ func hasLegacyGatusEvidence(status PublicOperationStatus) bool {
 }
 
 func publicHTMLLegacyGatusRow(operation OperationReadModelRow, metadata RegistryAPIMetadata, status PublicOperationStatus, document PublicStatusDocument, now time.Time) *publicHTMLLegacyGatus {
-	if !commitPattern.MatchString(document.DiagnosticRegistryRevision) || !commitPattern.MatchString(document.ObservationCatalogRevision) || document.ObservationCatalogRevision != metadata.healthCatalogRevision || !sha256Pattern.MatchString(metadata.Catalog.SHA256) {
+	provenance := publicHTMLLegacyProvenanceValue(metadata, document, true)
+	if provenance == nil {
 		return nil
 	}
 	link, linked := metadata.CanaryLinkByOperationID(operation.RegistryOperationID)
@@ -1052,8 +1077,20 @@ func publicHTMLLegacyGatusRow(operation OperationReadModelRow, metadata Registry
 		StatusLabel: legacy.ObservationLabel, StatusClass: legacy.StatusClass,
 		IncidentLabel: legacy.IncidentLabel, CauseLabel: legacy.CauseLabel,
 		NextActionLabel: legacy.NextActionLabel, LastReceived: legacy.LastObservation,
-		History: legacy.History, DiagnosticRegistryRevision: document.DiagnosticRegistryRevision,
-		ObservationCatalogRevision: document.ObservationCatalogRevision, CatalogSHA256: metadata.Catalog.SHA256,
+		History: legacy.History, DiagnosticRegistryRevision: provenance.DiagnosticRegistryRevision,
+		ObservationCatalogRevision: provenance.ObservationCatalogRevision, CatalogSHA256: provenance.CatalogSHA256,
+	}
+}
+
+func publicHTMLLegacyProvenanceValue(metadata RegistryAPIMetadata, document PublicStatusDocument, statusAvailable bool) *publicHTMLLegacyProvenance {
+	if !statusAvailable || !commitPattern.MatchString(document.DiagnosticRegistryRevision) || !commitPattern.MatchString(document.ObservationCatalogRevision) || document.ObservationCatalogRevision != metadata.healthCatalogRevision || !commitPattern.MatchString(metadata.RegistryRevision) || !sha256Pattern.MatchString(metadata.Catalog.SHA256) {
+		return nil
+	}
+	return &publicHTMLLegacyProvenance{
+		DiagnosticRegistryRevision: document.DiagnosticRegistryRevision,
+		ObservationCatalogRevision: document.ObservationCatalogRevision,
+		MetadataRegistryRevision:   metadata.RegistryRevision,
+		CatalogSHA256:              metadata.Catalog.SHA256,
 	}
 }
 
@@ -1587,12 +1624,12 @@ func buildPublicHTMLAPIDetail(metadata RegistryAPIMetadata, api RegistryAPIMetad
 func buildPublicHTMLDependencies(metadata RegistryAPIMetadata, document PublicStatusDocument, statusAvailable bool, now time.Time) publicHTMLPage {
 	page := publicHTMLPage{
 		PageTitle:    "검사 결과",
-		Intro:        "검사 연결된 API 기능의 최근 결과와 이력을 확인합니다.",
+		Intro:        "현재 검사 연결된 일부 API 기능의 기존 검사 수신 결과와 이력을 확인합니다.",
 		Dependencies: true, SnapshotUnavailable: !statusAvailable,
 		ConfiguredOperations: len(metadata.canaryDisplays),
 		MetadataRevision:     metadata.RegistryRevision, ObservationRevision: metadata.healthCatalogRevision,
 	}
-	page.ConfigNote = fmt.Sprintf("현재 검사 연결은 %s개 API 기능뿐입니다. 나머지 %s개 기능은 아직 검사 연결 전입니다.", formatPublicCount(metadata.Counts.MatchedHealthCanaries), formatPublicCount(max(0, metadata.Counts.APIOperations-metadata.Counts.MatchedHealthCanaries)))
+	page.ConfigNote = fmt.Sprintf("기존 Gatus 검사 설정은 %s개 API 기능입니다. 나머지 %s개 기능은 전체 Registry 검사 연결이 완료되지 않았습니다. 아래 시각은 Gatus 접수 시각이며 API 요청 시각과 다를 수 있습니다.", formatPublicCount(metadata.Counts.MatchedHealthCanaries), formatPublicCount(max(0, metadata.Counts.APIOperations-metadata.Counts.MatchedHealthCanaries)))
 	statusesByHealthID := make(map[string]PublicOperationStatus, len(document.Operations))
 	for _, status := range document.Operations {
 		statusesByHealthID[status.OperationID] = status

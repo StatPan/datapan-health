@@ -639,7 +639,7 @@ func TestRegistryAPIMetadataHTMLShowsOnlyPerOperationObservationState(t *testing
 		wants []string
 	}{
 		{path: "/datapan/", wants: []string{"4 / 10개 연결 기능", "검사 연결 전인 API 기능", "API 설명 출처 revision"}},
-		{path: "/datapan/dependencies/", wants: []string{"최근 검사 결과 통과", "최근 검사 결과 실패 · 연속 기준 확인 중", "연속 실패 기준 충족", "최근 검사 결과가 오래됨", "검사 연결됨 · 결과 기록 없음", "검사 결과 통과 후 연속 회복 확인 중"}},
+		{path: "/datapan/dependencies/", wants: []string{"최근 검사 결과 통과", "최근 검사 결과 실패 · 연속 기준 확인 중", "연속 실패 기준 충족", "최근 검사 결과가 오래됨", "검사 연결됨 · 결과 기록 없음", "검사 결과 통과 후 연속 회복 확인 중", "기존 검사 수신 기록 출처", "Registry 저장본 revision", "검사 카탈로그 SHA-256"}},
 	} {
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, test.path, nil))
