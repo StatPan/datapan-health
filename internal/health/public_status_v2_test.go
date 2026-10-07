@@ -388,6 +388,10 @@ func TestPublicHTMLReadModelOperationStatusAndDiagnosisAreAllowlisted(t *testing
 	if semanticRow.StatusClass != "badge-warn" || semanticRow.ObservationLabel != "응답 수신 · 이용 가능성 판정 근거 부족" || semanticRow.ResultLabel != "HTTP 204 응답 · 이용 가능성 판정 근거 부족" || semanticRow.DeliveryLabel != "전달 대상 아님 · 응답 의미 미판정" {
 		t.Fatalf("observation-only response was presented as usable or sent to Gatus: %#v", semanticRow)
 	}
+	partialDetail, partialNext := publicPartialOperationDiagnosis(semanticUnknown)
+	if !strings.Contains(partialDetail, "HTTP 204 응답은 받았지만") || !strings.Contains(partialNext, "공식 API 문서") {
+		t.Fatalf("partial-source row omitted the observation-only limitation or next action: detail=%q next=%q", partialDetail, partialNext)
+	}
 
 	httpFailure := base
 	httpFailure.ObservationState, httpFailure.ResultState, httpFailure.ResultCategory = "current_fail", "unhealthy", "response_http_failure"
@@ -396,6 +400,10 @@ func TestPublicHTMLReadModelOperationStatusAndDiagnosisAreAllowlisted(t *testing
 	httpFailureRow := publicHTMLReadModelOperation(httpFailure, now)
 	if httpFailureRow.StatusClass != "badge-bad" || httpFailureRow.CauseLabel != "HTTP 응답 오류 · 상태 코드 503" || strings.Contains(httpFailureRow.NextActionLabel, "provider_failure") {
 		t.Fatalf("HTTP response failure was broadened into an unsupported cause: %#v", httpFailureRow)
+	}
+	partialFailureDetail, partialFailureNext := publicPartialOperationDiagnosis(httpFailure)
+	if !strings.Contains(partialFailureDetail, "HTTP 503 응답 오류") || !strings.Contains(partialFailureDetail, "원인은 이 기록만으로 확정할 수 없습니다") || !strings.Contains(partialFailureNext, "API 사용 조건") {
+		t.Fatalf("partial-source HTTP error overstated its cause or omitted the next action: detail=%q next=%q", partialFailureDetail, partialFailureNext)
 	}
 
 	deferred := base
@@ -407,6 +415,10 @@ func TestPublicHTMLReadModelOperationStatusAndDiagnosisAreAllowlisted(t *testing
 	deferredRow := publicHTMLReadModelOperation(deferred, now)
 	if deferredRow.StatusClass == "badge-good" || !strings.Contains(deferredRow.AttemptLabel, "검사 요청 전 보류") || !strings.Contains(deferredRow.AttemptLabel, "결과 저장 공간") {
 		t.Fatalf("pre-dispatch deferral was presented as a request or healthy result: %#v", deferredRow)
+	}
+	partialAttemptLabel := publicOperationAttemptLabel(deferred.AttemptState, deferred.RequestStarted, deferred.ExecutionBlockReason)
+	if !strings.Contains(partialAttemptLabel, "요청 전 보류") || !strings.Contains(partialAttemptLabel, "결과 저장 공간") {
+		t.Fatalf("partial-source row did not preserve the safe pre-dispatch reason: %q", partialAttemptLabel)
 	}
 
 	failed := base

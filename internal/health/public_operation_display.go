@@ -10,7 +10,7 @@ import (
 
 const (
 	publicOperationDisplaySchemaVersion  = "datapan.health-operator-operation-display.v1"
-	acceptedPublicOperationDisplaySHA256 = "15e02c34feb50c65bb59a354e683e7c63c42eee8367a932c4aa4cf7840d87a2e"
+	acceptedPublicOperationDisplaySHA256 = "60bc09fb4d2b04c798d17a61493b01e670563b6d38f9ad44fc1c5ac23b83114a"
 	publicOperationDisplayMaxBytes       = 16 * 1024
 )
 
@@ -25,18 +25,21 @@ type PublicOperationDisplayMetadata struct {
 }
 
 type operatorOperationDisplayDocument struct {
-	SchemaVersion       string                          `json:"schema_version"`
-	Authority           string                          `json:"authority"`
-	RegistryRevision    string                          `json:"registry_revision"`
-	RegistryManifestSHA string                          `json:"registry_manifest_sha256"`
-	RegistrySchemaSHA   string                          `json:"registry_schema_sha256"`
-	Entries             []operatorOperationDisplayEntry `json:"entries"`
+	SchemaVersion    string                             `json:"schema_version"`
+	Authority        string                             `json:"authority"`
+	DocumentEvidence operatorDocumentEvidenceProvenance `json:"document_evidence"`
+	Entries          []operatorOperationDisplayEntry    `json:"entries"`
+}
+
+type operatorDocumentEvidenceProvenance struct {
+	RegistryRevision    string `json:"registry_revision"`
+	RegistryManifestSHA string `json:"registry_manifest_sha256"`
+	RegistrySchemaSHA   string `json:"registry_schema_sha256"`
 }
 
 type operatorOperationDisplayEntry struct {
 	SourceID               string                         `json:"source_id"`
 	RegistryOperationID    string                         `json:"registry_operation_id"`
-	IdentitySource         operatorDisplaySource          `json:"identity_source"`
 	OperatorLabelKO        string                         `json:"operator_label_ko"`
 	OperatorLabelAuthority string                         `json:"operator_label_authority"`
 	OfficialAPITitle       operatorDisplayField           `json:"official_api_title"`
@@ -49,12 +52,6 @@ type operatorOperationDisplayEntry struct {
 type operatorDisplayField struct {
 	Value string `json:"value"`
 	State string `json:"state"`
-}
-
-type operatorDisplaySource struct {
-	Path      string `json:"path"`
-	SHA256    string `json:"sha256"`
-	SizeBytes int64  `json:"size_bytes"`
 }
 
 type operatorDisplayDocumentSource struct {
@@ -108,19 +105,18 @@ func LoadPublicOperationDisplayMetadata(path, registryEvidenceRoot string) (Publ
 
 func validOperatorOperationDisplayDocument(document operatorOperationDisplayDocument) bool {
 	if document.SchemaVersion != publicOperationDisplaySchemaVersion || document.Authority != "operator_interpretation" ||
-		document.RegistryRevision != registry760Revision ||
-		document.RegistryManifestSHA != registry760ManifestSHA256 ||
-		document.RegistrySchemaSHA != registry760EvidenceSchemaSHA256 || len(document.Entries) != 4 {
+		document.DocumentEvidence.RegistryRevision != registry760Revision ||
+		document.DocumentEvidence.RegistryManifestSHA != registry760ManifestSHA256 ||
+		document.DocumentEvidence.RegistrySchemaSHA != registry760EvidenceSchemaSHA256 || len(document.Entries) != 4 {
 		return false
 	}
 	expected := []struct {
-		sourceID, operationID, identityPath, identitySHA, label string
-		identityBytes                                           int64
+		sourceID, operationID, label string
 	}{
-		{"ecos", "ecos-statistic-search-102y004", "reports/ecos/operation-denominator.json", "d8619c61c2a718547ad5867b0125b74c21cf46d8cc3b74f369062e087387c62b", "ECOS 통계 검색", 961},
-		{"kosis", "kosis-statistics-data-dt-1b41", "reports/kosis/operation-denominator.json", "03c57ba3715b713d3ecac7be0cd5147d5d4f19187a79fb810dfce8a031255e9b", "KOSIS 통계 자료", 1712},
-		{"open_assembly", "open-assembly-opensrvapi-list", "reports/open-assembly/operation-denominator.json", "d14aab4e423b66f5bb7539c87d1ec34634ac85a06d10c2dcbc9369dba4df7e52", "국회 Open API 목록", 930},
-		{"seoul_open_data", "seoul-open-data-subway-station-list", "reports/seoul-open-data/operation-denominator.json", "7c44a8357903f223df195e6e48165b5fe058e4372bdcfe7c3022af80b5266b54", "서울 지하철역 목록", 970},
+		{"ecos", "ecos-statistic-search-102y004", "ECOS 통계 검색"},
+		{"kosis", "kosis-statistics-data-dt-1b41", "KOSIS 통계 자료"},
+		{"open_assembly", "open-assembly-opensrvapi-list", "국회 Open API 목록"},
+		{"seoul_open_data", "seoul-open-data-subway-station-list", "서울 지하철역 목록"},
 	}
 	seen := make(map[string]struct{}, len(expected))
 	for index, want := range expected {
@@ -131,7 +127,6 @@ func validOperatorOperationDisplayDocument(document operatorOperationDisplayDocu
 		}
 		seen[identity] = struct{}{}
 		if entry.SourceID != want.sourceID || entry.RegistryOperationID != want.operationID ||
-			entry.IdentitySource.Path != want.identityPath || entry.IdentitySource.SHA256 != want.identitySHA || entry.IdentitySource.SizeBytes != want.identityBytes ||
 			entry.OperatorLabelKO != want.label || entry.OperatorLabelAuthority != "operator_interpretation" ||
 			safePublicOperationReadText(entry.OperatorLabelKO, 128, 64) == "" {
 			return false

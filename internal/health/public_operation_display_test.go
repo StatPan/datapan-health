@@ -31,7 +31,7 @@ func TestPublicOperationDisplayMetadataIsPinnedAndScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"https://", "http://", "endpoint_template", "apiKey", "service_key"} {
+	for _, forbidden := range []string{"https://", "http://", "endpoint_template", "apiKey", "service_key", "identity_source", "operation-denominator.json"} {
 		if strings.Contains(string(data), forbidden) {
 			t.Fatalf("operator display artifact contains private/request detail %q", forbidden)
 		}

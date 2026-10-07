@@ -202,6 +202,9 @@ const publicStatusHTMLTemplate = `<!doctype html>
         {{range .PartialScopes}}<li class="status-item"><strong>{{.ProviderLabel}}</strong> · {{.OperationName}}{{if .NameAttribution}} <span class="muted">({{.NameAttribution}})</span>{{end}}
           <p><strong>제공처 전체 목록:</strong> 부분 등록 · <span class="badge badge-unknown">미확인</span></p>
           <p><strong>검사 결과:</strong> <span class="badge {{.StatusClass}}">{{.StatusLabel}}</span></p>
+          {{if .ObservationDetail}}<p><strong>결과 설명:</strong> {{.ObservationDetail}}</p>{{end}}
+          {{if .AttemptLabel}}<p><strong>검사 진행:</strong> {{.AttemptLabel}}</p>{{end}}
+          {{if .NextActionLabel}}<p><strong>다음 확인:</strong> {{.NextActionLabel}}</p>{{end}}
           <p><strong>실행 조건:</strong> {{.AvailabilityLabel}}</p>
           <p><strong>API 이름:</strong> {{.Title}}</p>
           {{if .GuideTitle}}<p><strong>근거 문서:</strong> {{.GuideTitle}}</p>{{end}}
@@ -532,6 +535,9 @@ type publicHTMLPartialScope struct {
 	Organization       string
 	Purpose            string
 	ServiceStatusLabel string
+	ObservationDetail  string
+	AttemptLabel       string
+	NextActionLabel    string
 	MetadataAction     string
 	AvailabilityLabel  string
 	StatusLabel        string
@@ -926,6 +932,11 @@ func attachPublicPartialScopes(page *publicHTMLPage, source PublicRegistryOperat
 			}
 		}
 		statusLabel, statusClass := publicPartialOperationObservation(operation)
+		observationDetail, nextActionLabel := publicPartialOperationDiagnosis(operation)
+		attemptLabel := ""
+		if operation.AttemptState != "none" {
+			attemptLabel = publicOperationAttemptLabel(operation.AttemptState, operation.RequestStarted, operation.ExecutionBlockReason)
+		}
 		organization := publicPartialScopeField(operation.Organization, operation.OrganizationState, "기관 정보", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes)
 		rows = append(rows, publicHTMLPartialScope{
 			ProviderLabel:      expected.providerLabel,
@@ -936,6 +947,9 @@ func attachPublicPartialScopes(page *publicHTMLPage, source PublicRegistryOperat
 			Organization:       organization,
 			Purpose:            purpose,
 			ServiceStatusLabel: serviceStatusLabel,
+			ObservationDetail:  observationDetail,
+			AttemptLabel:       attemptLabel,
+			NextActionLabel:    nextActionLabel,
 			MetadataAction:     purposeAction,
 			AvailabilityLabel:  publicPartialOperationAvailability(operation),
 			StatusLabel:        statusLabel, StatusClass: statusClass,
@@ -997,6 +1011,26 @@ func publicPartialOperationObservation(operation OperationReadModelRow) (label, 
 		return "검증된 검사 결과 없음", "badge-unknown"
 	default:
 		return "검사 상태 확인 불가", "badge-warn"
+	}
+}
+
+func publicPartialOperationDiagnosis(operation OperationReadModelRow) (detail, nextAction string) {
+	switch operation.ObservationState {
+	case "current_fail":
+		if operation.ResultCategory == "response_http_failure" && operation.ProviderHTTPStatus != nil {
+			return fmt.Sprintf("HTTP %d 응답 오류입니다. 원인은 이 기록만으로 확정할 수 없습니다.", *operation.ProviderHTTPStatus), "제공처의 최신 안내와 API 사용 조건을 확인하세요."
+		}
+		return publicOperationCategoryDiagnosis(operation.ResultCategory)
+	case "current_indeterminate":
+		if operation.ResultCategory == "response_semantics_unestablished" {
+			if operation.ProviderHTTPStatus != nil && *operation.ProviderHTTPStatus >= 200 && *operation.ProviderHTTPStatus < 300 {
+				return fmt.Sprintf("HTTP %d 응답은 받았지만 기능 수행 여부를 판정할 기준이 등록되지 않았습니다.", *operation.ProviderHTTPStatus), "공식 API 문서의 성공 응답 기준을 확인해야 합니다."
+			}
+			return "응답 수신은 확인했지만 기능 수행 여부는 판정하지 못했습니다.", "공식 API 문서의 성공 응답 기준을 확인해야 합니다."
+		}
+		return publicOperationCategoryDiagnosis(operation.ResultCategory)
+	default:
+		return "", ""
 	}
 }
 
