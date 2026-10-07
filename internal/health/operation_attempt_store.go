@@ -2,6 +2,7 @@ package health
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -38,6 +39,12 @@ var (
 	operationGatusKeyPattern       = regexp.MustCompile(`^[a-z0-9-]+_[a-z0-9-]+$`)
 )
 
+const (
+	operationAttemptReasonQuotaCapacity    = "quota_capacity"
+	operationAttemptReasonHistoryCapacity  = "history_capacity"
+	operationAttemptReasonChildUnavailable = "child_unavailable"
+)
+
 // OperationAttemptBinding is the immutable Registry identity chain for one
 // selected observation. It contains no request target or credential value.
 type OperationAttemptBinding struct {
@@ -55,12 +62,16 @@ type OperationAttemptBinding struct {
 // attempt ledger. Raw receipt text, provider URLs, credentials, and response
 // bodies never enter this record.
 type OperationObservationResult struct {
-	State      string    `json:"state"`
-	Category   string    `json:"category"`
-	ObservedAt time.Time `json:"observed_at"`
-	ReceivedAt time.Time `json:"received_at"`
-	ReceiptSHA string    `json:"receipt_sha256"`
-	LatencyMS  int64     `json:"latency_ms"`
+	State                  string    `json:"state"`
+	Category               string    `json:"category"`
+	ObservedAt             time.Time `json:"observed_at"`
+	ReceivedAt             time.Time `json:"received_at"`
+	ReceiptSHA             string    `json:"receipt_sha256"`
+	LatencyMS              int64     `json:"latency_ms"`
+	HTTPStatus             int       `json:"http_status,omitempty"`
+	HistoryRecordID        string    `json:"history_record_id,omitempty"`
+	HistoryRecordSHA256    string    `json:"history_record_sha256,omitempty"`
+	validatedHistoryRecord bool      `json:"-"`
 }
 
 // OperationAttemptClaim is a fenced authorization to begin a child invocation.
@@ -378,7 +389,7 @@ func (store *OperationAttemptStore) BeginAttempt(binding OperationAttemptBinding
 		}
 		if len(state.Attempts) >= maxOperationAttemptHistory {
 			oldest := state.Attempts[0]
-			if oldest.State == "unknown" || oldest.State == "observed" && oldest.DeliveryState != "readback_verified" {
+			if oldest.State == "unknown" || oldest.State == "observed" && oldest.DeliveryState != "readback_verified" && oldest.DeliveryState != "not_applicable" {
 				return ErrOperationAttemptCapacity
 			}
 			state.Attempts = append([]OperationStoredAttempt(nil), state.Attempts[len(state.Attempts)-maxOperationAttemptHistory+1:]...)
@@ -409,6 +420,9 @@ func (store *OperationAttemptStore) CompleteAttempt(claim OperationAttemptClaim,
 	if store == nil || !validOperationAttemptClaim(claim) || !validOperationObservationResult(result) || now.IsZero() {
 		return ErrOperationAttemptUnavailable
 	}
+	if result.Category == "response_semantics_unestablished" && (!result.validatedHistoryRecord || result.HistoryRecordID == "" || !sha256Pattern.MatchString(result.HistoryRecordSHA256)) {
+		return ErrOperationAttemptUnavailable
+	}
 	now = now.UTC()
 	return store.transitionClaim(claim, now, func(state *operationAttemptState, attempt *OperationStoredAttempt) error {
 		if !now.Before(attempt.LeaseExpiresAt) {
@@ -416,14 +430,18 @@ func (store *OperationAttemptStore) CompleteAttempt(claim OperationAttemptClaim,
 			attempt.FinishedAt = now
 			return ErrOperationAttemptFenced
 		}
-		if result.ObservedAt.Before(attempt.StartedAt) || result.ObservedAt.After(now) {
+		if result.ObservedAt.Before(attempt.StartedAt) || result.ObservedAt.After(now) || !result.ReceivedAt.IsZero() && (result.ReceivedAt.Before(result.ObservedAt) || result.ReceivedAt.After(now)) {
 			attempt.State = "failed"
 			attempt.FinishedAt = now
 			return ErrOperationAttemptUnavailable
 		}
 		copy := result
 		copy.ObservedAt = copy.ObservedAt.UTC()
-		copy.ReceivedAt = now
+		if copy.ReceivedAt.IsZero() {
+			copy.ReceivedAt = now
+		} else {
+			copy.ReceivedAt = copy.ReceivedAt.UTC()
+		}
 		attempt.State = "observed"
 		attempt.ReceiptValidated = true
 		attempt.ReceiptSHA256 = copy.ReceiptSHA
@@ -432,12 +450,77 @@ func (store *OperationAttemptStore) CompleteAttempt(claim OperationAttemptClaim,
 		attempt.FinishedAt = now
 		attempt.Result = &copy
 		attempt.DeliveryState = "not_ready"
+		if copy.State == "indeterminate" && copy.Category == "response_semantics_unestablished" {
+			attempt.DeliveryState = "not_applicable"
+		}
 		state.EverRequestStarted = true
 		if state.CurrentPlanSHA256 == operationAttemptPlanBindingSHA256(attempt.Binding) {
 			state.CurrentPlanEverRequestStarted = true
 		}
 		return nil
 	})
+}
+
+// CompleteAttemptFromValidatedHistory is the only path that can produce the
+// observation-only terminal state. It revalidates the sealed, pinned receipt
+// and requires the exact archive append reference before committing it to the
+// attempt ledger. A caller-supplied category string cannot bypass Gatus.
+func (store *OperationAttemptStore) CompleteAttemptFromValidatedHistory(ctx context.Context, claim OperationAttemptClaim, candidate OperationHistoryRecord, ref OperationHistoryRecordRef, validator OperationHistoryRecordValidator, now time.Time) error {
+	if store == nil || ctx == nil || ctx.Err() != nil || !validOperationAttemptClaim(claim) || validator == nil || now.IsZero() || ref.RecordID == "" || len(ref.RecordID) > 256 || ref.AppendedAt.IsZero() || ref.AppendedAt.After(now) {
+		return ErrOperationAttemptUnavailable
+	}
+	sealed, err := validator.ValidateStoredOperationHistoryRecord(ctx, candidate)
+	if err != nil || sealed.Validate() != nil || !sealed.Identity.MatchesOperationAttempt(claim) || !sealed.AttemptStartedAt.Equal(claim.StartedAt.UTC()) || sealed.ValidatedAt.After(ref.AppendedAt) {
+		return ErrOperationAttemptUnavailable
+	}
+	contentSHA, err := sealed.ContentSHA256()
+	if err != nil || ref.SHA256 != contentSHA {
+		return ErrOperationAttemptUnavailable
+	}
+	decoder := json.NewDecoder(bytes.NewReader(sealed.ReceiptBytes))
+	decoder.DisallowUnknownFields()
+	var receipt operationPlanProbeReceipt
+	if decoder.Decode(&receipt) != nil || ensureEOF(decoder) != nil || !receipt.Execution.RequestStarted || !receipt.Observation.ResponseObserved {
+		return ErrOperationAttemptUnavailable
+	}
+	expected := operationPlanProbeExpectationFromReceipt(receipt, claim.StartedAt)
+	probeResult, err := ValidateOperationPlanProbeReceipt(sealed.ReceiptBytes, expected, claim.StartedAt, sealed.ValidatedAt, operationPlanProbeExitCode(receipt.Observation.Outcome))
+	if err != nil || probeResult.ReceiptSHA256 != sealed.ReceiptSHA256 {
+		return ErrOperationAttemptUnavailable
+	}
+	state, category := operationObservationClassification(probeResult)
+	if state == "" || category == "" {
+		return ErrOperationAttemptUnavailable
+	}
+	result := OperationObservationResult{
+		State: state, Category: category, ObservedAt: probeResult.ObservedAt, ReceivedAt: sealed.ValidatedAt,
+		ReceiptSHA: probeResult.ReceiptSHA256, LatencyMS: probeResult.Latency.Milliseconds(), HTTPStatus: probeResult.HTTPStatus,
+		HistoryRecordID: ref.RecordID, HistoryRecordSHA256: ref.SHA256, validatedHistoryRecord: true,
+	}
+	return store.CompleteAttempt(claim, result, now)
+}
+
+func operationObservationClassification(result OperationPlanProbeResult) (string, string) {
+	switch result.Outcome {
+	case "healthy":
+		return "healthy", "healthy"
+	case "unhealthy":
+		if result.ReasonCode == "response_http_failure" {
+			return "unhealthy", "response_http_failure"
+		}
+		return "unhealthy", "provider_failure"
+	case "indeterminate":
+		if result.ReasonCode == "response_semantics_unestablished" {
+			return "indeterminate", "response_semantics_unestablished"
+		}
+		return "indeterminate", "indeterminate"
+	default:
+		return "", ""
+	}
+}
+
+func (identity OperationHistoryIdentity) MatchesOperationAttempt(claim OperationAttemptClaim) bool {
+	return identity.SourceID == claim.Binding.SourceID && identity.OperationID == claim.Binding.OperationID && identity.AttemptID == claim.AttemptID && identity.Generation == claim.Generation && identity.RegistryRevision == claim.Binding.RegistryRevision && identity.ReleaseManifestSHA256 == claim.Binding.ReleaseManifestSHA && identity.IndexSHA256 == claim.Binding.IndexSHA && identity.ShardSHA256 == claim.Binding.ShardSHA
 }
 
 // RecordRequestStartedWithoutObservation records a validated child receipt
@@ -491,6 +574,30 @@ func (store *OperationAttemptStore) RecordBlockedAttempt(claim OperationAttemptC
 	})
 }
 
+// RecordPreDispatchDeferred records a Health-side capacity hold after a
+// durable claim but before invoking the CLI child. It carries no receipt and
+// proves only that this Health worker did not start the child request.
+func (store *OperationAttemptStore) RecordPreDispatchDeferred(claim OperationAttemptClaim, blockReason string, now time.Time) error {
+	if store == nil || !validOperationAttemptClaim(claim) || !validOperationAttemptDeferredReason(blockReason) || now.IsZero() {
+		return ErrOperationAttemptUnavailable
+	}
+	now = now.UTC()
+	return store.transitionClaim(claim, now, func(_ *operationAttemptState, attempt *OperationStoredAttempt) error {
+		if !now.Before(attempt.LeaseExpiresAt) {
+			attempt.State = "unknown"
+			attempt.FinishedAt = now
+			return ErrOperationAttemptFenced
+		}
+		requestStarted := false
+		attempt.State = "deferred"
+		attempt.ReceiptValidated = false
+		attempt.RequestStarted = &requestStarted
+		attempt.BlockReason = blockReason
+		attempt.FinishedAt = now
+		return nil
+	})
+}
+
 func (store *OperationAttemptStore) FailAttempt(claim OperationAttemptClaim, now time.Time) error {
 	if store == nil || !validOperationAttemptClaim(claim) || now.IsZero() {
 		return ErrOperationAttemptUnavailable
@@ -505,11 +612,15 @@ func (store *OperationAttemptStore) FailAttempt(claim OperationAttemptClaim, now
 
 func validOperationAttemptBlockReason(value string) bool {
 	switch value {
-	case "credential_unavailable", "credential_mismatch", "plan_not_admitted", "unsupported_contract", "local_deadline", "child_validation_failed":
+	case "credential_unavailable", "credential_mismatch", "plan_not_admitted", "unsupported_contract", "local_deadline", "child_validation_failed", operationAttemptReasonQuotaCapacity, operationAttemptReasonHistoryCapacity, operationAttemptReasonChildUnavailable:
 		return true
 	default:
 		return false
 	}
+}
+
+func validOperationAttemptDeferredReason(value string) bool {
+	return value == operationAttemptReasonQuotaCapacity || value == operationAttemptReasonHistoryCapacity || value == operationAttemptReasonChildUnavailable
 }
 
 // ClaimDelivery durably marks the summary pending before the HTTP request.
@@ -526,9 +637,25 @@ func (store *OperationAttemptStore) ClaimDelivery(sourceID, operationID, attempt
 		if err != nil || !found {
 			return ErrOperationAttemptUnavailable
 		}
-		attempt := findOperationAttempt(&state, attemptID, generation)
-		if attempt == nil || attempt.State != "observed" || attempt.Result == nil || now.Before(attempt.Result.ReceivedAt) || attempt.DeliveryState == "acknowledged" || attempt.DeliveryState == "readback_verified" {
+		attemptIndex := -1
+		for index := range state.Attempts {
+			if state.Attempts[index].AttemptID == attemptID && state.Attempts[index].Generation == generation {
+				attemptIndex = index
+				break
+			}
+		}
+		if attemptIndex < 0 {
 			return ErrOperationAttemptFenced
+		}
+		attempt := &state.Attempts[attemptIndex]
+		if attempt == nil || attempt.State != "observed" || attempt.Result == nil || now.Before(attempt.Result.ReceivedAt) || attempt.DeliveryState == "acknowledged" || attempt.DeliveryState == "readback_verified" || attempt.DeliveryState == "not_applicable" {
+			return ErrOperationAttemptFenced
+		}
+		for index := 0; index < attemptIndex; index++ {
+			previous := state.Attempts[index]
+			if previous.State == "observed" && previous.Result != nil && previous.DeliveryState != "readback_verified" && previous.DeliveryState != "not_applicable" {
+				return ErrOperationAttemptDelivery
+			}
 		}
 		if attempt.DeliveryState == "pending" && now.Before(attempt.DeliveryStartedAt.Add(lease)) {
 			return ErrOperationAttemptHeld
@@ -690,6 +817,9 @@ func operationReadModelAttemptFromState(state operationAttemptState) (OperationR
 		EverRequestStarted: state.CurrentPlanSHA256 == operationAttemptPlanBindingSHA256(latest.Binding) && state.CurrentPlanEverRequestStarted,
 		GatusDeliveryState: "not_ready", UpdatedAt: latest.StartedAt,
 	}
+	if latest.State == "deferred" {
+		projection.ExecutionBlockReason = latest.BlockReason
+	}
 	projection.UpdatedAt = laterOperationAttemptTime(projection.UpdatedAt, latest.FinishedAt)
 	for index := len(state.Attempts) - 1; index >= 0; index-- {
 		attempt := state.Attempts[index]
@@ -700,6 +830,7 @@ func operationReadModelAttemptFromState(state operationAttemptState) (OperationR
 		projection.ObservationPlanBinding = &observationBinding
 		projection.ResultState = attempt.Result.State
 		projection.ResultCategory = attempt.Result.Category
+		projection.HTTPStatus = attempt.Result.HTTPStatus
 		projection.ObservationAttemptState = "observed"
 		projection.ProviderObservedAt = attempt.Result.ObservedAt
 		projection.HealthReceivedAt = attempt.Result.ReceivedAt
@@ -709,6 +840,8 @@ func operationReadModelAttemptFromState(state operationAttemptState) (OperationR
 		switch attempt.DeliveryState {
 		case "not_ready", "pending":
 			projection.GatusDeliveryState = "pending"
+		case "not_applicable":
+			projection.GatusDeliveryState = "not_applicable"
 		case "acknowledged":
 			projection.GatusDeliveryState = "acknowledged"
 			projection.GatusAcknowledgedAt = attempt.DeliveryAckAt
@@ -885,8 +1018,20 @@ func validOperationDeliveryClaim(claim OperationDeliveryClaim) bool {
 
 func validOperationObservationResult(result OperationObservationResult) bool {
 	validState := result.State == "healthy" || result.State == "unhealthy" || result.State == "indeterminate"
-	validCategory := result.Category == "healthy" || result.Category == "transport_failure" || result.Category == "timeout" || result.Category == "rate_limited" || result.Category == "credential_missing" || result.Category == "credential_rejected" || result.Category == "parameter_blocked" || result.Category == "provider_failure" || result.Category == "semantic_failure" || result.Category == "schema_drift" || result.Category == "unsupported" || result.Category == "observer_failure" || result.Category == "indeterminate"
+	validCategory := result.Category == "healthy" || result.Category == "transport_failure" || result.Category == "timeout" || result.Category == "rate_limited" || result.Category == "credential_missing" || result.Category == "credential_rejected" || result.Category == "parameter_blocked" || result.Category == "provider_failure" || result.Category == "semantic_failure" || result.Category == "schema_drift" || result.Category == "unsupported" || result.Category == "observer_failure" || result.Category == "indeterminate" || result.Category == "response_semantics_unestablished" || result.Category == "response_http_failure"
 	if !validOperationReadModelResultPair(result.State, result.Category) {
+		return false
+	}
+	if result.HTTPStatus != 0 && (result.HTTPStatus < 100 || result.HTTPStatus > 599) {
+		return false
+	}
+	if result.Category == "response_semantics_unestablished" && (result.State != "indeterminate" || result.HTTPStatus < 200 || result.HTTPStatus >= 300) {
+		return false
+	}
+	if result.Category == "response_http_failure" && (result.State != "unhealthy" || result.HTTPStatus < 100 || result.HTTPStatus >= 200 && result.HTTPStatus < 300 || result.HTTPStatus > 599) {
+		return false
+	}
+	if result.Category == "response_semantics_unestablished" && (result.HistoryRecordID == "" || len(result.HistoryRecordID) > 256 || !sha256Pattern.MatchString(result.HistoryRecordSHA256)) {
 		return false
 	}
 	return validState && validCategory && !result.ObservedAt.IsZero() && (result.ReceivedAt.IsZero() || !result.ReceivedAt.Before(result.ObservedAt)) && sha256Pattern.MatchString(result.ReceiptSHA) && result.LatencyMS >= 0 && result.LatencyMS <= int64((365*24*time.Hour)/time.Millisecond)
@@ -929,6 +1074,10 @@ func validOperationAttemptState(state operationAttemptState, sourceID, operation
 			if attempt.Result != nil || !attempt.ReceiptValidated || attempt.RequestStarted == nil || *attempt.RequestStarted || !sha256Pattern.MatchString(attempt.ReceiptSHA256) || !validOperationAttemptBlockReason(attempt.BlockReason) {
 				return false
 			}
+		case "deferred":
+			if attempt.Result != nil || attempt.ReceiptValidated || attempt.RequestStarted == nil || *attempt.RequestStarted || attempt.ReceiptSHA256 != "" || !validOperationAttemptDeferredReason(attempt.BlockReason) || attempt.DeliveryState != "not_ready" {
+				return false
+			}
 		case "unknown":
 			if attempt.Result != nil || attempt.ReceiptValidated || attempt.RequestStarted != nil || attempt.ReceiptSHA256 != "" || attempt.BlockReason != "" || attempt.DeliveryState != "not_ready" {
 				return false
@@ -955,16 +1104,19 @@ func validOperationAttemptState(state operationAttemptState, sourceID, operation
 		if attempt.DeliveryState != "readback_verified" && (!attempt.GatusReceivedAt.IsZero() || attempt.GatusResultState != "") {
 			return false
 		}
+		if attempt.DeliveryState == "not_applicable" && (attempt.Result == nil || attempt.Result.State != "indeterminate" || attempt.Result.Category != "response_semantics_unestablished" || attempt.DeliveryAttempts != 0 || !attempt.DeliveryStartedAt.IsZero() || !attempt.DeliveryAckAt.IsZero()) {
+			return false
+		}
 	}
 	return latest.Generation <= state.Generation
 }
 
 func validOperationAttemptStateName(value string) bool {
-	return value == "claimed" || value == "request_started" || value == "observed" || value == "unknown" || value == "failed"
+	return value == "claimed" || value == "request_started" || value == "observed" || value == "unknown" || value == "failed" || value == "deferred"
 }
 
 func validOperationDeliveryState(value string) bool {
-	return value == "not_ready" || value == "pending" || value == "acknowledged" || value == "readback_verified"
+	return value == "not_ready" || value == "pending" || value == "acknowledged" || value == "readback_verified" || value == "not_applicable"
 }
 
 func findOperationAttempt(state *operationAttemptState, attemptID string, generation uint64) *OperationStoredAttempt {

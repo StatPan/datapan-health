@@ -10,7 +10,7 @@ import (
 )
 
 func TestHealthRegistryOperationsPageV2Schema(t *testing.T) {
-	const expectedSchemaSHA256 = "6d3b6b09d2d0bce78ffbd708fb15bed503afd37a51fc6405a297a670e5732c9f"
+	const expectedSchemaSHA256 = "da9efd880444ad46174269fc65f97415b7352e74ed9de093db294a5951e6e5ab"
 	if got := schemas.HealthRegistryOperationsPageV2SchemaSHA256(); got != expectedSchemaSHA256 {
 		t.Fatalf("pinned page schema digest = %s, want %s", got, expectedSchemaSHA256)
 	}
@@ -61,6 +61,39 @@ func TestHealthRegistryOperationsPageV2Schema(t *testing.T) {
 	raw, _ = json.Marshal(object)
 	if err := schemas.ValidateHealthRegistryOperationsPageV2(raw); err == nil {
 		t.Fatal("schema accepted a contradictory unhealthy/healthy result as a current pass")
+	}
+
+	operation = operations[0].(map[string]any)
+	observedAt := time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)
+	receivedAt := observedAt.Add(time.Second)
+	requestStarted := true
+	status := 204
+	page.Operations[0].AttemptState = "observed"
+	page.Operations[0].ObservationAttemptState = "observed"
+	page.Operations[0].RequestStarted = &requestStarted
+	page.Operations[0].Attempted = true
+	page.Operations[0].ObservationState = "current_indeterminate"
+	page.Operations[0].ResultState = "indeterminate"
+	page.Operations[0].ResultCategory = "response_semantics_unestablished"
+	page.Operations[0].ProviderHTTPStatus = &status
+	page.Operations[0].ProviderObservedAt = &observedAt
+	page.Operations[0].HealthReceivedAt = &receivedAt
+	page.Operations[0].GatusDeliveryState = "not_applicable"
+	raw, err = json.Marshal(page)
+	if err != nil || schemas.ValidateHealthRegistryOperationsPageV2(raw) != nil {
+		t.Fatalf("valid observation-only response was rejected: %s (%v)", raw, err)
+	}
+	page.Operations[0].GatusDeliveryState = "readback_verified"
+	raw, _ = json.Marshal(page)
+	if err := schemas.ValidateHealthRegistryOperationsPageV2(raw); err == nil {
+		t.Fatal("schema accepted an observation-only response as Gatus-delivered")
+	}
+	page.Operations[0].GatusDeliveryState = "not_applicable"
+	requestNotStarted := false
+	page.Operations[0].RequestStarted = &requestNotStarted
+	raw, _ = json.Marshal(page)
+	if err := schemas.ValidateHealthRegistryOperationsPageV2(raw); err == nil {
+		t.Fatal("schema accepted an observation-only response without a request start")
 	}
 }
 

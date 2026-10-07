@@ -160,14 +160,7 @@ type OperationPlanProbeConfig struct {
 // OperationPlanProbeRunner invokes the fixed CLI child ABI. No endpoint,
 // parameter, credential, query, or response value is accepted by this type.
 type OperationPlanProbeRunner struct {
-	config          OperationPlanProbeConfig
-	executableStamp operationPlanProbeBinaryStamp
-}
-
-type operationPlanProbeBinaryStamp struct {
-	size       int64
-	modifiedNS int64
-	inode      uint64
+	config OperationPlanProbeConfig
 }
 
 func NewOperationPlanProbeRunner(config OperationPlanProbeConfig) (*OperationPlanProbeRunner, error) {
@@ -204,29 +197,24 @@ func (runner *OperationPlanProbeRunner) VerifyExecutable() error {
 	if runner == nil || runner.config.ExecutablePath == "" {
 		return errOperationPlanProbeUnavailable
 	}
-	info, err := os.Lstat(runner.config.ExecutablePath)
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() < 1 || info.Size() > maxOperationPlanProbeBinaryBytes {
-		return errOperationPlanProbeUnavailable
-	}
-	file, err := os.Open(runner.config.ExecutablePath)
+	file, err := runner.openVerifiedExecutable()
 	if err != nil {
 		return errOperationPlanProbeUnavailable
 	}
-	defer file.Close()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, io.LimitReader(file, maxOperationPlanProbeBinaryBytes+1)); err != nil || hex.EncodeToString(hash.Sum(nil)) != runner.config.ExecutableSHA256 {
-		return errOperationPlanProbeUnavailable
-	}
-	runner.executableStamp = operationPlanProbeStamp(info)
-	return nil
+	return file.Close()
 }
 
 // Run executes one selected identity and rejects any receipt that does not
 // match the full immutable release/index/shard/source/operation chain.
 func (runner *OperationPlanProbeRunner) Run(ctx context.Context, expectation OperationPlanProbeExpectation, deadline time.Time) (OperationPlanProbeResult, int, error) {
-	if runner == nil || !validOperationProbeExpectation(expectation, runner.config) || deadline.IsZero() || !deadline.After(time.Now()) || deadline.Sub(time.Now()) > maxOperationPlanProbeDeadline || runner.executableUnchanged() != nil {
+	if runner == nil || !validOperationProbeExpectation(expectation, runner.config) || deadline.IsZero() || !deadline.After(time.Now()) || deadline.Sub(time.Now()) > maxOperationPlanProbeDeadline {
 		return OperationPlanProbeResult{}, -1, errOperationPlanProbeUnavailable
 	}
+	executable, err := runner.openVerifiedExecutable()
+	if err != nil {
+		return OperationPlanProbeResult{}, -1, errOperationPlanProbeUnavailable
+	}
+	defer executable.Close()
 	if err := checkOperationCredentialBindingFile(runner.config.CredentialBindings); err != nil {
 		return OperationPlanProbeResult{}, -1, err
 	}
@@ -258,7 +246,12 @@ func (runner *OperationPlanProbeRunner) Run(ctx context.Context, expectation Ope
 	}
 	processCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
-	cmd := exec.CommandContext(processCtx, runner.config.ExecutablePath, args...)
+	// Execute the exact opened inode that was hashed above. Passing the file as
+	// descriptor 3 prevents a pathname replacement between digest verification
+	// and exec from selecting different bytes. This Linux-only child route fails
+	// closed if procfs is unavailable; it never falls back to reopening by path.
+	cmd := exec.CommandContext(processCtx, "/proc/self/fd/3", args...)
+	cmd.ExtraFiles = []*os.File{executable}
 	cmd.Env = selectEnvironment(runner.config.EnvironmentNames)
 	stdout, stderr := &boundedOperationOutput{limit: maxOperationPlanProbeReceiptBytes}, &boundedOperationOutput{limit: maxOperationPlanProbeStderrBytes}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
@@ -293,24 +286,34 @@ func (runner *OperationPlanProbeRunner) Run(ctx context.Context, expectation Ope
 	return result, exitCode, nil
 }
 
-func (runner *OperationPlanProbeRunner) executableUnchanged() error {
-	if runner == nil || runner.executableStamp.size < 1 {
-		return errOperationPlanProbeUnavailable
+func (runner *OperationPlanProbeRunner) openVerifiedExecutable() (*os.File, error) {
+	if runner == nil || runner.config.ExecutablePath == "" {
+		return nil, errOperationPlanProbeUnavailable
 	}
-	info, err := os.Lstat(runner.config.ExecutablePath)
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || operationPlanProbeStamp(info) != runner.executableStamp {
-		return errOperationPlanProbeUnavailable
+	fd, err := syscall.Open(runner.config.ExecutablePath, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, errOperationPlanProbeUnavailable
 	}
-	return nil
-}
-
-func operationPlanProbeStamp(info os.FileInfo) operationPlanProbeBinaryStamp {
-	stamp := operationPlanProbeBinaryStamp{size: info.Size(), modifiedNS: info.ModTime().UnixNano()}
-	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-		stamp.inode = stat.Ino
-		stamp.modifiedNS = stat.Ctim.Sec*int64(time.Second) + stat.Ctim.Nsec
+	file := os.NewFile(uintptr(fd), "health-plan-cli")
+	if file == nil {
+		_ = syscall.Close(fd)
+		return nil, errOperationPlanProbeUnavailable
 	}
-	return stamp
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 || info.Size() < 1 || info.Size() > maxOperationPlanProbeBinaryBytes {
+		_ = file.Close()
+		return nil, errOperationPlanProbeUnavailable
+	}
+	hash := sha256.New()
+	if _, err := io.Copy(hash, io.LimitReader(file, maxOperationPlanProbeBinaryBytes+1)); err != nil || hex.EncodeToString(hash.Sum(nil)) != runner.config.ExecutableSHA256 {
+		_ = file.Close()
+		return nil, errOperationPlanProbeUnavailable
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		_ = file.Close()
+		return nil, errOperationPlanProbeUnavailable
+	}
+	return file, nil
 }
 
 func validOperationProbeExpectation(expected OperationPlanProbeExpectation, config OperationPlanProbeConfig) bool {

@@ -83,6 +83,111 @@ func TestOperationAttemptStorePersistsReceiptBeforeIndependentDeliveryRetry(t *t
 	}
 }
 
+func TestOperationAttemptDeliveryFenceSerializesGatusWithoutBlockingProviderAttempts(t *testing.T) {
+	store, err := OpenOperationAttemptStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := testOperationAttemptBinding()
+	started := time.Date(2026, 10, 7, 8, 0, 0, 0, time.UTC)
+	claim, err := store.BeginAttempt(binding, strings.Repeat("1", 64), started, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observedAt := started.Add(time.Second)
+	if err := store.CompleteAttempt(claim, OperationObservationResult{State: "healthy", Category: "healthy", ObservedAt: observedAt, ReceiptSHA: strings.Repeat("2", 64), LatencyMS: 100}, started.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	dueAt := started.Add(binding.ObservationPeriod)
+	next, err := store.BeginAttempt(binding, strings.Repeat("3", 64), dueAt, time.Minute)
+	if err != nil {
+		t.Fatalf("Gatus delivery backlog blocked an independently due provider attempt: %v", err)
+	}
+	if err := store.CompleteAttempt(next, OperationObservationResult{State: "unhealthy", Category: "provider_failure", ObservedAt: dueAt.Add(time.Second), ReceiptSHA: strings.Repeat("4", 64), LatencyMS: 80}, dueAt.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimDelivery(binding.SourceID, binding.OperationID, next.AttemptID, next.Generation, dueAt.Add(3*time.Second), time.Minute); !errors.Is(err, ErrOperationAttemptDelivery) {
+		t.Fatalf("newer Gatus receipt overtook an older pending receipt: %v", err)
+	}
+	delivery, err := store.ClaimDelivery(binding.SourceID, binding.OperationID, claim.AttemptID, claim.Generation, dueAt.Add(3*time.Second), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ackAt := dueAt.Add(4 * time.Second)
+	if err := store.AcknowledgeDelivery(delivery, ackAt); err != nil {
+		t.Fatal(err)
+	}
+	readbackAt := ackAt.Add(time.Second)
+	if err := store.RecordGatusReadback(binding.SourceID, binding.OperationID, claim.AttemptID, claim.Generation, readbackAt, "healthy"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimDelivery(binding.SourceID, binding.OperationID, next.AttemptID, next.Generation, readbackAt.Add(time.Second), time.Minute); err != nil {
+		t.Fatalf("next Gatus delivery was not released after ordered readback: %v", err)
+	}
+	if _, err := store.BeginAttempt(binding, strings.Repeat("5", 64), dueAt.Add(binding.ObservationPeriod-time.Second), time.Minute); !errors.Is(err, ErrOperationAttemptNotDue) {
+		t.Fatalf("readback bypassed the declared observation cadence: %v", err)
+	}
+	if _, err := store.BeginAttempt(binding, strings.Repeat("6", 64), dueAt.Add(binding.ObservationPeriod), time.Minute); err != nil {
+		t.Fatalf("next attempt was not released after readback and cadence: %v", err)
+	}
+}
+
+func TestOperationAttemptPreDispatchHoldHasNoReceiptOrRequestClaim(t *testing.T) {
+	store, err := OpenOperationAttemptStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Date(2026, 10, 7, 8, 30, 0, 0, time.UTC)
+	model := testOperationReadModelForStore(t, started)
+	binding := testOperationReadModelAttemptBinding(t, model, "synthetic_test", "synthetic-rest-list")
+	claim, err := store.BeginAttempt(binding, strings.Repeat("5", 64), started, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordPreDispatchDeferred(claim, operationAttemptReasonHistoryCapacity, started.Add(time.Second)); err != nil {
+		t.Fatalf("record bounded history-capacity hold: %v", err)
+	}
+	stored, ok, err := store.Latest(binding.SourceID, binding.OperationID)
+	if err != nil || !ok || stored.State != "deferred" || stored.ReceiptValidated || stored.ReceiptSHA256 != "" || stored.RequestStarted == nil || *stored.RequestStarted || stored.BlockReason != operationAttemptReasonHistoryCapacity {
+		t.Fatalf("pre-dispatch hold claimed a CLI receipt or provider request: %#v %v", stored, err)
+	}
+	if err := model.RefreshFromStore(store, started.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	page, err := model.PageOperations(OperationPageQuery{Query: "synthetic-rest-list", Limit: 10}, started.Add(2*time.Second))
+	if err != nil || len(page.Operations) != 1 {
+		t.Fatalf("read pre-dispatch hold: %#v %v", page, err)
+	}
+	row := page.Operations[0]
+	if row.AttemptState != "deferred" || row.ExecutionBlockReason != operationAttemptReasonHistoryCapacity || row.Attempted || row.RequestStarted == nil || *row.RequestStarted || row.ObservationAttemptState != "none" || page.IdentityCounts.Deferred != 1 {
+		t.Fatalf("capacity hold was presented as provider coverage: %#v %#v", row, page.IdentityCounts)
+	}
+}
+
+func TestOperationAttemptRejectsCallerSuppliedObservationOnlyWithoutArchivedReceipt(t *testing.T) {
+	store, err := OpenOperationAttemptStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := testOperationAttemptBinding()
+	started := time.Date(2026, 10, 7, 8, 45, 0, 0, time.UTC)
+	claim, err := store.BeginAttempt(binding, strings.Repeat("7", 64), started, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := OperationObservationResult{
+		State: "indeterminate", Category: "response_semantics_unestablished", ObservedAt: started.Add(time.Second),
+		ReceiptSHA: strings.Repeat("8", 64), LatencyMS: 20, HTTPStatus: 200,
+	}
+	if err := store.CompleteAttempt(claim, result, started.Add(2*time.Second)); !errors.Is(err, ErrOperationAttemptUnavailable) {
+		t.Fatalf("caller-supplied observation-only category bypassed the sealed history gate: %v", err)
+	}
+	latest, ok, err := store.Latest(binding.SourceID, binding.OperationID)
+	if err != nil || !ok || latest.State != "claimed" || latest.Result != nil || latest.DeliveryState != "not_ready" {
+		t.Fatalf("rejected observation-only result changed durable attempt state: %#v %v", latest, err)
+	}
+}
+
 func TestOperationAttemptSnapshotSeparatesClaimReceiptObservationAndReadback(t *testing.T) {
 	store, err := OpenOperationAttemptStore(t.TempDir())
 	if err != nil {
@@ -330,7 +435,7 @@ func TestOperationReadModelRefreshFailureKeepsLastAtomicSnapshotAndPagesAvoidDis
 	}
 }
 
-func TestOperationAttemptSnapshotKeepsPlanLineageAcrossRevisionChangeAndDelayedGatusReadback(t *testing.T) {
+func TestOperationAttemptDeliveryFenceKeepsPlanLineageAcrossRevisionChange(t *testing.T) {
 	rootA, planBindingA, _ := writeSyntheticOperationObservationPlanVersion(t, false, strings.Repeat("a", 40), 300)
 	planA, err := LoadPinnedOperationObservationPlan(rootA, planBindingA)
 	if err != nil {
@@ -374,26 +479,25 @@ func TestOperationAttemptSnapshotKeepsPlanLineageAcrossRevisionChangeAndDelayedG
 	claimBAt := started.Add(10 * time.Minute)
 	claimB, err := store.BeginAttempt(bindingB, strings.Repeat("b", 64), claimBAt, time.Minute)
 	if err != nil {
-		t.Fatalf("claim under changed plan B at its cadence: %v", err)
+		t.Fatalf("changed plan B claim was blocked by the Gatus outbox: %v", err)
 	}
-	// A's publisher was delayed until after B started. The readback remains
-	// bound to A and must neither invalidate the snapshot nor appear under B.
+	// The new plan may claim its due provider observation, but the older result
+	// remains bound to A until its ordered Gatus delivery is read back.
 	delivery, err := store.ClaimDelivery(bindingA.SourceID, bindingA.OperationID, claimA.AttemptID, claimA.Generation, claimBAt.Add(time.Minute), time.Minute)
 	if err != nil {
-		t.Fatalf("claim delayed plan A delivery: %v", err)
+		t.Fatalf("claim plan A delivery: %v", err)
 	}
 	acknowledgedAt := claimBAt.Add(2 * time.Minute)
 	if err := store.AcknowledgeDelivery(delivery, acknowledgedAt); err != nil {
-		t.Fatalf("acknowledge delayed plan A delivery: %v", err)
+		t.Fatalf("acknowledge plan A delivery: %v", err)
 	}
 	readbackAt := claimBAt.Add(3 * time.Minute)
 	if err := store.RecordGatusReadback(bindingA.SourceID, bindingA.OperationID, claimA.AttemptID, claimA.Generation, readbackAt, "healthy"); err != nil {
-		t.Fatalf("record delayed plan A readback: %v", err)
+		t.Fatalf("record plan A readback: %v", err)
 	}
-
 	snapshots, err := store.SnapshotReadModelAttempts()
 	if err != nil || len(snapshots) != 1 {
-		t.Fatalf("delayed delivery made the full snapshot unavailable: count=%d err=%v", len(snapshots), err)
+		t.Fatalf("plan transition made the full snapshot unavailable: count=%d err=%v", len(snapshots), err)
 	}
 	snapshot := snapshots[0]
 	if snapshot.LatestPlanBinding.IndexSHA != bindingB.IndexSHA || snapshot.ObservationPlanBinding == nil || snapshot.ObservationPlanBinding.IndexSHA != bindingA.IndexSHA || !snapshot.UpdatedAt.Equal(readbackAt) || snapshot.UpdatedAt.Before(claimB.StartedAt) {

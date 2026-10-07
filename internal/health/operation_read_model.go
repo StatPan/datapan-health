@@ -76,14 +76,16 @@ type OperationReadModelAttempt struct {
 	ObservationPlanBinding  *OperationAttemptBinding
 	AttemptState            string // claimed, request_started, observed, failed, unknown
 	ObservationAttemptState string // none, observed; separate from the latest claim state
+	ExecutionBlockReason    string // fixed Health-side reason for a pre-dispatch deferred claim
 	ReceiptValidated        bool
 	RequestStarted          *bool
 	EverRequestStarted      bool
 	ResultState             string // healthy, unhealthy, indeterminate
 	ResultCategory          string
+	HTTPStatus              int
 	ProviderObservedAt      time.Time
 	HealthReceivedAt        time.Time
-	GatusDeliveryState      string // not_ready, pending, acknowledged, readback_verified
+	GatusDeliveryState      string // not_ready, pending, acknowledged, readback_verified, not_applicable
 	GatusAcknowledgedAt     time.Time
 	GatusReadbackAt         time.Time
 	GatusObservedState      string
@@ -94,6 +96,7 @@ type OperationReadModelIdentityCounts struct {
 	Known                      int `json:"known"`
 	Admitted                   int `json:"admitted"`
 	Claimed                    int `json:"claimed"`
+	Deferred                   int `json:"deferred"`
 	Attempted                  int `json:"attempted"`
 	Persisted                  int `json:"persisted"`
 	InventoryUnknownScopes     int `json:"inventory_unknown_scopes"`
@@ -110,6 +113,7 @@ type OperationAPIProgress struct {
 	TotalFunctions       int            `json:"total_functions"`
 	ConfiguredAdmitted   int            `json:"configured_admitted"`
 	Claimed              int            `json:"claimed"`
+	Deferred             int            `json:"deferred"`
 	Attempted            int            `json:"attempted"`
 	CurrentPass          int            `json:"current_pass"`
 	CurrentFail          int            `json:"current_fail"`
@@ -176,6 +180,7 @@ type OperationReadModelRow struct {
 	// inferred from MissingReason, which changes as attempts are observed.
 	InventoryUnknown         bool       `json:"inventory_unknown"`
 	MissingReason            string     `json:"missing_reason,omitempty"`
+	ExecutionBlockReason     string     `json:"execution_block_reason,omitempty"`
 	ObservationPeriodSeconds *int64     `json:"observation_period_seconds"`
 	NextDueAt                *time.Time `json:"next_due_at"`
 	AttemptState             string     `json:"attempt_state"`
@@ -185,6 +190,7 @@ type OperationReadModelRow struct {
 	ObservationState         string     `json:"observation_state"`
 	ResultState              string     `json:"result_state,omitempty"`
 	ResultCategory           string     `json:"result_category,omitempty"`
+	ProviderHTTPStatus       *int       `json:"provider_http_status"`
 	ProviderObservedAt       *time.Time `json:"provider_observed_at"`
 	HealthReceivedAt         *time.Time `json:"health_received_at"`
 	GatusDeliveryState       string     `json:"gatus_delivery_state"`
@@ -417,6 +423,7 @@ func withoutOperationReadModelObservation(attempt OperationReadModelAttempt) Ope
 	attempt.ObservationAttemptState = "none"
 	attempt.ResultState = ""
 	attempt.ResultCategory = ""
+	attempt.HTTPStatus = 0
 	attempt.ProviderObservedAt = time.Time{}
 	attempt.HealthReceivedAt = time.Time{}
 	attempt.GatusDeliveryState = "not_ready"
@@ -594,6 +601,11 @@ func (model *OperationReadModel) LookupAPIProgress(apiIDs []string, at time.Time
 			case "claimed":
 				progress.Claimed++
 				progress.Pending++
+			case "deferred":
+				progress.Deferred++
+			}
+			if row.ExecutionBlockReason != "" {
+				progress.MissingReasons[row.ExecutionBlockReason]++
 			}
 			if row.Attempted {
 				progress.Attempted++
@@ -747,6 +759,8 @@ func (model *OperationReadModel) identityCounts(at time.Time) OperationReadModel
 		switch row.AttemptState {
 		case "claimed":
 			counts.Claimed++
+		case "deferred":
+			counts.Deferred++
 		}
 		if row.Attempted {
 			counts.Attempted++
@@ -901,7 +915,7 @@ func validOperationReadModelAttempt(attempt OperationReadModelAttempt) bool {
 	if attempt.ObservationPlanBinding != nil && (!validOperationAttemptBinding(*attempt.ObservationPlanBinding) || attempt.ObservationPlanBinding.SourceID != attempt.SourceID || attempt.ObservationPlanBinding.OperationID != attempt.OperationID) {
 		return false
 	}
-	if attempt.RequestStarted != nil && !attempt.ReceiptValidated {
+	if attempt.RequestStarted != nil && !attempt.ReceiptValidated && attempt.AttemptState != "deferred" {
 		return false
 	}
 	switch attempt.AttemptState {
@@ -917,15 +931,22 @@ func validOperationReadModelAttempt(attempt OperationReadModelAttempt) bool {
 		if !attempt.ReceiptValidated || attempt.RequestStarted == nil {
 			return false
 		}
+	case "deferred":
+		if attempt.ReceiptValidated || attempt.RequestStarted == nil || *attempt.RequestStarted || !validOperationAttemptDeferredReason(attempt.ExecutionBlockReason) {
+			return false
+		}
 	case "unknown":
 		if attempt.ReceiptValidated || attempt.RequestStarted != nil {
 			return false
 		}
 	}
+	if attempt.AttemptState != "deferred" && attempt.ExecutionBlockReason != "" {
+		return false
+	}
 	if attempt.AttemptState == "observed" && attempt.ObservationAttemptState != "observed" {
 		return false
 	}
-	hasObservation := !attempt.ProviderObservedAt.IsZero() || !attempt.HealthReceivedAt.IsZero() || attempt.ResultState != "" || attempt.ResultCategory != ""
+	hasObservation := !attempt.ProviderObservedAt.IsZero() || !attempt.HealthReceivedAt.IsZero() || attempt.ResultState != "" || attempt.ResultCategory != "" || attempt.HTTPStatus != 0
 	if hasObservation != (attempt.ObservationAttemptState == "observed") {
 		return false
 	}
@@ -933,7 +954,7 @@ func validOperationReadModelAttempt(attempt OperationReadModelAttempt) bool {
 		return false
 	}
 	if hasObservation {
-		if !validOperationReadModelResultState(attempt.ResultState) || !validOperationReadModelResultCategory(attempt.ResultCategory) || attempt.ProviderObservedAt.IsZero() || attempt.HealthReceivedAt.IsZero() || attempt.ProviderObservedAt.After(attempt.HealthReceivedAt) || attempt.HealthReceivedAt.After(attempt.UpdatedAt) {
+		if !validOperationReadModelResultState(attempt.ResultState) || !validOperationReadModelResultPair(attempt.ResultState, attempt.ResultCategory) || attempt.HTTPStatus != 0 && (attempt.HTTPStatus < 100 || attempt.HTTPStatus > 599) || attempt.ResultCategory == "response_semantics_unestablished" && (attempt.HTTPStatus < 200 || attempt.HTTPStatus >= 300) || attempt.ResultCategory == "response_http_failure" && (attempt.ResultState != "unhealthy" || attempt.HTTPStatus < 100 || attempt.HTTPStatus >= 200 && attempt.HTTPStatus < 300) || attempt.ProviderObservedAt.IsZero() || attempt.HealthReceivedAt.IsZero() || attempt.ProviderObservedAt.After(attempt.HealthReceivedAt) || attempt.HealthReceivedAt.After(attempt.UpdatedAt) {
 			return false
 		}
 		if !validOperationReadModelResultPair(attempt.ResultState, attempt.ResultCategory) {
@@ -955,6 +976,8 @@ func validGatusReadback(attempt OperationReadModelAttempt) bool {
 	switch attempt.GatusDeliveryState {
 	case "not_ready", "pending":
 		return attempt.GatusAcknowledgedAt.IsZero() && attempt.GatusReadbackAt.IsZero()
+	case "not_applicable":
+		return attempt.ResultState == "indeterminate" && attempt.ResultCategory == "response_semantics_unestablished" && attempt.HTTPStatus >= 200 && attempt.HTTPStatus < 300 && attempt.GatusAcknowledgedAt.IsZero() && attempt.GatusReadbackAt.IsZero() && attempt.GatusObservedState == ""
 	case "acknowledged":
 		return !attempt.GatusAcknowledgedAt.IsZero() && attempt.GatusReadbackAt.IsZero() && attempt.GatusObservedState == ""
 	case "readback_verified":
@@ -967,11 +990,13 @@ func validGatusReadback(attempt OperationReadModelAttempt) bool {
 func applyOperationReadModelAttempt(row *OperationReadModelRow, attempt OperationReadModelAttempt) {
 	row.AttemptState = attempt.AttemptState
 	row.ObservationAttemptState = attempt.ObservationAttemptState
+	row.ExecutionBlockReason = attempt.ExecutionBlockReason
 	row.RequestStarted = cloneBool(attempt.RequestStarted)
 	row.Attempted = row.Attempted || attempt.EverRequestStarted || attempt.RequestStarted != nil && *attempt.RequestStarted
 	if attempt.ObservationAttemptState == "none" {
 		row.ResultState = ""
 		row.ResultCategory = ""
+		row.ProviderHTTPStatus = nil
 		row.ProviderObservedAt = nil
 		row.HealthReceivedAt = nil
 		row.GatusDeliveryState = "not_ready"
@@ -985,6 +1010,12 @@ func applyOperationReadModelAttempt(row *OperationReadModelRow, attempt Operatio
 	row.MissingReason = ""
 	row.ResultState = attempt.ResultState
 	row.ResultCategory = attempt.ResultCategory
+	if attempt.HTTPStatus > 0 {
+		status := attempt.HTTPStatus
+		row.ProviderHTTPStatus = &status
+	} else {
+		row.ProviderHTTPStatus = nil
+	}
 	row.ProviderObservedAt = cloneTime(attempt.ProviderObservedAt)
 	row.HealthReceivedAt = cloneTime(attempt.HealthReceivedAt)
 	row.GatusDeliveryState = attempt.GatusDeliveryState
@@ -1060,7 +1091,10 @@ func operationReadModelIdentityKey(sourceID, operationID string) string {
 	return sourceID + "\x00" + operationID
 }
 func validOperationReadModelAttemptState(value string) bool {
-	return value == "claimed" || value == "request_started" || value == "observed" || value == "failed" || value == "unknown"
+	return value == "claimed" || value == "request_started" || value == "observed" || value == "failed" || value == "unknown" || value == "deferred"
+}
+func validOperationReadModelExecutionBlockReason(value string) bool {
+	return validOperationAttemptDeferredReason(value)
 }
 func validOperationReadModelObservationAttemptState(value string) bool {
 	return value == "none" || value == "observed"
@@ -1070,7 +1104,7 @@ func validRegistryAPIMetadataPin(pin RegistryAPIMetadataPin) bool {
 	return commitPattern.MatchString(pin.RegistryRevision) && sha256Pattern.MatchString(pin.SourceSHA256) && sha256Pattern.MatchString(pin.CatalogSHA256) && sha256Pattern.MatchString(pin.ArtifactSHA256) && pin.APIEntityCount >= 0 && pin.APIEntityCount <= 20_000 && pin.OperationCount >= 0 && pin.OperationCount <= 50_000
 }
 func validOperationReadModelDeliveryState(value string) bool {
-	return value == "not_ready" || value == "pending" || value == "acknowledged" || value == "readback_verified"
+	return value == "not_ready" || value == "pending" || value == "acknowledged" || value == "readback_verified" || value == "not_applicable"
 }
 func validGatusResultState(value string) bool {
 	return value == "healthy" || value == "unhealthy" || value == "unknown"
@@ -1080,7 +1114,7 @@ func validOperationReadModelResultState(value string) bool {
 }
 func validOperationReadModelResultCategory(value string) bool {
 	switch value {
-	case "healthy", "transport_failure", "timeout", "rate_limited", "credential_missing", "credential_rejected", "parameter_blocked", "provider_failure", "semantic_failure", "schema_drift", "unsupported", "observer_failure", "indeterminate":
+	case "healthy", "transport_failure", "timeout", "rate_limited", "credential_missing", "credential_rejected", "parameter_blocked", "provider_failure", "semantic_failure", "schema_drift", "unsupported", "observer_failure", "indeterminate", "response_semantics_unestablished", "response_http_failure":
 		return true
 	default:
 		return false
@@ -1094,9 +1128,9 @@ func validOperationReadModelResultPair(state, category string) bool {
 	case "healthy":
 		return category == "healthy"
 	case "unhealthy":
-		return category != "healthy" && category != "indeterminate" && category != "observer_failure"
+		return category != "healthy" && category != "indeterminate" && category != "observer_failure" && category != "response_semantics_unestablished"
 	case "indeterminate":
-		return category == "indeterminate" || category == "observer_failure"
+		return category == "indeterminate" || category == "observer_failure" || category == "response_semantics_unestablished"
 	default:
 		return false
 	}
@@ -1135,8 +1169,21 @@ func (row OperationReadModelRow) ValidatePublicProjection(at time.Time) error {
 		row.APIID != nil && !operationReadModelAPIIDPattern.MatchString(*row.APIID) || row.MissingReason == "inventory_unknown" && !row.InventoryUnknown {
 		return fmt.Errorf("%w: unsafe projected operation metadata", ErrOperationReadModelUnavailable)
 	}
-	if !validOperationReadModelObservationAttemptState(row.ObservationAttemptState) || row.ObservationAttemptState == "observed" && (!validOperationReadModelResultPair(row.ResultState, row.ResultCategory) || row.ProviderObservedAt == nil || row.HealthReceivedAt == nil || row.ProviderObservedAt.After(*row.HealthReceivedAt)) || row.ObservationAttemptState == "none" && (row.ResultState != "" || row.ResultCategory != "" || row.ProviderObservedAt != nil || row.HealthReceivedAt != nil) {
+	if row.AttemptState == "deferred" {
+		if row.RequestStarted == nil || *row.RequestStarted || !validOperationReadModelExecutionBlockReason(row.ExecutionBlockReason) {
+			return fmt.Errorf("%w: invalid pre-dispatch deferral", ErrOperationReadModelUnavailable)
+		}
+	} else if row.ExecutionBlockReason != "" {
+		return fmt.Errorf("%w: unexpected execution block reason", ErrOperationReadModelUnavailable)
+	}
+	if !validOperationReadModelObservationAttemptState(row.ObservationAttemptState) || row.ObservationAttemptState == "observed" && (!validOperationReadModelResultPair(row.ResultState, row.ResultCategory) || row.ProviderObservedAt == nil || row.HealthReceivedAt == nil || row.ProviderObservedAt.After(*row.HealthReceivedAt)) || row.ObservationAttemptState == "none" && (row.ResultState != "" || row.ResultCategory != "" || row.ProviderHTTPStatus != nil || row.ProviderObservedAt != nil || row.HealthReceivedAt != nil) {
 		return fmt.Errorf("%w: invalid observation projection state", ErrOperationReadModelUnavailable)
+	}
+	if row.ProviderHTTPStatus != nil && (*row.ProviderHTTPStatus < 100 || *row.ProviderHTTPStatus > 599) || row.ResultCategory == "response_semantics_unestablished" && (row.ProviderHTTPStatus == nil || *row.ProviderHTTPStatus < 200 || *row.ProviderHTTPStatus >= 300) || row.ResultCategory == "response_http_failure" && (row.ProviderHTTPStatus == nil || *row.ProviderHTTPStatus < 100 || *row.ProviderHTTPStatus >= 200 && *row.ProviderHTTPStatus < 300) {
+		return fmt.Errorf("%w: invalid safe HTTP status projection", ErrOperationReadModelUnavailable)
+	}
+	if row.GatusDeliveryState == "not_applicable" && (row.ResultState != "indeterminate" || row.ResultCategory != "response_semantics_unestablished") {
+		return fmt.Errorf("%w: Gatus non-delivery lacks a reviewed reason", ErrOperationReadModelUnavailable)
 	}
 	if row.HealthReceivedAt != nil && row.HealthReceivedAt.After(at) && (row.ObservationState != "unobserved" || row.MissingReason != "future_observation") || row.ProviderObservedAt != nil && row.ProviderObservedAt.After(at) && (row.ObservationState != "unobserved" || row.MissingReason != "future_observation") {
 		return fmt.Errorf("%w: future observation was projected as coverage", ErrOperationReadModelUnavailable)
