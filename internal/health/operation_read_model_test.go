@@ -164,6 +164,18 @@ func TestOperationReadModelExactAPIJoinProgressAndSafeSearch(t *testing.T) {
 	}
 }
 
+func TestOperationReadModelPageAcceptsSanitizedMetadataAcrossRows(t *testing.T) {
+	now := time.Date(2026, 10, 7, 4, 0, 0, 0, time.UTC)
+	model := testOperationReadModelForAPIProgress(t, now)
+	model.rows[1].Purpose = "안전하게 정제된 Registry 설명"
+	model.rows[1].PurposeState = "sanitized"
+
+	page, err := model.PageOperations(OperationPageQuery{Limit: 2}, now)
+	if err != nil || len(page.Operations) != 2 || page.Operations[1].PurposeState != "sanitized" {
+		t.Fatalf("bounded page rejected a valid sanitized Registry field state: %#v (%v)", page, err)
+	}
+}
+
 func TestOperationReadModelOnlyJoinsDataGoKrByExactDatasetIDAndSanitizesText(t *testing.T) {
 	metadata := &RegistryOperationMetadata{RegistryOperationID: strings.Repeat("a", 64), APIID: "api-1", OperationName: "조회", OperationNameState: "present", Title: "한글 제목", TitleState: "present", Organization: "기관 A", OrganizationState: "present", Purpose: "안전한 목적", PurposeState: "present"}
 	record := OperationObservationPlanRecord{SourceID: "data_go_kr", DatasetID: "api-1", OperationID: strings.Repeat("a", 64), Protocol: "REST", Provider: "data.go.kr", AdapterID: "data-go-kr", RequestPlanStatus: "incomplete", RuntimeBindingStatus: "unbound", AdmissionStatus: "not_admitted"}
