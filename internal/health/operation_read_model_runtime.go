@@ -107,9 +107,11 @@ type OperationReadModelRuntime struct {
 	store                *OperationAttemptStore
 	maxAge               time.Duration
 	refreshAt            time.Time
+	refreshWallStartedAt time.Time
 	offset               int
 	lastGoodAt           time.Time
 	lastError            string
+	pendingReadBatches   []*operationReadModelAttemptBatch
 	counts               OperationReadModelIdentityCounts
 	currentPass          int
 	currentFail          int
@@ -149,38 +151,25 @@ func ValidateOperationReadModelRefreshPolicy(policy OperationReadModelRefreshPol
 // Run performs one bounded identity batch at a time. A complete plan sweep
 // consists of deterministic slices, each capped at 256 files and at most
 // 8 MiB of state bytes. It waits for the configured full-refresh interval
-// after a successful sweep and resumes an incomplete sweep after a failure.
+// after a successful sweep. Any failed or overlong sweep is discarded and
+// retried from its first identity; staged file stamps are not committed.
 func (runtime *OperationReadModelRuntime) Run(ctx context.Context, policy OperationReadModelRefreshPolicy) error {
 	if runtime == nil || ctx == nil || !validOperationReadModelRefreshPolicy(policy) {
 		return errOperationReadModelRuntimeUnavailable
 	}
-	passStarted := time.Time{}
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil
 		}
 		now := time.Now().UTC()
-		if passStarted.IsZero() {
-			passStarted = now
-		}
-		if now.Sub(passStarted) > policy.MaxPassDuration {
-			runtime.setRefreshError("refresh_deadline")
-			passStarted = time.Time{}
-			if !waitOperationReadModelRefresh(ctx, policy.FullRefreshInterval) {
-				return nil
-			}
-			continue
-		}
-		complete, err := runtime.RefreshNextBatch(now, policy.BatchSize)
+		complete, err := runtime.refreshNextBatch(now, policy.BatchSize, policy.MaxPassDuration)
 		if err != nil {
-			passStarted = time.Time{}
 			if !waitOperationReadModelRefresh(ctx, policy.FullRefreshInterval) {
 				return nil
 			}
 			continue
 		}
 		if complete {
-			passStarted = time.Time{}
 			if !waitOperationReadModelRefresh(ctx, policy.FullRefreshInterval) {
 				return nil
 			}
@@ -207,6 +196,10 @@ func waitOperationReadModelRefresh(ctx context.Context, delay time.Duration) boo
 // projection is private until every plan identity has been checked, so a
 // later corrupt file cannot publish a partial snapshot.
 func (runtime *OperationReadModelRuntime) RefreshNextBatch(at time.Time, batchSize int) (bool, error) {
+	return runtime.refreshNextBatch(at, batchSize, 0)
+}
+
+func (runtime *OperationReadModelRuntime) refreshNextBatch(at time.Time, batchSize int, maxPassDuration time.Duration) (bool, error) {
 	if runtime == nil || at.IsZero() || batchSize < 1 || batchSize > operationAttemptIdentityBatchMaximum {
 		return false, errOperationReadModelRuntimeUnavailable
 	}
@@ -214,6 +207,11 @@ func (runtime *OperationReadModelRuntime) RefreshNextBatch(at time.Time, batchSi
 	defer runtime.refreshMu.Unlock()
 
 	runtime.mu.Lock()
+	if runtime.staging != nil && maxPassDuration > 0 && runtime.refreshExpiredLocked(at, maxPassDuration) {
+		runtime.abortRefreshLocked("refresh_deadline")
+		runtime.mu.Unlock()
+		return false, errOperationReadModelRuntimeUnavailable
+	}
 	if runtime.staging == nil {
 		base := runtime.current
 		if base == nil {
@@ -222,22 +220,35 @@ func (runtime *OperationReadModelRuntime) RefreshNextBatch(at time.Time, batchSi
 		runtime.staging = cloneOperationReadModelForRefresh(base, at.UTC())
 		runtime.offset = 0
 		runtime.refreshAt = at.UTC()
+		runtime.refreshWallStartedAt = time.Now()
+		runtime.pendingReadBatches = nil
 	}
 	candidate := runtime.staging
 	offset := runtime.offset
 	runtime.mu.Unlock()
 
-	next, complete, err := candidate.RefreshFromStoreBatch(runtime.store, offset, batchSize, at.UTC())
+	next, complete, batch, err := candidate.refreshFromStoreBatchPrepared(runtime.store, offset, batchSize, at.UTC())
 	if err != nil {
-		runtime.setRefreshError("state_unavailable")
+		runtime.mu.Lock()
+		runtime.abortRefreshLocked("state_unavailable")
+		runtime.mu.Unlock()
 		return false, errOperationReadModelRuntimeUnavailable
 	}
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
+	if maxPassDuration > 0 && runtime.refreshExpiredLocked(at, maxPassDuration) {
+		runtime.abortRefreshLocked("refresh_deadline")
+		return false, errOperationReadModelRuntimeUnavailable
+	}
+	runtime.pendingReadBatches = append(runtime.pendingReadBatches, batch)
 	if !complete {
 		runtime.offset = next
 		runtime.lastError = ""
 		return false, nil
+	}
+	if err := runtime.store.commitReadModelAttemptBatches(runtime.pendingReadBatches); err != nil {
+		runtime.abortRefreshLocked("state_unavailable")
+		return false, errOperationReadModelRuntimeUnavailable
 	}
 	counts := candidate.identityCounts(at.UTC())
 	pass, fail, indeterminate := operationReadModelResultCounts(candidate, at.UTC())
@@ -246,6 +257,8 @@ func (runtime *OperationReadModelRuntime) RefreshNextBatch(at time.Time, batchSi
 	runtime.staging = nil
 	runtime.offset = 0
 	runtime.refreshAt = time.Time{}
+	runtime.refreshWallStartedAt = time.Time{}
+	runtime.pendingReadBatches = nil
 	runtime.lastGoodAt = completed
 	runtime.lastError = ""
 	runtime.counts = counts
@@ -253,6 +266,22 @@ func (runtime *OperationReadModelRuntime) RefreshNextBatch(at time.Time, batchSi
 	runtime.currentFail = fail
 	runtime.currentIndeterminate = indeterminate
 	return true, nil
+}
+
+func (runtime *OperationReadModelRuntime) refreshExpiredLocked(at time.Time, maximum time.Duration) bool {
+	if runtime.refreshAt.IsZero() || runtime.refreshWallStartedAt.IsZero() || maximum <= 0 {
+		return true
+	}
+	return at.Before(runtime.refreshAt) || at.Sub(runtime.refreshAt) > maximum || time.Since(runtime.refreshWallStartedAt) > maximum
+}
+
+func (runtime *OperationReadModelRuntime) abortRefreshLocked(reason string) {
+	runtime.staging = nil
+	runtime.offset = 0
+	runtime.refreshAt = time.Time{}
+	runtime.refreshWallStartedAt = time.Time{}
+	runtime.pendingReadBatches = nil
+	runtime.lastError = reason
 }
 
 func cloneOperationReadModelForRefresh(source *OperationReadModel, generatedAt time.Time) *OperationReadModel {
@@ -357,6 +386,11 @@ func (runtime *OperationReadModelRuntime) Status(at time.Time) OperationReadMode
 		status.CoverageState = operationReadModelCoverageStateWithResults(status.IdentityCounts, 0, 0, 0)
 		return status
 	}
+	// Coverage ages at each evaluation time, independently of the snapshot
+	// cache's maximum age. A fresh cache can contain observations that are now
+	// due and stale, so readiness counts must be recomputed for this request.
+	status.IdentityCounts = runtime.current.identityCounts(at.UTC())
+	status.CurrentPass, status.CurrentFail, status.CurrentIndeterminate = operationReadModelResultCounts(runtime.current, at.UTC())
 	if at.Before(runtime.lastGoodAt) || at.Sub(runtime.lastGoodAt) > runtime.maxAge {
 		status.ReadModelState, status.ReadModelReason = "stale", "snapshot_stale"
 	} else if runtime.lastError != "" {
