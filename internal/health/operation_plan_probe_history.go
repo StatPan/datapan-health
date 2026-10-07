@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/StatPan/datapan-health/internal/runtimebundle"
 	"github.com/StatPan/datapan-health/schemas"
 )
 
@@ -19,20 +20,41 @@ var errOperationPlanProbeHistoryUnavailable = errors.New("operation-plan receipt
 // the Health source revision that accepted a newly appended record.
 type OperationPlanProbeHistoryValidator struct {
 	ValidatorRevision string
+	Expectations      OperationPlanProbeExpectationResolver
 }
 
-func NewOperationPlanProbeHistoryValidator(validatorRevision string) (OperationPlanProbeHistoryValidator, error) {
-	if !commitPattern.MatchString(validatorRevision) {
+// OperationPlanProbeExpectationResolver supplies authority independently from
+// the receipt bytes being validated. Implementations must resolve only from a
+// verified, immutable Registry/runtime binding.
+type OperationPlanProbeExpectationResolver interface {
+	ResolveOperationPlanProbeExpectation(context.Context, OperationHistoryIdentity, time.Time) (OperationPlanProbeExpectation, error)
+}
+
+type OperationPlanProbeHistoryRecordValidator interface {
+	OperationHistoryRecordValidator
+	ValidateStoredOperationPlanProbeRecord(context.Context, OperationHistoryRecord) (OperationHistoryRecord, OperationPlanProbeResult, error)
+}
+
+func NewOperationPlanProbeHistoryValidator(validatorRevision string, expectations OperationPlanProbeExpectationResolver) (OperationPlanProbeHistoryValidator, error) {
+	if !commitPattern.MatchString(validatorRevision) || expectations == nil {
 		return OperationPlanProbeHistoryValidator{}, errOperationPlanProbeHistoryUnavailable
 	}
-	return OperationPlanProbeHistoryValidator{ValidatorRevision: validatorRevision}, nil
+	return OperationPlanProbeHistoryValidator{ValidatorRevision: validatorRevision, Expectations: expectations}, nil
 }
 
 // NewRecord seals an already validated child receipt for durable append. The
 // receipt is validated again against the immutable archive identity so callers
 // cannot accidentally pair a result with another operation or plan shard.
-func (validator OperationPlanProbeHistoryValidator) newRecord(identity OperationHistoryIdentity, result OperationPlanProbeResult, attemptStartedAt time.Time) (OperationHistoryRecord, error) {
-	if !commitPattern.MatchString(validator.ValidatorRevision) || identity.Validate() != nil {
+func (validator OperationPlanProbeHistoryValidator) newRecord(identity OperationHistoryIdentity, result OperationPlanProbeResult, expected OperationPlanProbeExpectation, attemptStartedAt time.Time) (OperationHistoryRecord, error) {
+	if !commitPattern.MatchString(validator.ValidatorRevision) || validator.Expectations == nil || identity.Validate() != nil || !utcNormalized(attemptStartedAt) {
+		return OperationHistoryRecord{}, errOperationPlanProbeHistoryUnavailable
+	}
+	resolved, err := validator.resolveExpectation(context.Background(), identity, attemptStartedAt)
+	if err != nil || !operationPlanProbeExpectationsEqual(resolved, expected) {
+		return OperationHistoryRecord{}, errOperationPlanProbeHistoryUnavailable
+	}
+	checked, err := ValidateOperationPlanProbeReceipt(result.ReceiptBytes, expected, attemptStartedAt, result.ReceivedAt, operationPlanProbeExitCode(result.Receipt.Observation.Outcome))
+	if err != nil || checked.ReceiptSHA256 != result.ReceiptSHA256 || checked.Outcome != result.Outcome || checked.ObservedAt != result.ObservedAt || checked.RequestStarted != result.RequestStarted || checked.HTTPStatus != result.HTTPStatus || checked.Latency != result.Latency {
 		return OperationHistoryRecord{}, errOperationPlanProbeHistoryUnavailable
 	}
 	record := OperationHistoryRecord{
@@ -48,7 +70,7 @@ func (validator OperationPlanProbeHistoryValidator) newRecord(identity Operation
 		AttemptStartedAt:     attemptStartedAt.UTC(),
 		ValidatedAt:          result.ReceivedAt.UTC(),
 	}
-	validated, err := validator.ValidateStoredOperationHistoryRecord(context.Background(), record)
+	validated, _, err := validator.ValidateStoredOperationPlanProbeRecord(context.Background(), record)
 	if err != nil {
 		return OperationHistoryRecord{}, err
 	}
@@ -59,10 +81,17 @@ func (validator OperationPlanProbeHistoryValidator) newRecord(identity Operation
 // canonical bytes and digest, semantic outcome/timestamp rules, and all
 // attempt/release/shard identities before recreating the package-private seal.
 func (validator OperationPlanProbeHistoryValidator) ValidateStoredOperationHistoryRecord(ctx context.Context, candidate OperationHistoryRecord) (OperationHistoryRecord, error) {
+	validated, _, err := validator.ValidateStoredOperationPlanProbeRecord(ctx, candidate)
+	return validated, err
+}
+
+// ValidateStoredOperationPlanProbeRecord returns both a resealed archive value
+// and its typed result, using independently resolved plan/runtime expectations.
+func (validator OperationPlanProbeHistoryValidator) ValidateStoredOperationPlanProbeRecord(ctx context.Context, candidate OperationHistoryRecord) (OperationHistoryRecord, OperationPlanProbeResult, error) {
 	if ctx == nil || ctx.Err() != nil {
-		return OperationHistoryRecord{}, errOperationPlanProbeHistoryUnavailable
+		return OperationHistoryRecord{}, OperationPlanProbeResult{}, errOperationPlanProbeHistoryUnavailable
 	}
-	if !commitPattern.MatchString(validator.ValidatorRevision) ||
+	if !commitPattern.MatchString(validator.ValidatorRevision) || validator.Expectations == nil ||
 		candidate.ValidatorIdentity != operationPlanProbeHistoryValidatorIdentity ||
 		!commitPattern.MatchString(candidate.ValidatorRevision) ||
 		candidate.ReceiptSchemaURI != OperationPlanProbeReceiptSchemaURI ||
@@ -72,68 +101,112 @@ func (validator OperationPlanProbeHistoryValidator) ValidateStoredOperationHisto
 		validateOperationHistoryRecordFields(candidate) != nil ||
 		len(candidate.ReceiptBytes) > maxOperationPlanProbeReceiptBytes ||
 		futureOperationHistoryTime(candidate.ValidatedAt, time.Now().UTC()) {
-		return OperationHistoryRecord{}, errOperationPlanProbeHistoryUnavailable
+		return OperationHistoryRecord{}, OperationPlanProbeResult{}, errOperationPlanProbeHistoryUnavailable
 	}
 
 	decoder := json.NewDecoder(bytes.NewReader(candidate.ReceiptBytes))
 	decoder.DisallowUnknownFields()
 	var receipt operationPlanProbeReceipt
 	if decoder.Decode(&receipt) != nil || ensureEOF(decoder) != nil {
-		return OperationHistoryRecord{}, errOperationPlanProbeHistoryUnavailable
+		return OperationHistoryRecord{}, OperationPlanProbeResult{}, errOperationPlanProbeHistoryUnavailable
 	}
 	canonical, err := json.Marshal(receipt)
 	if err != nil {
-		return OperationHistoryRecord{}, errOperationPlanProbeHistoryUnavailable
+		return OperationHistoryRecord{}, OperationPlanProbeResult{}, errOperationPlanProbeHistoryUnavailable
 	}
 	canonical = append(canonical, '\n')
 	if !bytes.Equal(canonical, candidate.ReceiptBytes) {
-		return OperationHistoryRecord{}, errOperationPlanProbeHistoryUnavailable
+		return OperationHistoryRecord{}, OperationPlanProbeResult{}, errOperationPlanProbeHistoryUnavailable
 	}
 
 	identity := candidate.Identity
-	if receipt.AttemptID != identity.AttemptID ||
-		receipt.Operation.SourceID != identity.SourceID ||
-		receipt.Operation.OperationID != identity.OperationID ||
-		receipt.Registry.RegistryRevision != identity.RegistryRevision ||
-		receipt.Registry.ManifestSHA256 != identity.ReleaseManifestSHA256 ||
-		receipt.Registry.IndexSHA256 != identity.IndexSHA256 ||
-		receipt.Registry.ShardSHA256 != identity.ShardSHA256 {
-		return OperationHistoryRecord{}, errOperationPlanProbeHistoryUnavailable
+	expected, err := validator.resolveExpectation(ctx, identity, candidate.AttemptStartedAt)
+	if err != nil {
+		return OperationHistoryRecord{}, OperationPlanProbeResult{}, errOperationPlanProbeHistoryUnavailable
 	}
-
-	expected := operationPlanProbeExpectationFromReceipt(receipt, candidate.AttemptStartedAt)
 	result, err := ValidateOperationPlanProbeReceipt(candidate.ReceiptBytes, expected, candidate.AttemptStartedAt, candidate.ValidatedAt, operationPlanProbeExitCode(receipt.Observation.Outcome))
 	if err != nil || result.ReceiptSHA256 != candidate.ReceiptSHA256 {
-		return OperationHistoryRecord{}, errOperationPlanProbeHistoryUnavailable
+		return OperationHistoryRecord{}, OperationPlanProbeResult{}, errOperationPlanProbeHistoryUnavailable
 	}
-	return newValidatedOperationHistoryRecord(candidate)
+	sealed, err := newValidatedOperationHistoryRecord(candidate)
+	if err != nil {
+		return OperationHistoryRecord{}, OperationPlanProbeResult{}, errOperationPlanProbeHistoryUnavailable
+	}
+	return sealed, result, nil
 }
 
-func operationPlanProbeExpectationFromReceipt(receipt operationPlanProbeReceipt, startedAt time.Time) OperationPlanProbeExpectation {
-	return OperationPlanProbeExpectation{
-		AttemptID:                   receipt.AttemptID,
-		CLIVersion:                  receipt.CLI.Version,
-		CLIBinarySHA256:             receipt.CLI.BinarySHA256,
-		DatasetID:                   receipt.Registry.DatasetID,
-		Distribution:                receipt.Registry.Distribution,
-		DistributionDatasetRevision: receipt.Registry.DistributionDatasetRevision,
-		RegistrySHA256:              receipt.Registry.RegistrySHA256,
-		RegistryRevision:            receipt.Registry.RegistryRevision,
-		ReleaseManifestSHA256:       receipt.Registry.ManifestSHA256,
-		OperationManifestSHA256:     receipt.Registry.OperationManifestSHA256,
-		ProviderIndexSHA256:         receipt.Registry.ProviderIndexSHA256,
-		PlanSchemaSHA256:            receipt.Registry.PlanSchemaSHA256,
-		IndexSHA256:                 receipt.Registry.IndexSHA256,
-		ShardSHA256:                 receipt.Registry.ShardSHA256,
-		SourceIdentitySetSHA256:     receipt.Registry.SourceIdentitySetSHA256,
-		SourceID:                    receipt.Operation.SourceID,
-		OperationID:                 receipt.Operation.OperationID,
-		Provider:                    receipt.Operation.Provider,
-		AdapterID:                   receipt.Operation.AdapterID,
-		Protocol:                    receipt.Operation.Protocol,
-		RequestTimeout:              time.Duration(receipt.Execution.TimeoutMS) * time.Millisecond,
-		StartedAt:                   startedAt.UTC(),
+func (validator OperationPlanProbeHistoryValidator) resolveExpectation(ctx context.Context, identity OperationHistoryIdentity, startedAt time.Time) (OperationPlanProbeExpectation, error) {
+	if ctx == nil || ctx.Err() != nil || validator.Expectations == nil || identity.Validate() != nil || !utcNormalized(startedAt) {
+		return OperationPlanProbeExpectation{}, errOperationPlanProbeHistoryUnavailable
 	}
+	expected, err := validator.Expectations.ResolveOperationPlanProbeExpectation(ctx, identity, startedAt)
+	if err != nil || !operationPlanProbeExpectationMatchesIdentity(expected, identity, startedAt) {
+		return OperationPlanProbeExpectation{}, errOperationPlanProbeHistoryUnavailable
+	}
+	return expected, nil
+}
+
+func operationPlanProbeExpectationMatchesIdentity(expected OperationPlanProbeExpectation, identity OperationHistoryIdentity, startedAt time.Time) bool {
+	return expected.AttemptID == identity.AttemptID && expected.SourceID == identity.SourceID && expected.OperationID == identity.OperationID && expected.RegistryRevision == identity.RegistryRevision && expected.ReleaseManifestSHA256 == identity.ReleaseManifestSHA256 && expected.IndexSHA256 == identity.IndexSHA256 && expected.ShardSHA256 == identity.ShardSHA256 && expected.StartedAt.Equal(startedAt.UTC()) && validOperationProbeExpectation(expected, OperationPlanProbeConfig{CLIVersion: expected.CLIVersion, ExecutableSHA256: expected.CLIBinarySHA256})
+}
+
+func operationPlanProbeExpectationsEqual(left, right OperationPlanProbeExpectation) bool {
+	return left.AttemptID == right.AttemptID && left.CLIVersion == right.CLIVersion && left.CLIBinarySHA256 == right.CLIBinarySHA256 && left.DatasetID == right.DatasetID && left.Distribution == right.Distribution && left.DistributionDatasetRevision == right.DistributionDatasetRevision && left.RegistrySHA256 == right.RegistrySHA256 && left.RegistryRevision == right.RegistryRevision && left.ReleaseManifestSHA256 == right.ReleaseManifestSHA256 && left.OperationManifestSHA256 == right.OperationManifestSHA256 && left.ProviderIndexSHA256 == right.ProviderIndexSHA256 && left.PlanSchemaSHA256 == right.PlanSchemaSHA256 && left.IndexSHA256 == right.IndexSHA256 && left.ShardSHA256 == right.ShardSHA256 && left.SourceIdentitySetSHA256 == right.SourceIdentitySetSHA256 && left.SourceID == right.SourceID && left.OperationID == right.OperationID && left.Provider == right.Provider && left.AdapterID == right.AdapterID && left.Protocol == right.Protocol && left.ResponseAssertionKind == right.ResponseAssertionKind && left.RequestTimeout == right.RequestTimeout && left.StartedAt.Equal(right.StartedAt)
+}
+
+// PinnedOperationPlanProbeExpectationResolver derives historic receipt
+// expectations from one already verified Registry plan and the immutable CLI
+// runtime lock. It deliberately resolves only the currently image-pinned
+// release; records from another release remain unavailable until that exact
+// historical binding is installed again.
+type PinnedOperationPlanProbeExpectationResolver struct {
+	plan      PinnedOperationObservationPlan
+	lock      runtimebundle.Lock
+	arch      string
+	templates map[string]OperationPlanProbeExpectation
+}
+
+func NewPinnedOperationPlanProbeExpectationResolver(plan PinnedOperationObservationPlan, lock runtimebundle.Lock, arch string) (*PinnedOperationPlanProbeExpectationResolver, error) {
+	if plan.state == nil || !plan.state.verified || lock.Validate() != nil || arch == "" || plan.Counts().KnownOperations < 0 || plan.Counts().KnownOperations > maxOperationGatusTargets {
+		return nil, errOperationPlanProbeHistoryUnavailable
+	}
+	resolver := &PinnedOperationPlanProbeExpectationResolver{plan: plan, lock: lock, arch: arch, templates: make(map[string]OperationPlanProbeExpectation)}
+	const templateAttemptID = "00000000-0000-4000-8000-000000000000"
+	templateStart := time.Unix(1, 0).UTC()
+	for shardIndex, ref := range plan.state.index.Shards {
+		records, err := plan.ReadShard(shardIndex)
+		if err != nil {
+			return nil, errOperationPlanProbeHistoryUnavailable
+		}
+		for _, record := range records {
+			if !record.ExecutionEligible {
+				continue
+			}
+			expected, err := operationPlanProbeExpected(plan, record, ref.SHA256, templateAttemptID, lock, arch, templateStart)
+			if err != nil {
+				return nil, errOperationPlanProbeHistoryUnavailable
+			}
+			key := operationReadModelIdentityKey(record.SourceID, record.OperationID)
+			if _, exists := resolver.templates[key]; exists {
+				return nil, errOperationPlanProbeHistoryUnavailable
+			}
+			resolver.templates[key] = expected
+		}
+	}
+	return resolver, nil
+}
+
+func (resolver *PinnedOperationPlanProbeExpectationResolver) ResolveOperationPlanProbeExpectation(ctx context.Context, identity OperationHistoryIdentity, startedAt time.Time) (OperationPlanProbeExpectation, error) {
+	if resolver == nil || ctx == nil || ctx.Err() != nil || identity.Validate() != nil || !utcNormalized(startedAt) || identity.RegistryRevision != resolver.plan.RegistryRevision() || identity.ReleaseManifestSHA256 != resolver.plan.binding.ReleaseManifestSHA256 || identity.IndexSHA256 != resolver.plan.IndexSHA256() {
+		return OperationPlanProbeExpectation{}, errOperationPlanProbeHistoryUnavailable
+	}
+	expected, found := resolver.templates[operationReadModelIdentityKey(identity.SourceID, identity.OperationID)]
+	if !found || expected.ShardSHA256 != identity.ShardSHA256 {
+		return OperationPlanProbeExpectation{}, errOperationPlanProbeHistoryUnavailable
+	}
+	expected.AttemptID = identity.AttemptID
+	expected.StartedAt = startedAt.UTC()
+	return expected, nil
 }
 
 func operationPlanProbeExitCode(outcome string) int {

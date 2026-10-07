@@ -46,3 +46,13 @@ The page schema's exact digest is recorded in
 fixtures establish type/schema and pagination behavior only; they are not
 evidence that a current Registry plan is released or that any provider call
 has run.
+
+`datapan.health-operation-plan-probe.v1.schema.json` is the redacted child
+receipt contract consumed from the CLI #184 source checkpoint
+`3600bac9464a603c6470e58e6cf6f8cf3b9e199f`; its exact digest is
+`23fcac6ae7b47852f36e47fea24dd5d0dbeb795bef279529998233a835eefad9`.
+Observation-only receipts can report only an indeterminate 2xx with
+`response_semantics_unestablished`, or an unhealthy non-2xx with
+`response_http_failure`. The schema does not treat either as a complete API
+availability or credential diagnosis, and synthetic schema fixtures do not
+prove live provider behavior.

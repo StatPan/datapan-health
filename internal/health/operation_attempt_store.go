@@ -465,11 +465,11 @@ func (store *OperationAttemptStore) CompleteAttempt(claim OperationAttemptClaim,
 // observation-only terminal state. It revalidates the sealed, pinned receipt
 // and requires the exact archive append reference before committing it to the
 // attempt ledger. A caller-supplied category string cannot bypass Gatus.
-func (store *OperationAttemptStore) CompleteAttemptFromValidatedHistory(ctx context.Context, claim OperationAttemptClaim, candidate OperationHistoryRecord, ref OperationHistoryRecordRef, validator OperationHistoryRecordValidator, now time.Time) error {
+func (store *OperationAttemptStore) CompleteAttemptFromValidatedHistory(ctx context.Context, claim OperationAttemptClaim, candidate OperationHistoryRecord, ref OperationHistoryRecordRef, validator OperationPlanProbeHistoryRecordValidator, now time.Time) error {
 	if store == nil || ctx == nil || ctx.Err() != nil || !validOperationAttemptClaim(claim) || validator == nil || now.IsZero() || ref.RecordID == "" || len(ref.RecordID) > 256 || ref.AppendedAt.IsZero() || ref.AppendedAt.After(now) {
 		return ErrOperationAttemptUnavailable
 	}
-	sealed, err := validator.ValidateStoredOperationHistoryRecord(ctx, candidate)
+	sealed, probeResult, err := validator.ValidateStoredOperationPlanProbeRecord(ctx, candidate)
 	if err != nil || sealed.Validate() != nil || !sealed.Identity.MatchesOperationAttempt(claim) || !sealed.AttemptStartedAt.Equal(claim.StartedAt.UTC()) || sealed.ValidatedAt.After(ref.AppendedAt) {
 		return ErrOperationAttemptUnavailable
 	}
@@ -477,15 +477,10 @@ func (store *OperationAttemptStore) CompleteAttemptFromValidatedHistory(ctx cont
 	if err != nil || ref.SHA256 != contentSHA {
 		return ErrOperationAttemptUnavailable
 	}
-	decoder := json.NewDecoder(bytes.NewReader(sealed.ReceiptBytes))
-	decoder.DisallowUnknownFields()
-	var receipt operationPlanProbeReceipt
-	if decoder.Decode(&receipt) != nil || ensureEOF(decoder) != nil || !receipt.Execution.RequestStarted || !receipt.Observation.ResponseObserved {
+	if !probeResult.RequestStarted || probeResult.ObservedAt.IsZero() {
 		return ErrOperationAttemptUnavailable
 	}
-	expected := operationPlanProbeExpectationFromReceipt(receipt, claim.StartedAt)
-	probeResult, err := ValidateOperationPlanProbeReceipt(sealed.ReceiptBytes, expected, claim.StartedAt, sealed.ValidatedAt, operationPlanProbeExitCode(receipt.Observation.Outcome))
-	if err != nil || probeResult.ReceiptSHA256 != sealed.ReceiptSHA256 {
+	if probeResult.ReceiptSHA256 != sealed.ReceiptSHA256 {
 		return ErrOperationAttemptUnavailable
 	}
 	state, category := operationObservationClassification(probeResult)

@@ -10,7 +10,7 @@ import (
 )
 
 func TestHealthRegistryOperationsPageV2Schema(t *testing.T) {
-	const expectedSchemaSHA256 = "da9efd880444ad46174269fc65f97415b7352e74ed9de093db294a5951e6e5ab"
+	const expectedSchemaSHA256 = "cf20e703076bafe97845245beb472000b03f574e1d01e145b9a3d9a1f06cf180"
 	if got := schemas.HealthRegistryOperationsPageV2SchemaSHA256(); got != expectedSchemaSHA256 {
 		t.Fatalf("pinned page schema digest = %s, want %s", got, expectedSchemaSHA256)
 	}
@@ -90,10 +90,17 @@ func TestHealthRegistryOperationsPageV2Schema(t *testing.T) {
 	}
 	page.Operations[0].GatusDeliveryState = "not_applicable"
 	requestNotStarted := false
+	page.Operations[0].AttemptState = "deferred"
+	page.Operations[0].ExecutionBlockReason = "quota_capacity"
 	page.Operations[0].RequestStarted = &requestNotStarted
 	raw, _ = json.Marshal(page)
+	if err := schemas.ValidateHealthRegistryOperationsPageV2(raw); err != nil {
+		t.Fatalf("schema rejected a prior observation after a deferred attempt: %s (%v)", raw, err)
+	}
+	page.Operations[0].Attempted = false
+	raw, _ = json.Marshal(page)
 	if err := schemas.ValidateHealthRegistryOperationsPageV2(raw); err == nil {
-		t.Fatal("schema accepted an observation-only response without a request start")
+		t.Fatal("schema accepted an observation-only result without sticky request evidence")
 	}
 }
 

@@ -18,7 +18,7 @@ func testOperationPlanProbeExpectation(now time.Time) OperationPlanProbeExpectat
 		RegistrySHA256: strings.Repeat("d", 64), RegistryRevision: strings.Repeat("b", 40), ReleaseManifestSHA256: strings.Repeat("e", 64),
 		OperationManifestSHA256: strings.Repeat("f", 64), ProviderIndexSHA256: strings.Repeat("1", 64), PlanSchemaSHA256: strings.Repeat("2", 64),
 		IndexSHA256: strings.Repeat("3", 64), ShardSHA256: strings.Repeat("4", 64), SourceIdentitySetSHA256: strings.Repeat("5", 64),
-		SourceID: "data_go_kr", OperationID: strings.Repeat("6", 64), Provider: "data.go.kr", AdapterID: "data-go-kr", Protocol: "REST",
+		SourceID: "data_go_kr", OperationID: strings.Repeat("6", 64), Provider: "data.go.kr", AdapterID: "data-go-kr", Protocol: "REST", ResponseAssertionKind: "json_contract",
 		RequestTimeout: 5 * time.Second, StartedAt: now.UTC(),
 	}
 }
@@ -41,7 +41,7 @@ func testOperationPlanProbeReceipt(expected OperationPlanProbeExpectation, obser
 		},
 		Operation:   operationPlanProbeOperation{OperationID: expected.OperationID, SourceID: expected.SourceID, Provider: expected.Provider, AdapterID: expected.AdapterID, Protocol: expected.Protocol},
 		Execution:   operationPlanProbeExecution{RequestStarted: requestStarted, RequestBudget: requestBudget, TimeoutMS: expected.RequestTimeout.Milliseconds(), DurationMS: 1},
-		Observation: operationPlanProbeObservation{ResponseObserved: responseObserved, ObservedAt: observed, HTTPStatus: httpStatus, Outcome: outcome, ReasonCode: reason, AssertionKind: "json_contract", AssertionStatus: assertionStatus},
+		Observation: operationPlanProbeObservation{ResponseObserved: responseObserved, ObservedAt: observed, HTTPStatus: httpStatus, Outcome: outcome, ReasonCode: reason, AssertionKind: expected.ResponseAssertionKind, AssertionStatus: assertionStatus},
 		Redaction:   operationPlanProbeRedaction{CredentialValuesRemoved: true, CredentialReferencesRemoved: true, CredentialEnvNamesRemoved: true, QueryValuesRemoved: true, RequestBodyRemoved: true, ResponseBodyRemoved: true, ResponseRowsRemoved: true, EndpointDetailsRemoved: true, QuotaDetailsRemoved: true},
 	}
 }
@@ -95,6 +95,27 @@ func TestValidateOperationPlanProbeReceiptRequiresCanonicalIdentityAndState(t *t
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := ValidateOperationPlanProbeReceipt(test.raw, test.expected, started, received, test.exitCode); err == nil {
 				t.Fatal("invalid receipt accepted")
+			}
+		})
+	}
+
+	observationOnly := expected
+	observationOnly.ResponseAssertionKind = "observation_only"
+	semanticsReceipt := marshalOperationPlanProbeReceipt(t, testOperationPlanProbeReceipt(observationOnly, observed, "indeterminate", "response_semantics_unestablished", "not_run", true, true, 1, 204))
+	if parsed, err := ValidateOperationPlanProbeReceipt(semanticsReceipt, observationOnly, started, received, 4); err != nil || parsed.Outcome != "indeterminate" || parsed.HTTPStatus != 204 {
+		t.Fatalf("reviewed observation-only 2xx tuple rejected: %#v (%v)", parsed, err)
+	}
+	httpFailure := marshalOperationPlanProbeReceipt(t, testOperationPlanProbeReceipt(observationOnly, observed, "unhealthy", "response_http_failure", "failed", true, true, 1, 503))
+	if parsed, err := ValidateOperationPlanProbeReceipt(httpFailure, observationOnly, started, received, 4); err != nil || parsed.Outcome != "unhealthy" || parsed.HTTPStatus != 503 {
+		t.Fatalf("reviewed observation-only HTTP failure tuple rejected: %#v (%v)", parsed, err)
+	}
+	for name, invalid := range map[string][]byte{
+		"2xx cannot assert healthy":     marshalOperationPlanProbeReceipt(t, testOperationPlanProbeReceipt(observationOnly, observed, "healthy", "response_assertion_passed", "passed", true, true, 1, 204)),
+		"semantic unknown requires 2xx": marshalOperationPlanProbeReceipt(t, testOperationPlanProbeReceipt(observationOnly, observed, "indeterminate", "response_semantics_unestablished", "not_run", true, true, 1, 503)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ValidateOperationPlanProbeReceipt(invalid, observationOnly, started, received, 4); err == nil {
+				t.Fatal("incoherent observation-only receipt accepted")
 			}
 		})
 	}

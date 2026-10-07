@@ -64,6 +64,70 @@ func TestOperationReadModelBuildsPinnedPageAndSeparatesProviderAndHealthTimes(t 
 	}
 }
 
+func TestOperationReadModelKeepsObservationOnlyResultAcrossNewAttemptState(t *testing.T) {
+	for _, nextState := range []string{"deferred", "claimed"} {
+		t.Run(nextState, func(t *testing.T) {
+			now := time.Date(2026, 10, 7, 5, 0, 0, 0, time.UTC)
+			model := testOperationReadModelForAPIProgress(t, now)
+			operationID := strings.Repeat("a", 63) + "1"
+			binding := testOperationReadModelAttemptBinding(t, model, "data_go_kr", operationID)
+			started := true
+			observedAt := now.Add(-2 * time.Second)
+			receivedAt := now.Add(-time.Second)
+			status := 200
+			observation := OperationReadModelAttempt{
+				SourceID: "data_go_kr", OperationID: operationID, LatestPlanBinding: binding, ObservationPlanBinding: &binding,
+				AttemptState: "observed", ObservationAttemptState: "observed", ReceiptValidated: true,
+				RequestStarted: &started, EverRequestStarted: true,
+				ResultState: "indeterminate", ResultCategory: "response_semantics_unestablished", HTTPStatus: status,
+				ProviderObservedAt: observedAt, HealthReceivedAt: receivedAt, GatusDeliveryState: "not_applicable", UpdatedAt: now,
+			}
+			if err := model.ApplyAttempt(observation); err != nil {
+				t.Fatalf("apply validated observation A: %v", err)
+			}
+
+			latest := OperationReadModelAttempt{
+				SourceID: "data_go_kr", OperationID: operationID, LatestPlanBinding: binding, ObservationPlanBinding: &binding,
+				AttemptState: nextState, ObservationAttemptState: "observed", EverRequestStarted: true,
+				ResultState: "indeterminate", ResultCategory: "response_semantics_unestablished", HTTPStatus: status,
+				ProviderObservedAt: observedAt, HealthReceivedAt: receivedAt, GatusDeliveryState: "not_applicable", UpdatedAt: now.Add(time.Second),
+			}
+			if nextState == "deferred" {
+				notStarted := false
+				latest.RequestStarted = &notStarted
+				latest.ExecutionBlockReason = "quota_capacity"
+			}
+			if err := model.ApplyAttempt(latest); err != nil {
+				t.Fatalf("apply newer no-observation attempt B: %v", err)
+			}
+			page, err := model.PageOperations(OperationPageQuery{APIID: "api-1", Limit: 10}, now.Add(2*time.Second))
+			if err != nil || len(page.Operations) == 0 {
+				t.Fatalf("read observation after attempt B: page=%#v err=%v", page, err)
+			}
+			var row *OperationReadModelRow
+			for index := range page.Operations {
+				if page.Operations[index].RegistryOperationID == operationID {
+					row = &page.Operations[index]
+					break
+				}
+			}
+			if row == nil || row.AttemptState != nextState || !row.Attempted || row.ObservationAttemptState != "observed" || row.ResultCategory != "response_semantics_unestablished" || row.ResultState != "indeterminate" || row.ProviderHTTPStatus == nil || *row.ProviderHTTPStatus != status || row.GatusDeliveryState != "not_applicable" {
+				t.Fatalf("new attempt state replaced or invalidated the prior observation: %#v", row)
+			}
+			if nextState == "deferred" && (row.RequestStarted == nil || *row.RequestStarted || row.ExecutionBlockReason != "quota_capacity") {
+				t.Fatalf("deferred attempt state was not preserved independently: %#v", row)
+			}
+			if nextState == "claimed" && row.RequestStarted != nil {
+				t.Fatalf("claimed attempt was projected as request-started: %#v", row)
+			}
+			encoded, err := json.Marshal(page)
+			if err != nil || schemas.ValidateHealthRegistryOperationsPageV2(encoded) != nil {
+				t.Fatalf("prior observation page failed the pinned schema after %s attempt: %s (%v)", nextState, encoded, err)
+			}
+		})
+	}
+}
+
 func TestOperationReadModelExactAPIJoinProgressAndSafeSearch(t *testing.T) {
 	readNow := time.Date(2026, 10, 7, 4, 0, 0, 0, time.UTC)
 	model := testOperationReadModelForAPIProgress(t, readNow)
