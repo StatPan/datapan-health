@@ -5,11 +5,13 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import sys
 import tarfile
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location('build_receipt', ROOT / 'scripts/write-runtime-build-receipt.py')
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
