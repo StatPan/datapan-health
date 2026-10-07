@@ -177,11 +177,11 @@ func LoadRegistryAPIMetadata(path, pinPath string, canaries CanaryConfig) (Regis
 	metadata.healthCatalogRevision = canaries.ConsumptionProvenance.RegistryDatasetRevision
 	metadata.verifiedArtifactSHA256 = artifactSHA
 	metadata.verifiedSourceSHA256 = metadata.Source.SHA256
-	projection, err := json.Marshal(metadata)
+	projectionBytes, err := json.Marshal(metadata)
 	if err != nil {
 		return RegistryAPIMetadata{}, errors.New("invalid Registry API metadata")
 	}
-	projectionSum := sha256.Sum256(projection)
+	projectionSum := sha256.Sum256(projectionBytes)
 	metadata.verifiedProjectionSHA256 = hex.EncodeToString(projectionSum[:])
 	return metadata, nil
 }

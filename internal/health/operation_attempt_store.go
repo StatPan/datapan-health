@@ -12,17 +12,19 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
 
 const (
-	OperationAttemptStoreSchemaVersion = "datapan.health-operation-attempt-store.v1"
-	maxOperationAttemptStateBytes      = 32 * 1024
-	maxOperationAttemptHistory         = 32
-	maxOperationAttemptStoreOperations = 16_000
-	maxOperationAttemptLease           = 10 * time.Minute
-	maxOperationAttemptStoreBytes      = int64(512 * 1024 * 1024)
+	OperationAttemptStoreSchemaVersion   = "datapan.health-operation-attempt-store.v2"
+	maxOperationAttemptStateBytes        = 32 * 1024
+	maxOperationAttemptHistory           = 24
+	maxOperationAttemptStoreOperations   = 16_000
+	maxOperationAttemptLease             = 10 * time.Minute
+	maxOperationAttemptStoreBytes        = int64(512 * 1024 * 1024)
+	operationAttemptIdentityBatchMaximum = 256
 )
 
 var (
@@ -103,19 +105,35 @@ type OperationStoredAttempt struct {
 }
 
 type operationAttemptState struct {
-	SchemaVersion      string                   `json:"schema_version"`
-	OperationID        string                   `json:"operation_id"`
-	SourceID           string                   `json:"source_id"`
-	Generation         uint64                   `json:"generation"`
-	EverRequestStarted bool                     `json:"ever_request_started"`
-	Attempts           []OperationStoredAttempt `json:"attempts"`
+	SchemaVersion                 string                   `json:"schema_version"`
+	OperationID                   string                   `json:"operation_id"`
+	SourceID                      string                   `json:"source_id"`
+	Generation                    uint64                   `json:"generation"`
+	EverRequestStarted            bool                     `json:"ever_request_started"`
+	CurrentPlanSHA256             string                   `json:"current_plan_sha256"`
+	CurrentPlanEverRequestStarted bool                     `json:"current_plan_ever_request_started"`
+	Attempts                      []OperationStoredAttempt `json:"attempts"`
 }
 
 // OperationAttemptStore stores one bounded, atomically replaced state file per
 // operation. A shared flock coordinates processes on one filesystem with
 // working flock semantics; this alone is not a cross-host guarantee.
 type OperationAttemptStore struct {
-	root string
+	root       string
+	stampsMu   sync.Mutex
+	readStamps map[string]operationAttemptFileStamp
+}
+
+type OperationAttemptIdentity struct {
+	SourceID    string
+	OperationID string
+}
+
+type operationAttemptFileStamp struct {
+	exists     bool
+	modifiedNS int64
+	size       int64
+	inode      uint64
 }
 
 type OperationAttemptStorageBudget struct {
@@ -155,7 +173,96 @@ func OpenOperationAttemptStore(root string) (*OperationAttemptStore, error) {
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || os.Chmod(abs, 0o700) != nil {
 		return nil, ErrOperationAttemptUnavailable
 	}
-	return &OperationAttemptStore{root: abs}, nil
+	return &OperationAttemptStore{root: abs, readStamps: make(map[string]operationAttemptFileStamp)}, nil
+}
+
+// SnapshotReadModelAttemptsForIdentities reads only the deterministic state
+// files for one bounded Registry identity batch. File stamps let the separate
+// public process skip unchanged files without walking the whole store or
+// taking the writer flock. A later atomic rename changes the inode/stamp and
+// is picked up on the next pass.
+func (store *OperationAttemptStore) SnapshotReadModelAttemptsForIdentities(identities []OperationAttemptIdentity) ([]OperationReadModelAttempt, error) {
+	if store == nil || len(identities) > operationAttemptIdentityBatchMaximum {
+		return nil, ErrOperationAttemptUnavailable
+	}
+	store.stampsMu.Lock()
+	defer store.stampsMu.Unlock()
+	if store.readStamps == nil {
+		store.readStamps = make(map[string]operationAttemptFileStamp)
+	}
+	snapshots := make([]OperationReadModelAttempt, 0, len(identities))
+	stampUpdates := make(map[string]operationAttemptFileStamp, len(identities))
+	seen := make(map[string]struct{}, len(identities))
+	for _, identity := range identities {
+		if !operationSourceIDPattern.MatchString(identity.SourceID) || identity.OperationID == "" || len(identity.OperationID) > 256 {
+			return nil, ErrOperationAttemptUnavailable
+		}
+		key := operationReadModelIdentityKey(identity.SourceID, identity.OperationID)
+		if _, duplicate := seen[key]; duplicate {
+			return nil, ErrOperationAttemptUnavailable
+		}
+		seen[key] = struct{}{}
+		path := store.statePath(identity.SourceID, identity.OperationID)
+		stamp, exists, err := operationAttemptFileStampAt(path)
+		if err != nil {
+			return nil, ErrOperationAttemptUnavailable
+		}
+		previous, known := store.readStamps[path]
+		if known && previous == stamp {
+			continue
+		}
+		if !exists {
+			if known && previous.exists {
+				return nil, ErrOperationAttemptUnavailable
+			}
+			stampUpdates[path] = stamp
+			continue
+		}
+		state, found, err := store.readState(identity.SourceID, identity.OperationID)
+		if err != nil || !found {
+			return nil, ErrOperationAttemptUnavailable
+		}
+		after, stillExists, err := operationAttemptFileStampAt(path)
+		if err != nil || !stillExists || after != stamp {
+			// A writer replaced this one file while we read it. Do not advance the
+			// cache stamp; the next bounded pass will read the settled version.
+			continue
+		}
+		projection, ok := operationReadModelAttemptFromState(state)
+		if !ok || projection.SourceID != identity.SourceID || projection.OperationID != identity.OperationID {
+			return nil, ErrOperationAttemptUnavailable
+		}
+		stampUpdates[path] = stamp
+		snapshots = append(snapshots, projection)
+	}
+	sort.Slice(snapshots, func(i, j int) bool {
+		if snapshots[i].SourceID != snapshots[j].SourceID {
+			return snapshots[i].SourceID < snapshots[j].SourceID
+		}
+		return snapshots[i].OperationID < snapshots[j].OperationID
+	})
+	// Do not advance any stamp until every identity in this batch has passed
+	// validation; otherwise a later corrupt file could discard earlier decoded
+	// snapshots and make the next pass skip them permanently.
+	for path, stamp := range stampUpdates {
+		store.readStamps[path] = stamp
+	}
+	return snapshots, nil
+}
+
+func operationAttemptFileStampAt(path string) (operationAttemptFileStamp, bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return operationAttemptFileStamp{}, false, nil
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() < 1 || info.Size() > maxOperationAttemptStateBytes {
+		return operationAttemptFileStamp{}, false, ErrOperationAttemptUnavailable
+	}
+	stamp := operationAttemptFileStamp{exists: true, modifiedNS: info.ModTime().UnixNano(), size: info.Size()}
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		stamp.inode = stat.Ino
+	}
+	return stamp, true, nil
 }
 
 func (store *OperationAttemptStore) BeginAttempt(binding OperationAttemptBinding, attemptID string, now time.Time, lease time.Duration) (OperationAttemptClaim, error) {
@@ -204,6 +311,11 @@ func (store *OperationAttemptStore) BeginAttempt(binding OperationAttemptBinding
 			}
 			state.Attempts = append([]OperationStoredAttempt(nil), state.Attempts[len(state.Attempts)-maxOperationAttemptHistory+1:]...)
 		}
+		bindingSHA := operationAttemptPlanBindingSHA256(binding)
+		if state.CurrentPlanSHA256 != bindingSHA {
+			state.CurrentPlanSHA256 = bindingSHA
+			state.CurrentPlanEverRequestStarted = false
+		}
 		state.Generation++
 		stored := OperationStoredAttempt{Binding: binding, AttemptID: attemptID, Generation: state.Generation, StartedAt: now, LeaseExpiresAt: now.Add(lease), State: "claimed", DeliveryState: "not_ready"}
 		state.Attempts = append(state.Attempts, stored)
@@ -249,6 +361,9 @@ func (store *OperationAttemptStore) CompleteAttempt(claim OperationAttemptClaim,
 		attempt.Result = &copy
 		attempt.DeliveryState = "not_ready"
 		state.EverRequestStarted = true
+		if state.CurrentPlanSHA256 == operationAttemptPlanBindingSHA256(attempt.Binding) {
+			state.CurrentPlanEverRequestStarted = true
+		}
 		return nil
 	})
 }
@@ -273,6 +388,9 @@ func (store *OperationAttemptStore) RecordRequestStartedWithoutObservation(claim
 		attempt.FinishedAt = now
 		attempt.ReceiptSHA256 = receiptSHA
 		state.EverRequestStarted = true
+		if state.CurrentPlanSHA256 == operationAttemptPlanBindingSHA256(attempt.Binding) {
+			state.CurrentPlanEverRequestStarted = true
+		}
 		return nil
 	})
 }
@@ -495,28 +613,27 @@ func operationReadModelAttemptFromState(state operationAttemptState) (OperationR
 	latest := state.Attempts[len(state.Attempts)-1]
 	projection := OperationReadModelAttempt{
 		SourceID: state.SourceID, OperationID: state.OperationID, AttemptState: latest.State, ObservationAttemptState: "none",
-		ReceiptValidated: latest.ReceiptValidated, RequestStarted: cloneBool(latest.RequestStarted),
-		EverRequestStarted: state.EverRequestStarted, GatusDeliveryState: "not_ready", UpdatedAt: latest.StartedAt,
+		LatestPlanBinding: latest.Binding,
+		ReceiptValidated:  latest.ReceiptValidated, RequestStarted: cloneBool(latest.RequestStarted),
+		EverRequestStarted: state.CurrentPlanSHA256 == operationAttemptPlanBindingSHA256(latest.Binding) && state.CurrentPlanEverRequestStarted,
+		GatusDeliveryState: "not_ready", UpdatedAt: latest.StartedAt,
 	}
-	if !latest.FinishedAt.IsZero() && latest.FinishedAt.After(projection.UpdatedAt) {
-		projection.UpdatedAt = latest.FinishedAt
-	}
-	if latest.DeliveryAckAt.After(projection.UpdatedAt) {
-		projection.UpdatedAt = latest.DeliveryAckAt
-	}
-	if latest.GatusReceivedAt.After(projection.UpdatedAt) {
-		projection.UpdatedAt = latest.GatusReceivedAt
-	}
+	projection.UpdatedAt = laterOperationAttemptTime(projection.UpdatedAt, latest.FinishedAt)
 	for index := len(state.Attempts) - 1; index >= 0; index-- {
 		attempt := state.Attempts[index]
 		if attempt.Result == nil {
 			continue
 		}
+		observationBinding := attempt.Binding
+		projection.ObservationPlanBinding = &observationBinding
 		projection.ResultState = attempt.Result.State
 		projection.ResultCategory = attempt.Result.Category
 		projection.ObservationAttemptState = "observed"
 		projection.ProviderObservedAt = attempt.Result.ObservedAt
 		projection.HealthReceivedAt = attempt.Result.ReceivedAt
+		projection.UpdatedAt = laterOperationAttemptTime(projection.UpdatedAt,
+			attempt.StartedAt, attempt.FinishedAt, attempt.Result.ObservedAt, attempt.Result.ReceivedAt,
+			attempt.DeliveryStartedAt, attempt.DeliveryAckAt, attempt.GatusReceivedAt)
 		switch attempt.DeliveryState {
 		case "not_ready", "pending":
 			projection.GatusDeliveryState = "pending"
@@ -532,6 +649,31 @@ func operationReadModelAttemptFromState(state operationAttemptState) (OperationR
 		break
 	}
 	return projection, validOperationReadModelAttempt(projection)
+}
+
+func operationAttemptPlanBindingSHA256(binding OperationAttemptBinding) string {
+	identity := struct {
+		SchemaVersion      string        `json:"schema_version"`
+		SourceID           string        `json:"source_id"`
+		OperationID        string        `json:"operation_id"`
+		RegistryRevision   string        `json:"registry_revision"`
+		ReleaseManifestSHA string        `json:"release_manifest_sha256"`
+		IndexSHA           string        `json:"index_sha256"`
+		ShardSHA           string        `json:"shard_sha256"`
+		ObservationPeriod  time.Duration `json:"observation_period_ns"`
+	}{"datapan.health-operation-plan-binding.v1", binding.SourceID, binding.OperationID, binding.RegistryRevision, binding.ReleaseManifestSHA, binding.IndexSHA, binding.ShardSHA, binding.ObservationPeriod}
+	raw, _ := json.Marshal(identity)
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func laterOperationAttemptTime(current time.Time, candidates ...time.Time) time.Time {
+	for _, candidate := range candidates {
+		if candidate.After(current) {
+			current = candidate
+		}
+	}
+	return current
 }
 
 // PendingDeliveries returns the bounded per-operation outbox entries. It may
@@ -679,6 +821,13 @@ func validOperationAttemptState(state operationAttemptState, sourceID, operation
 	if state.SchemaVersion != OperationAttemptStoreSchemaVersion || state.SourceID != sourceID || state.OperationID != operationID || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 || state.Generation == 0 || len(state.Attempts) == 0 || len(state.Attempts) > maxOperationAttemptHistory {
 		return false
 	}
+	latest := state.Attempts[len(state.Attempts)-1]
+	if !sha256Pattern.MatchString(state.CurrentPlanSHA256) || state.CurrentPlanSHA256 != operationAttemptPlanBindingSHA256(latest.Binding) || state.CurrentPlanEverRequestStarted && !state.EverRequestStarted {
+		return false
+	}
+	if latest.RequestStarted != nil && *latest.RequestStarted && !state.CurrentPlanEverRequestStarted {
+		return false
+	}
 	var previousGeneration uint64
 	for _, attempt := range state.Attempts {
 		if !validOperationAttemptBinding(attempt.Binding) || attempt.Binding.SourceID != sourceID || attempt.Binding.OperationID != operationID || !quotaAttemptIDPattern.MatchString(attempt.AttemptID) || attempt.Generation <= previousGeneration || attempt.Generation > state.Generation || attempt.StartedAt.IsZero() || attempt.LeaseExpiresAt.Before(attempt.StartedAt) || attempt.LeaseExpiresAt.Sub(attempt.StartedAt) > maxOperationAttemptLease || !validOperationAttemptStateName(attempt.State) || !validOperationDeliveryState(attempt.DeliveryState) || attempt.DeliveryAttempts < 0 || attempt.DeliveryAttempts > 1_000_000 {
@@ -732,7 +881,7 @@ func validOperationAttemptState(state operationAttemptState, sourceID, operation
 			return false
 		}
 	}
-	return state.Attempts[len(state.Attempts)-1].Generation <= state.Generation
+	return latest.Generation <= state.Generation
 }
 
 func validOperationAttemptStateName(value string) bool {

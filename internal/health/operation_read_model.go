@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/StatPan/datapan-health/schemas"
 )
@@ -35,6 +36,9 @@ var (
 	operationReadModelIPPattern                  = regexp.MustCompile(`\b(10|127|192\.168|172\.(1[6-9]|2[0-9]|3[01]))(\.\d{1,3}){2}\b`)
 	operationReadModelSecretPattern              = regexp.MustCompile(`(?i)(\b(api[_ -]?key|service[_ -]?key|authorization|bearer|password|token|secret|client[_ -]?secret)\b\s*[:=]|[?&][a-z0-9_.-]+=)`)
 	operationReadModelPathPattern                = regexp.MustCompile(`(^|[\s:])/([a-z0-9._~%-]+/)*[a-z0-9._~%-]*`)
+	operationReadModelURLPattern                 = regexp.MustCompile(`(?i)\b(?:https?://|www\.)[^\s<>"')]+`)
+	operationReadModelRequestTargetPattern       = regexp.MustCompile(`(?i)\b(?:GET|POST|PUT|DELETE|PATCH)\s+/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*`)
+	operationReadModelMarkupPattern              = regexp.MustCompile(`(?is)<(?:/?[a-z][^>]*|!--.*?--)\s*>`)
 )
 
 // RegistryOperationMetadata contains only fields already projected and
@@ -68,6 +72,8 @@ type RegistryAPIMetadataPin struct {
 type OperationReadModelAttempt struct {
 	SourceID                string
 	OperationID             string
+	LatestPlanBinding       OperationAttemptBinding
+	ObservationPlanBinding  *OperationAttemptBinding
 	AttemptState            string // claimed, request_started, observed, failed, unknown
 	ObservationAttemptState string // none, observed; separate from the latest claim state
 	ReceiptValidated        bool
@@ -149,23 +155,26 @@ type OperationReadModelPage struct {
 }
 
 type OperationReadModelRow struct {
-	SourceID                 string     `json:"source_id"`
-	RegistryOperationID      string     `json:"registry_operation_id"`
-	APIID                    *string    `json:"api_id"`
-	Provider                 string     `json:"provider"`
-	AdapterID                string     `json:"adapter_id"`
-	Protocol                 string     `json:"protocol"`
-	OperationName            string     `json:"operation_name,omitempty"`
-	OperationNameState       string     `json:"operation_name_state"`
-	Title                    string     `json:"title,omitempty"`
-	TitleState               string     `json:"title_state"`
-	Organization             string     `json:"organization,omitempty"`
-	OrganizationState        string     `json:"organization_state"`
-	Purpose                  string     `json:"purpose,omitempty"`
-	PurposeState             string     `json:"purpose_state"`
-	RequestPlanState         string     `json:"request_plan_state"`
-	RuntimeBindingState      string     `json:"runtime_binding_state"`
-	AdmissionState           string     `json:"admission_state"`
+	SourceID            string  `json:"source_id"`
+	RegistryOperationID string  `json:"registry_operation_id"`
+	APIID               *string `json:"api_id"`
+	Provider            string  `json:"provider"`
+	AdapterID           string  `json:"adapter_id"`
+	Protocol            string  `json:"protocol"`
+	OperationName       string  `json:"operation_name,omitempty"`
+	OperationNameState  string  `json:"operation_name_state"`
+	Title               string  `json:"title,omitempty"`
+	TitleState          string  `json:"title_state"`
+	Organization        string  `json:"organization,omitempty"`
+	OrganizationState   string  `json:"organization_state"`
+	Purpose             string  `json:"purpose,omitempty"`
+	PurposeState        string  `json:"purpose_state"`
+	RequestPlanState    string  `json:"request_plan_state"`
+	RuntimeBindingState string  `json:"runtime_binding_state"`
+	AdmissionState      string  `json:"admission_state"`
+	// InventoryUnknown is immutable release-scope metadata. It must not be
+	// inferred from MissingReason, which changes as attempts are observed.
+	InventoryUnknown         bool       `json:"inventory_unknown"`
 	MissingReason            string     `json:"missing_reason,omitempty"`
 	ObservationPeriodSeconds *int64     `json:"observation_period_seconds"`
 	NextDueAt                *time.Time `json:"next_due_at"`
@@ -210,13 +219,38 @@ type OperationReadModel struct {
 	staticRows             []OperationReadModelRow
 	byIdentity             map[string]int
 	byAPI                  map[string][]int
+	expectedBindings       map[string]operationReadModelPlanBinding
+}
+
+// operationReadModelPlanBinding contains the immutable Registry plan fields
+// used to prevent a durable attempt from being relabeled under a later plan.
+// GatusKey is separately validated because it is a delivery target, not part
+// of the Registry operation-plan artifact.
+type operationReadModelPlanBinding struct {
+	SourceID           string
+	OperationID        string
+	RegistryRevision   string
+	ReleaseManifestSHA string
+	IndexSHA           string
+	ShardSHA           string
+	ObservationPeriod  time.Duration
 }
 
 // NewOperationReadModel verifies the full pinned plan once, joins metadata by
 // exact source, Registry operation ID, and API ID, and builds an in-memory index. A caller
 // refreshes attempts from the durable store at startup and applies subsequent
 // validated updates with ApplyAttempt.
-func NewOperationReadModel(plan PinnedOperationObservationPlan, metadataPin RegistryAPIMetadataPin, metadata []RegistryOperationMetadata, attempts []OperationReadModelAttempt, generatedAt time.Time) (*OperationReadModel, error) {
+func NewOperationReadModel(plan PinnedOperationObservationPlan, metadata VerifiedRegistryAPIMetadata, attempts []OperationReadModelAttempt, generatedAt time.Time) (*OperationReadModel, error) {
+	if !metadata.verified || !plan.bindsSourceInventory("data_go_kr", "data.go.kr", "data/data-go-kr.registry.json", metadata.sourceDigest(), metadata.identitySetSHA256) {
+		return nil, ErrOperationReadModelUnavailable
+	}
+	return newOperationReadModel(plan, metadata.pin, metadata.operations, attempts, generatedAt)
+}
+
+// newOperationReadModel is kept package-private so synthetic fixtures can
+// exercise paging and projection logic without manufacturing trusted runtime
+// metadata. Production callers must use the verified artifact loader above.
+func newOperationReadModel(plan PinnedOperationObservationPlan, metadataPin RegistryAPIMetadataPin, metadata []RegistryOperationMetadata, attempts []OperationReadModelAttempt, generatedAt time.Time) (*OperationReadModel, error) {
 	if !plan.state.verified || generatedAt.IsZero() || !validRegistryAPIMetadataPin(metadataPin) || len(metadata) != metadataPin.OperationCount {
 		return nil, ErrOperationReadModelUnavailable
 	}
@@ -241,6 +275,7 @@ func NewOperationReadModel(plan PinnedOperationObservationPlan, metadataPin Regi
 		generatedAt:            generatedAt.UTC(),
 		byIdentity:             make(map[string]int),
 		byAPI:                  make(map[string][]int),
+		expectedBindings:       make(map[string]operationReadModelPlanBinding, plan.Counts().KnownOperations),
 	}
 	joinedMetadata := make(map[string]struct{}, len(metadataByOperationID))
 	for shardIndex := 0; shardIndex < plan.ShardCount(); shardIndex++ {
@@ -264,6 +299,15 @@ func NewOperationReadModel(plan PinnedOperationObservationPlan, metadataPin Regi
 				return nil, ErrOperationReadModelUnavailable
 			}
 			model.byIdentity[key] = len(model.rows)
+			shard := plan.state.index.Shards[shardIndex]
+			if shard.SourceID != record.SourceID {
+				return nil, ErrOperationReadModelUnavailable
+			}
+			model.expectedBindings[key] = operationReadModelPlanBinding{
+				SourceID: record.SourceID, OperationID: record.OperationID,
+				RegistryRevision: plan.RegistryRevision(), ReleaseManifestSHA: plan.binding.ReleaseManifestSHA256,
+				IndexSHA: plan.binding.IndexSHA256, ShardSHA: shard.SHA256, ObservationPeriod: record.ObservationPeriod,
+			}
 			model.rows = append(model.rows, row)
 		}
 	}
@@ -278,8 +322,8 @@ func NewOperationReadModel(plan PinnedOperationObservationPlan, metadataPin Regi
 	})
 	model.reindex()
 	model.staticRows = append([]OperationReadModelRow(nil), model.rows...)
-	for _, attempt := range attempts {
-		if err := model.ApplyAttempt(attempt); err != nil {
+	if len(attempts) > 0 {
+		if err := model.RefreshAttempts(attempts, generatedAt); err != nil {
 			return nil, ErrOperationReadModelUnavailable
 		}
 	}
@@ -298,7 +342,17 @@ func (model *OperationReadModel) ApplyAttempt(attempt OperationReadModelAttempt)
 	if !ok {
 		return ErrOperationReadModelUnavailable
 	}
+	key := operationReadModelIdentityKey(attempt.SourceID, attempt.OperationID)
+	if !operationReadModelLatestBindingMatches(model.expectedBindings[key], attempt.LatestPlanBinding) {
+		return ErrOperationReadModelUnavailable
+	}
+	if attempt.ObservationPlanBinding != nil && !operationReadModelObservationBindingMatches(model.expectedBindings[key], *attempt.ObservationPlanBinding) {
+		attempt = withoutOperationReadModelObservation(attempt)
+	}
 	row := model.rows[index]
+	if attempt.ObservationAttemptState == "none" && index < len(model.staticRows) {
+		row.MissingReason = model.staticRows[index].MissingReason
+	}
 	applyOperationReadModelAttempt(&row, attempt)
 	model.rows[index] = row
 	if attempt.UpdatedAt.After(model.generatedAt) {
@@ -311,7 +365,7 @@ func (model *OperationReadModel) ApplyAttempt(attempt OperationReadModelAttempt)
 // bounded durable-store snapshot. It is intended for startup/background
 // refresh; page methods never read or stat operation files.
 func (model *OperationReadModel) RefreshAttempts(attempts []OperationReadModelAttempt, generatedAt time.Time) error {
-	if model == nil || generatedAt.IsZero() || len(attempts) > len(model.staticRows) {
+	if model == nil || generatedAt.IsZero() || len(attempts) > maxOperationAttemptStoreOperations {
 		return ErrOperationReadModelUnavailable
 	}
 	model.mu.Lock()
@@ -329,13 +383,48 @@ func (model *OperationReadModel) RefreshAttempts(attempts []OperationReadModelAt
 		seen[key] = struct{}{}
 		index, ok := model.byIdentity[key]
 		if !ok {
-			return ErrOperationReadModelUnavailable
+			// The durable store may retain an identity removed from this exact
+			// Registry release. It has no row in the current model.
+			continue
+		}
+		expected := model.expectedBindings[key]
+		if !operationReadModelLatestBindingMatches(expected, attempt.LatestPlanBinding) {
+			// Do not relabel an older plan's claim or result as current. The
+			// static row stays unobserved for this immutable release.
+			continue
+		}
+		if attempt.ObservationPlanBinding != nil && !operationReadModelObservationBindingMatches(expected, *attempt.ObservationPlanBinding) {
+			attempt = withoutOperationReadModelObservation(attempt)
 		}
 		applyOperationReadModelAttempt(&rows[index], attempt)
 	}
 	model.rows = rows
 	model.generatedAt = generatedAt.UTC()
 	return nil
+}
+
+func operationReadModelLatestBindingMatches(expected operationReadModelPlanBinding, actual OperationAttemptBinding) bool {
+	return expected.SourceID != "" && actual.SourceID == expected.SourceID && actual.OperationID == expected.OperationID &&
+		actual.RegistryRevision == expected.RegistryRevision && actual.ReleaseManifestSHA == expected.ReleaseManifestSHA &&
+		actual.IndexSHA == expected.IndexSHA && actual.ShardSHA == expected.ShardSHA && actual.ObservationPeriod == expected.ObservationPeriod
+}
+
+func operationReadModelObservationBindingMatches(expected operationReadModelPlanBinding, actual OperationAttemptBinding) bool {
+	return operationReadModelLatestBindingMatches(expected, actual)
+}
+
+func withoutOperationReadModelObservation(attempt OperationReadModelAttempt) OperationReadModelAttempt {
+	attempt.ObservationAttemptState = "none"
+	attempt.ResultState = ""
+	attempt.ResultCategory = ""
+	attempt.ProviderObservedAt = time.Time{}
+	attempt.HealthReceivedAt = time.Time{}
+	attempt.GatusDeliveryState = "not_ready"
+	attempt.GatusAcknowledgedAt = time.Time{}
+	attempt.GatusReadbackAt = time.Time{}
+	attempt.GatusObservedState = ""
+	attempt.ObservationPlanBinding = nil
+	return attempt
 }
 
 // RefreshFromStore obtains one bounded snapshot from the durable attempt
@@ -349,6 +438,95 @@ func (model *OperationReadModel) RefreshFromStore(store *OperationAttemptStore, 
 		return ErrOperationReadModelUnavailable
 	}
 	return model.RefreshAttempts(attempts, generatedAt)
+}
+
+// AttemptIdentities returns one bounded deterministic slice from the pinned
+// plan. A background reader can walk these slices without scanning the state
+// directory; public paging uses only the in-memory rows.
+func (model *OperationReadModel) AttemptIdentities(offset, limit int) ([]OperationAttemptIdentity, error) {
+	if model == nil || offset < 0 || limit < 1 || limit > operationAttemptIdentityBatchMaximum {
+		return nil, ErrOperationReadModelQuery
+	}
+	model.mu.RLock()
+	defer model.mu.RUnlock()
+	if offset > len(model.staticRows) {
+		return nil, ErrOperationReadModelQuery
+	}
+	end := offset + limit
+	if end > len(model.staticRows) {
+		end = len(model.staticRows)
+	}
+	identities := make([]OperationAttemptIdentity, 0, end-offset)
+	for _, row := range model.staticRows[offset:end] {
+		identities = append(identities, OperationAttemptIdentity{SourceID: row.SourceID, OperationID: row.RegistryOperationID})
+	}
+	return identities, nil
+}
+
+// RefreshFromStoreBatch checks at most 256 known identity files. The caller
+// schedules these bounded batches in a background refresh loop and tracks the
+// returned completion bit; no page request performs filesystem work.
+func (model *OperationReadModel) RefreshFromStoreBatch(store *OperationAttemptStore, offset, limit int, generatedAt time.Time) (nextOffset int, complete bool, err error) {
+	if store == nil || generatedAt.IsZero() {
+		return offset, false, ErrOperationReadModelUnavailable
+	}
+	identities, err := model.AttemptIdentities(offset, limit)
+	if err != nil || len(identities) == 0 {
+		return offset, false, ErrOperationReadModelUnavailable
+	}
+	attempts, err := store.SnapshotReadModelAttemptsForIdentities(identities)
+	if err != nil || model.ApplyAttempts(attempts, generatedAt) != nil {
+		return offset, false, ErrOperationReadModelUnavailable
+	}
+	nextOffset = offset + len(identities)
+	return nextOffset, nextOffset == len(model.staticRows), nil
+}
+
+// ApplyAttempts publishes one store batch atomically into the cached page
+// projection. Plan-mismatched historical state is ignored rather than
+// relabeled under the current Registry release.
+func (model *OperationReadModel) ApplyAttempts(attempts []OperationReadModelAttempt, generatedAt time.Time) error {
+	if model == nil || generatedAt.IsZero() || len(attempts) > operationAttemptIdentityBatchMaximum {
+		return ErrOperationReadModelUnavailable
+	}
+	model.mu.Lock()
+	defer model.mu.Unlock()
+	rows := append([]OperationReadModelRow(nil), model.rows...)
+	seen := make(map[string]struct{}, len(attempts))
+	for _, attempt := range attempts {
+		if !validOperationReadModelAttempt(attempt) {
+			return ErrOperationReadModelUnavailable
+		}
+		key := operationReadModelIdentityKey(attempt.SourceID, attempt.OperationID)
+		if _, duplicate := seen[key]; duplicate {
+			return ErrOperationReadModelUnavailable
+		}
+		seen[key] = struct{}{}
+		index, ok := model.byIdentity[key]
+		if !ok {
+			return ErrOperationReadModelUnavailable
+		}
+		expected := model.expectedBindings[key]
+		if !operationReadModelLatestBindingMatches(expected, attempt.LatestPlanBinding) {
+			continue
+		}
+		if attempt.ObservationPlanBinding != nil && !operationReadModelObservationBindingMatches(expected, *attempt.ObservationPlanBinding) {
+			attempt = withoutOperationReadModelObservation(attempt)
+		}
+		row := rows[index]
+		if attempt.ObservationAttemptState == "none" {
+			row.MissingReason = model.staticRows[index].MissingReason
+		}
+		applyOperationReadModelAttempt(&row, attempt)
+		refreshOperationReadModelFreshness(&row, generatedAt.UTC())
+		if row.ValidatePublicProjection(generatedAt.UTC()) != nil {
+			return ErrOperationReadModelUnavailable
+		}
+		rows[index] = row
+	}
+	model.rows = rows
+	model.generatedAt = generatedAt.UTC()
+	return nil
 }
 
 // LookupAPIProgress returns exact per-API identity-set rollups. It accepts at
@@ -524,7 +702,7 @@ func (model *OperationReadModel) identityCounts(at time.Time) OperationReadModel
 		row := original
 		refreshOperationReadModelFreshness(&row, at)
 		counts.Known++
-		if row.MissingReason == "inventory_unknown" {
+		if row.InventoryUnknown {
 			counts.InventoryUnknownOperations++
 			unknownScopes[row.SourceID] = struct{}{}
 		}
@@ -566,8 +744,8 @@ func (model *OperationReadModel) identityCounts(at time.Time) OperationReadModel
 func operationReadModelRow(record OperationObservationPlanRecord, metadata *RegistryOperationMetadata) OperationReadModelRow {
 	row := OperationReadModelRow{
 		SourceID: record.SourceID, RegistryOperationID: record.OperationID, Provider: safePlanLabel(record.Provider), AdapterID: safePlanLabel(record.AdapterID), Protocol: safePlanLabel(record.Protocol),
-		OperationName: safeOperationReadText(record.OperationName), OperationNameState: "missing", TitleState: "missing", OrganizationState: "missing", PurposeState: "missing",
-		RequestPlanState: record.RequestPlanStatus, RuntimeBindingState: record.RuntimeBindingStatus, AdmissionState: record.AdmissionStatus,
+		OperationName: safeOperationReadTextLimit(record.OperationName, 1024, 1024), OperationNameState: "missing", TitleState: "missing", OrganizationState: "missing", PurposeState: "missing",
+		RequestPlanState: record.RequestPlanStatus, RuntimeBindingState: record.RuntimeBindingStatus, AdmissionState: record.AdmissionStatus, InventoryUnknown: record.InventoryUnknown,
 		AttemptState: "none", ObservationAttemptState: "none", ObservationState: "unobserved", GatusDeliveryState: "not_ready",
 	}
 	if row.OperationName != "" {
@@ -578,10 +756,10 @@ func operationReadModelRow(record OperationObservationPlanRecord, metadata *Regi
 	if metadata != nil && record.SourceID == "data_go_kr" && record.OperationID == metadata.RegistryOperationID && record.DatasetID == metadata.APIID && operationReadModelAPIIDPattern.MatchString(metadata.APIID) {
 		apiID := metadata.APIID
 		row.APIID = &apiID
-		row.OperationName, row.OperationNameState = sanitizeClassifiedMetadata(metadata.OperationName, metadata.OperationNameState)
-		row.Title, row.TitleState = sanitizeClassifiedMetadata(metadata.Title, metadata.TitleState)
-		row.Organization, row.OrganizationState = sanitizeClassifiedMetadata(metadata.Organization, metadata.OrganizationState)
-		row.Purpose, row.PurposeState = sanitizeClassifiedMetadata(metadata.Purpose, metadata.PurposeState)
+		row.OperationName, row.OperationNameState = sanitizeClassifiedMetadata(metadata.OperationName, metadata.OperationNameState, 1024, 1024)
+		row.Title, row.TitleState = sanitizeClassifiedMetadata(metadata.Title, metadata.TitleState, 1024, 1024)
+		row.Organization, row.OrganizationState = sanitizeClassifiedMetadata(metadata.Organization, metadata.OrganizationState, 1024, 1024)
+		row.Purpose, row.PurposeState = sanitizeClassifiedMetadata(metadata.Purpose, metadata.PurposeState, 8192, 8192)
 	}
 	row.MissingReason = operationMissingReason(record)
 	if record.ObservationPeriod > 0 && record.RuntimeBindingStatus == "bound" {
@@ -592,13 +770,14 @@ func operationReadModelRow(record OperationObservationPlanRecord, metadata *Regi
 }
 
 func sanitizeRegistryOperationMetadata(item RegistryOperationMetadata) RegistryOperationMetadata {
-	item.Title, item.TitleState = sanitizeClassifiedMetadata(item.Title, item.TitleState)
-	item.Organization, item.OrganizationState = sanitizeClassifiedMetadata(item.Organization, item.OrganizationState)
-	item.Purpose, item.PurposeState = sanitizeClassifiedMetadata(item.Purpose, item.PurposeState)
+	item.OperationName, item.OperationNameState = sanitizeClassifiedMetadata(item.OperationName, item.OperationNameState, 1024, 1024)
+	item.Title, item.TitleState = sanitizeClassifiedMetadata(item.Title, item.TitleState, 1024, 1024)
+	item.Organization, item.OrganizationState = sanitizeClassifiedMetadata(item.Organization, item.OrganizationState, 1024, 1024)
+	item.Purpose, item.PurposeState = sanitizeClassifiedMetadata(item.Purpose, item.PurposeState, 8192, 8192)
 	return item
 }
 
-func sanitizeClassifiedMetadata(value, state string) (string, string) {
+func sanitizeClassifiedMetadata(value, state string, maxBytes, maxRunes int) (string, string) {
 	switch state {
 	case "present", "sanitized":
 		// Re-check the source projection despite its own pinned sanitizer.
@@ -611,23 +790,42 @@ func sanitizeClassifiedMetadata(value, state string) (string, string) {
 	default:
 		return "", "invalid"
 	}
-	safe := safeOperationReadText(value)
-	if safe == "" {
+	if !safeVerifiedRegistryMetadataText(value, maxBytes, maxRunes) {
 		return "", "unsafe"
 	}
-	return safe, "present"
+	return value, state
+}
+
+// safeVerifiedRegistryMetadataText accepts only text from the byte-pinned
+// Registry metadata projection, whose producer has already stripped URL,
+// query, markup, request/response examples, and credential assignments. It
+// repeats high-confidence leak checks without treating ordinary slash or
+// punctuation prose as an endpoint.
+func safeVerifiedRegistryMetadataText(value string, maxBytes, maxRunes int) bool {
+	if value == "" || maxBytes < 1 || maxRunes < 1 || !utf8.ValidString(value) || strings.TrimSpace(value) != value || len(value) > maxBytes || utf8.RuneCountInString(value) > maxRunes {
+		return false
+	}
+	if strings.ContainsAny(value, "\r\n\x00\\") || operationReadModelURLPattern.MatchString(value) || operationReadModelRequestTargetPattern.MatchString(value) || operationReadModelMarkupPattern.MatchString(value) || operationReadModelSecretPattern.MatchString(value) || operationReadModelIPPattern.MatchString(value) || operationReadModelDomainPattern.MatchString(value) {
+		return false
+	}
+	lower := strings.ToLower(value)
+	return !strings.Contains(lower, "authorization:") && !strings.Contains(lower, "bearer ") && !strings.Contains(lower, "localhost") && !strings.Contains(lower, ".internal") && !strings.Contains(lower, ".local")
 }
 
 func safeOperationReadText(value string) string {
+	return safeOperationReadTextLimit(value, 8192, 8192)
+}
+
+func safeOperationReadTextLimit(value string, maxBytes, maxRunes int) string {
 	value = strings.TrimSpace(value)
-	if value == "" || len(value) > 512 || strings.ContainsAny(value, "\r\n\x00<>`?=#\\") {
+	if value == "" || maxBytes < 1 || maxRunes < 1 || len(value) > maxBytes || !utf8.ValidString(value) || utf8.RuneCountInString(value) > maxRunes || strings.ContainsAny(value, "\r\n\x00<>`\\") {
 		return ""
 	}
 	lower := strings.ToLower(value)
 	if operationReadModelDomainPattern.MatchString(value) || operationReadModelIPPattern.MatchString(value) || operationReadModelSecretPattern.MatchString(value) || operationReadModelPathPattern.MatchString(value) {
 		return ""
 	}
-	for _, unsafe := range []string{"http://", "https://", "www.", "authorization:", "bearer ", "servicekey", "service_key", "api_key", "apikey", "password", "token", "secret", "localhost", ".internal", ".local"} {
+	for _, unsafe := range []string{"http://", "https://", "www.", "authorization:", "bearer ", "localhost", ".internal", ".local"} {
 		if strings.Contains(lower, unsafe) {
 			return ""
 		}
@@ -662,7 +860,10 @@ func operationMissingReason(record OperationObservationPlanRecord) string {
 }
 
 func validOperationReadModelAttempt(attempt OperationReadModelAttempt) bool {
-	if !operationSourceIDPattern.MatchString(attempt.SourceID) || attempt.OperationID == "" || len(attempt.OperationID) > 256 || !validOperationReadModelAttemptState(attempt.AttemptState) || !validOperationReadModelObservationAttemptState(attempt.ObservationAttemptState) || !validOperationReadModelDeliveryState(attempt.GatusDeliveryState) || attempt.UpdatedAt.IsZero() {
+	if !operationSourceIDPattern.MatchString(attempt.SourceID) || attempt.OperationID == "" || len(attempt.OperationID) > 256 || !validOperationAttemptBinding(attempt.LatestPlanBinding) || attempt.LatestPlanBinding.SourceID != attempt.SourceID || attempt.LatestPlanBinding.OperationID != attempt.OperationID || !validOperationReadModelAttemptState(attempt.AttemptState) || !validOperationReadModelObservationAttemptState(attempt.ObservationAttemptState) || !validOperationReadModelDeliveryState(attempt.GatusDeliveryState) || attempt.UpdatedAt.IsZero() {
+		return false
+	}
+	if attempt.ObservationPlanBinding != nil && (!validOperationAttemptBinding(*attempt.ObservationPlanBinding) || attempt.ObservationPlanBinding.SourceID != attempt.SourceID || attempt.ObservationPlanBinding.OperationID != attempt.OperationID) {
 		return false
 	}
 	if attempt.RequestStarted != nil && !attempt.ReceiptValidated {
@@ -691,6 +892,9 @@ func validOperationReadModelAttempt(attempt OperationReadModelAttempt) bool {
 	}
 	hasObservation := !attempt.ProviderObservedAt.IsZero() || !attempt.HealthReceivedAt.IsZero() || attempt.ResultState != "" || attempt.ResultCategory != ""
 	if hasObservation != (attempt.ObservationAttemptState == "observed") {
+		return false
+	}
+	if hasObservation != (attempt.ObservationPlanBinding != nil) {
 		return false
 	}
 	if hasObservation {
@@ -730,17 +934,28 @@ func applyOperationReadModelAttempt(row *OperationReadModelRow, attempt Operatio
 	row.ObservationAttemptState = attempt.ObservationAttemptState
 	row.RequestStarted = cloneBool(attempt.RequestStarted)
 	row.Attempted = row.Attempted || attempt.EverRequestStarted || attempt.RequestStarted != nil && *attempt.RequestStarted
-	if !attempt.ProviderObservedAt.IsZero() {
-		row.MissingReason = ""
-		row.ResultState = attempt.ResultState
-		row.ResultCategory = attempt.ResultCategory
-		row.ProviderObservedAt = cloneTime(attempt.ProviderObservedAt)
-		row.HealthReceivedAt = cloneTime(attempt.HealthReceivedAt)
-		row.GatusDeliveryState = attempt.GatusDeliveryState
-		row.GatusAcknowledgedAt = cloneTime(attempt.GatusAcknowledgedAt)
-		row.GatusReadbackAt = cloneTime(attempt.GatusReadbackAt)
-		row.GatusObservedState = safePlanLabel(attempt.GatusObservedState)
+	if attempt.ObservationAttemptState == "none" {
+		row.ResultState = ""
+		row.ResultCategory = ""
+		row.ProviderObservedAt = nil
+		row.HealthReceivedAt = nil
+		row.GatusDeliveryState = "not_ready"
+		row.GatusAcknowledgedAt = nil
+		row.GatusReadbackAt = nil
+		row.GatusObservedState = ""
+		row.NextDueAt = nil
+		row.ObservationState = "unobserved"
+		return
 	}
+	row.MissingReason = ""
+	row.ResultState = attempt.ResultState
+	row.ResultCategory = attempt.ResultCategory
+	row.ProviderObservedAt = cloneTime(attempt.ProviderObservedAt)
+	row.HealthReceivedAt = cloneTime(attempt.HealthReceivedAt)
+	row.GatusDeliveryState = attempt.GatusDeliveryState
+	row.GatusAcknowledgedAt = cloneTime(attempt.GatusAcknowledgedAt)
+	row.GatusReadbackAt = cloneTime(attempt.GatusReadbackAt)
+	row.GatusObservedState = safePlanLabel(attempt.GatusObservedState)
 }
 
 func refreshOperationReadModelFreshness(row *OperationReadModelRow, at time.Time) {
@@ -877,7 +1092,12 @@ func (model *OperationReadModel) CursorDigest() string {
 }
 
 func (row OperationReadModelRow) ValidatePublicProjection(at time.Time) error {
-	if at.IsZero() || !operationSourceIDPattern.MatchString(row.SourceID) || row.RegistryOperationID == "" || row.OperationNameState == "present" && safeOperationReadText(row.OperationName) == "" || row.TitleState == "present" && safeOperationReadText(row.Title) == "" || row.OrganizationState == "present" && safeOperationReadText(row.Organization) == "" || row.PurposeState == "present" && safeOperationReadText(row.Purpose) == "" || row.APIID != nil && !operationReadModelAPIIDPattern.MatchString(*row.APIID) {
+	if at.IsZero() || !operationSourceIDPattern.MatchString(row.SourceID) || row.RegistryOperationID == "" ||
+		!validOperationReadModelTextField(row.OperationName, row.OperationNameState, 1024, 1024, row.SourceID == "data_go_kr") ||
+		!validOperationReadModelTextField(row.Title, row.TitleState, 1024, 1024, row.SourceID == "data_go_kr") ||
+		!validOperationReadModelTextField(row.Organization, row.OrganizationState, 1024, 1024, row.SourceID == "data_go_kr") ||
+		!validOperationReadModelTextField(row.Purpose, row.PurposeState, 8192, 8192, row.SourceID == "data_go_kr") ||
+		row.APIID != nil && !operationReadModelAPIIDPattern.MatchString(*row.APIID) || row.MissingReason == "inventory_unknown" && !row.InventoryUnknown {
 		return fmt.Errorf("%w: unsafe projected operation metadata", ErrOperationReadModelUnavailable)
 	}
 	if !validOperationReadModelObservationAttemptState(row.ObservationAttemptState) || row.ObservationAttemptState == "observed" && (!validOperationReadModelResultPair(row.ResultState, row.ResultCategory) || row.ProviderObservedAt == nil || row.HealthReceivedAt == nil || row.ProviderObservedAt.After(*row.HealthReceivedAt)) || row.ObservationAttemptState == "none" && (row.ResultState != "" || row.ResultCategory != "" || row.ProviderObservedAt != nil || row.HealthReceivedAt != nil) {
@@ -895,6 +1115,20 @@ func (row OperationReadModelRow) ValidatePublicProjection(at time.Time) error {
 		return fmt.Errorf("%w: public projection is inconsistent at evaluation time", ErrOperationReadModelUnavailable)
 	}
 	return nil
+}
+
+func validOperationReadModelTextField(value, state string, maxBytes, maxRunes int, verifiedMetadata bool) bool {
+	switch state {
+	case "present", "sanitized":
+		if verifiedMetadata {
+			return safeVerifiedRegistryMetadataText(value, maxBytes, maxRunes)
+		}
+		return safeOperationReadTextLimit(value, maxBytes, maxRunes) != ""
+	case "missing", "blank", "invalid", "unsafe":
+		return value == ""
+	default:
+		return false
+	}
 }
 
 func equalOptionalTime(left, right *time.Time) bool {

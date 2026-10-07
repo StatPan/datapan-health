@@ -39,12 +39,6 @@ var healthBoundedObservationRunSchema []byte
 //go:embed datapan.health-schedule-coverage.v1.schema.json
 var healthScheduleCoverageSchema []byte
 
-//go:embed datapan.health-registry-api-metadata.v1.schema.json
-var healthRegistryAPIMetadataSchema []byte
-
-//go:embed datapan.health-registry-api-metadata-source-pin.v1.schema.json
-var healthRegistryAPIMetadataSourcePinSchema []byte
-
 //go:embed datapan.health-self-readiness.v1.schema.json
 var healthSelfReadinessSchema []byte
 
@@ -53,6 +47,12 @@ var operationObservationPlanSchema []byte
 
 //go:embed datapan.health-registry-operations-page.v2.schema.json
 var healthRegistryOperationsPageV2Schema []byte
+
+//go:embed datapan.health-registry-api-metadata.v1.schema.json
+var healthRegistryAPIMetadataSchema []byte
+
+//go:embed datapan.health-registry-api-metadata-source-pin.v1.schema.json
+var healthRegistryAPIMetadataSourcePinSchema []byte
 
 var (
 	healthProbeOnce                    sync.Once
@@ -82,12 +82,6 @@ var (
 	healthScheduleCoverageOnce         sync.Once
 	healthScheduleCoverage             *jsonschema.Schema
 	healthScheduleCoverageErr          error
-	healthRegistryAPIMetadataOnce      sync.Once
-	healthRegistryAPIMetadata          *jsonschema.Schema
-	healthRegistryAPIMetadataErr       error
-	healthRegistryMetadataPinOnce      sync.Once
-	healthRegistryMetadataPin          *jsonschema.Schema
-	healthRegistryMetadataPinErr       error
 	healthSelfReadinessOnce            sync.Once
 	healthSelfReadiness                *jsonschema.Schema
 	healthSelfReadinessErr             error
@@ -97,6 +91,12 @@ var (
 	healthRegistryOperationsPageV2Once sync.Once
 	healthRegistryOperationsPageV2     *jsonschema.Schema
 	healthRegistryOperationsPageV2Err  error
+	healthRegistryAPIMetadataOnce      sync.Once
+	healthRegistryAPIMetadata          *jsonschema.Schema
+	healthRegistryAPIMetadataErr       error
+	healthRegistryMetadataPinOnce      sync.Once
+	healthRegistryMetadataPin          *jsonschema.Schema
+	healthRegistryMetadataPinErr       error
 )
 
 func ValidateHealthProbeV1(data []byte) error {
@@ -170,20 +170,6 @@ func ValidateHealthScheduleCoverageV1(data []byte) error {
 	return validate(data, healthScheduleCoverage, healthScheduleCoverageErr, "schedule coverage")
 }
 
-func ValidateHealthRegistryAPIMetadataV1(data []byte) error {
-	healthRegistryAPIMetadataOnce.Do(func() {
-		healthRegistryAPIMetadata, healthRegistryAPIMetadataErr = compile(healthRegistryAPIMetadataSchema, "https://schemas.datapan.dev/datapan.health-registry-api-metadata.v1.schema.json")
-	})
-	return validate(data, healthRegistryAPIMetadata, healthRegistryAPIMetadataErr, "Registry API metadata")
-}
-
-func ValidateHealthRegistryAPIMetadataSourcePinV1(data []byte) error {
-	healthRegistryMetadataPinOnce.Do(func() {
-		healthRegistryMetadataPin, healthRegistryMetadataPinErr = compile(healthRegistryAPIMetadataSourcePinSchema, "https://schemas.datapan.dev/datapan.health-registry-api-metadata-source-pin.v1.schema.json")
-	})
-	return validate(data, healthRegistryMetadataPin, healthRegistryMetadataPinErr, "Registry API metadata source pin")
-}
-
 // ValidateHealthSelfReadinessV1 validates the private scheduler's aggregate
 // readiness response before any status fields are projected to public HTML.
 func ValidateHealthSelfReadinessV1(data []byte) error {
@@ -223,6 +209,20 @@ func HealthRegistryOperationsPageV2SchemaSHA256() string {
 func OperationObservationPlanV1SchemaSHA256() string {
 	sum := sha256.Sum256(operationObservationPlanSchema)
 	return hex.EncodeToString(sum[:])
+}
+
+func ValidateHealthRegistryAPIMetadataV1(data []byte) error {
+	healthRegistryAPIMetadataOnce.Do(func() {
+		healthRegistryAPIMetadata, healthRegistryAPIMetadataErr = compile(healthRegistryAPIMetadataSchema, "https://schemas.datapan.dev/datapan.health-registry-api-metadata.v1.schema.json")
+	})
+	return validate(data, healthRegistryAPIMetadata, healthRegistryAPIMetadataErr, "Registry API metadata")
+}
+
+func ValidateHealthRegistryAPIMetadataSourcePinV1(data []byte) error {
+	healthRegistryMetadataPinOnce.Do(func() {
+		healthRegistryMetadataPin, healthRegistryMetadataPinErr = compile(healthRegistryAPIMetadataSourcePinSchema, "https://schemas.datapan.dev/datapan.health-registry-api-metadata-source-pin.v1.schema.json")
+	})
+	return validate(data, healthRegistryMetadataPin, healthRegistryMetadataPinErr, "Registry API metadata source pin")
 }
 
 func compile(source []byte, uri string) (*jsonschema.Schema, error) {

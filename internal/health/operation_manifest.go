@@ -219,12 +219,13 @@ func (m OperationManifest) Validate(receipt OperationManifestReceipt) error {
 	if m.SchemaVersion != receipt.Manifest.SchemaVersion || m.Authority != "datapan-registry" || m.SourceSnapshot != (ManifestSourceSnapshot{Path: receipt.SourceSnapshot.Path, Bytes: receipt.SourceSnapshot.Bytes, SHA256: receipt.SourceSnapshot.SHA256}) || m.IdentityContract.Algorithm != "sha256-length-prefixed-utf8-v1" || !sameStrings(m.IdentityContract.Fields, operationIdentityFields) {
 		return errors.New("operation manifest contract is unsupported")
 	}
-	if m.Summary.APIOperations != receipt.Denominator.OperationStatusSubjects || !sameCounts(m.Summary.Protocols, receipt.Denominator.Protocols) || !sameCounts(m.Summary.Exclusions, sourceExclusions(receipt.Denominator.Exclusions)) || m.Summary.IdentityCollisions != 0 || m.Summary.IdentityOmissions != 0 || len(m.Operations) != receipt.Denominator.OperationStatusSubjects {
+	expectedEligibility := expectedEligibilityCounts(receipt.Denominator.Exclusions)
+	if m.Summary.APIOperations != receipt.Denominator.OperationStatusSubjects || !sameCounts(m.Summary.Protocols, receipt.Denominator.Protocols) || !sameCounts(m.Summary.Eligibility, expectedEligibility) || !sameCounts(m.Summary.Exclusions, sourceExclusions(receipt.Denominator.Exclusions)) || m.Summary.IdentityCollisions != 0 || m.Summary.IdentityOmissions != 0 || len(m.Operations) != receipt.Denominator.OperationStatusSubjects {
 		return errors.New("operation manifest denominator does not match receipt")
 	}
 	seen := make(map[string]bool, len(m.Operations))
-	protocols := map[string]int{}
-	eligibility := map[string]int{}
+	protocols := map[string]int{"REST": 0, "SOAP": 0}
+	eligibility := map[string]int{"approval_required": 0, "excluded": 0}
 	datasets := map[string]bool{}
 	for _, operation := range m.Operations {
 		if err := operation.validateIdentity(); err != nil || seen[operation.OperationID] {
@@ -235,7 +236,7 @@ func (m OperationManifest) Validate(receipt OperationManifestReceipt) error {
 		eligibility[operation.Eligibility.Status]++
 		datasets[operation.Provenance.DatasetID] = true
 	}
-	if !sameCounts(protocols, receipt.Denominator.Protocols) || !sameCounts(eligibility, map[string]int{"approval_required": receipt.Denominator.Exclusions["required_parameter_approval"], "excluded": receipt.Denominator.Exclusions["endpoint_missing"]}) || len(datasets) != receipt.Denominator.APIMetadataCount {
+	if !sameCounts(protocols, receipt.Denominator.Protocols) || !sameCounts(eligibility, expectedEligibility) || len(datasets) != receipt.Denominator.APIMetadataCount {
 		return errors.New("operation manifest derived counts do not match receipt")
 	}
 	return nil
@@ -297,11 +298,68 @@ func BuildOperationManifestVerification(manifest OperationManifest, receipt Oper
 }
 
 func validOperationManifestReceipt(receipt OperationManifestReceipt) bool {
-	return receipt.SchemaVersion == OperationManifestReceiptVersion && commitPattern.MatchString(receipt.Registry.Revision) && !receipt.Acquisition.AcquiredAt.IsZero() && receipt.Acquisition.Method == "git_commit" && receipt.Manifest.SchemaVersion == "datapan.data-go-kr-operation-manifest.v1" && receipt.Manifest.Path == "reports/data-go-kr/operation-manifest.json" && receipt.Manifest.Bytes > 0 && sha256Pattern.MatchString(receipt.Manifest.SHA256) && receipt.ReleaseManifest.Path == "manifest.json" && receipt.ReleaseManifest.Bytes > 0 && sha256Pattern.MatchString(receipt.ReleaseManifest.SHA256) && receipt.Schema.Path == "schemas/datapan.data-go-kr-operation-manifest.v1.schema.json" && sha256Pattern.MatchString(receipt.Schema.SHA256) && receipt.SourceSnapshot.Path == "data/data-go-kr.registry.json" && receipt.SourceSnapshot.Bytes > 0 && sha256Pattern.MatchString(receipt.SourceSnapshot.SHA256) && receipt.Denominator.OperationStatusSubjects > 0 && receipt.Denominator.APIMetadataCount > 0 && sameCounts(receipt.Denominator.Protocols, map[string]int{"REST": 12350, "SOAP": 35}) && len(receipt.Denominator.Exclusions) == 5 && receipt.Denominator.Exclusions["link_operations"] >= 0 && receipt.Denominator.Exclusions["operationless_catalog_entries"] >= 0 && receipt.Denominator.Exclusions["filedata_catalog_entries"] >= 0 && receipt.Denominator.Exclusions["endpoint_missing"] >= 0 && receipt.Denominator.Exclusions["required_parameter_approval"] >= 0 && receipt.ServiceCanaries.Count > 0 && receipt.ServiceCanaries.Role == "separate_observation_input" && !receipt.ServiceCanaries.IncludedInOperationDenominator
+	denominator := receipt.Denominator
+	if receipt.SchemaVersion != OperationManifestReceiptVersion || !commitPattern.MatchString(receipt.Registry.Revision) || receipt.Acquisition.AcquiredAt.IsZero() || receipt.Acquisition.Method != "git_commit" {
+		return false
+	}
+	if receipt.Manifest.SchemaVersion != "datapan.data-go-kr-operation-manifest.v1" || receipt.Manifest.Path != "reports/data-go-kr/operation-manifest.json" || receipt.Manifest.Bytes <= 0 || !sha256Pattern.MatchString(receipt.Manifest.SHA256) {
+		return false
+	}
+	if receipt.ReleaseManifest.Path != "manifest.json" || receipt.ReleaseManifest.Bytes <= 0 || !sha256Pattern.MatchString(receipt.ReleaseManifest.SHA256) {
+		return false
+	}
+	if receipt.Schema.Path != "schemas/datapan.data-go-kr-operation-manifest.v1.schema.json" || !sha256Pattern.MatchString(receipt.Schema.SHA256) {
+		return false
+	}
+	if receipt.SourceSnapshot.Path != "data/data-go-kr.registry.json" || receipt.SourceSnapshot.Bytes <= 0 || !sha256Pattern.MatchString(receipt.SourceSnapshot.SHA256) {
+		return false
+	}
+	if !validProtocolCounts(denominator.Protocols, denominator.OperationStatusSubjects) || denominator.APIMetadataCount <= 0 || denominator.APIMetadataCount > denominator.OperationStatusSubjects {
+		return false
+	}
+	if !hasExactNonNegativeCounts(denominator.Exclusions, []string{"link_operations", "operationless_catalog_entries", "filedata_catalog_entries", "endpoint_missing", "required_parameter_approval"}) || !countsEqualPositiveTotal(denominator.Exclusions["endpoint_missing"], denominator.Exclusions["required_parameter_approval"], denominator.OperationStatusSubjects) {
+		return false
+	}
+	return receipt.ServiceCanaries.Count > 0 && receipt.ServiceCanaries.Role == "separate_observation_input" && !receipt.ServiceCanaries.IncludedInOperationDenominator
+}
+
+func validProtocolCounts(protocols map[string]int, operationStatusSubjects int) bool {
+	if !hasExactNonNegativeCounts(protocols, []string{"REST", "SOAP"}) || operationStatusSubjects <= 0 {
+		return false
+	}
+	return countsEqualPositiveTotal(protocols["REST"], protocols["SOAP"], operationStatusSubjects)
+}
+
+func hasExactNonNegativeCounts(counts map[string]int, expectedKeys []string) bool {
+	if len(counts) != len(expectedKeys) {
+		return false
+	}
+	for _, key := range expectedKeys {
+		value, ok := counts[key]
+		if !ok || value < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func countsEqualPositiveTotal(left, right, total int) bool {
+	if left < 0 || right < 0 || total <= 0 {
+		return false
+	}
+	maxInt := int(^uint(0) >> 1)
+	if left > maxInt-right {
+		return false
+	}
+	return left+right == total
 }
 
 func sourceExclusions(exclusions map[string]int) map[string]int {
 	return map[string]int{"link_operations": exclusions["link_operations"], "operationless_catalog_entries": exclusions["operationless_catalog_entries"], "filedata_catalog_entries": exclusions["filedata_catalog_entries"]}
+}
+
+func expectedEligibilityCounts(exclusions map[string]int) map[string]int {
+	return map[string]int{"approval_required": exclusions["required_parameter_approval"], "excluded": exclusions["endpoint_missing"]}
 }
 
 func lengthPrefixedSHA256(fields []string) string {
@@ -328,8 +386,9 @@ func sameCounts(got, want map[string]int) bool {
 	if len(got) != len(want) {
 		return false
 	}
-	for key, value := range want {
-		if got[key] != value {
+	for key, expected := range want {
+		actual, ok := got[key]
+		if !ok || actual != expected {
 			return false
 		}
 	}

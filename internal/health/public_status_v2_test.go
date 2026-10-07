@@ -130,7 +130,7 @@ func TestPublicRegistryOperationsRouteUsesBoundedModelAndSameCORS(t *testing.T) 
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	model, err := NewOperationReadModel(plan, testRegistryAPIMetadataPin(0, 0), nil, nil, now)
+	model, err := newOperationReadModel(plan, testRegistryAPIMetadataPin(0, 0), nil, nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,12 +252,25 @@ func TestPublicHTMLUsesPinnedOperationProgressAndFailsClosedOnMismatch(t *testin
 	}
 	progress := OperationAPIProgress{APIID: "api-1", TotalFunctions: 1, CurrentPass: 1, CoverageState: "current", MissingReasons: map[string]int{}}
 	partialRows := make([]OperationReadModelRow, 0, len(publicPartialRegistryOperations))
-	for _, expected := range publicPartialRegistryOperations {
+	for index, expected := range publicPartialRegistryOperations {
 		row := OperationReadModelRow{
 			SourceID: expected.sourceID, RegistryOperationID: expected.operationID, Provider: expected.provider,
 			Protocol: "unknown", OperationNameState: "missing", TitleState: "missing", OrganizationState: "missing", PurposeState: "missing",
 			RequestPlanState: "incomplete", RuntimeBindingState: "unbound", AdmissionState: "not_admitted", MissingReason: "inventory_unknown",
-			AttemptState: "none", ObservationAttemptState: "none", ObservationState: "unobserved", GatusDeliveryState: "not_ready",
+			InventoryUnknown: true, AttemptState: "none", ObservationAttemptState: "none", ObservationState: "unobserved", GatusDeliveryState: "not_ready",
+		}
+		if index == 0 {
+			observedAt := now.Add(-2 * time.Minute)
+			receivedAt := now.Add(-time.Minute)
+			period := int64(time.Hour / time.Second)
+			requestStarted := true
+			row.RequestPlanState, row.RuntimeBindingState, row.AdmissionState = "complete", "bound", "admitted"
+			row.MissingReason = ""
+			row.AttemptState, row.ObservationAttemptState, row.RequestStarted = "observed", "observed", &requestStarted
+			row.Attempted, row.ObservationState = true, "current_pass"
+			row.ResultState, row.ResultCategory = "healthy", "healthy"
+			row.ObservationPeriodSeconds, row.ProviderObservedAt, row.HealthReceivedAt = &period, &observedAt, &receivedAt
+			row.NextDueAt = publicStatusTimePointer(observedAt.Add(time.Hour))
 		}
 		partialRows = append(partialRows, row)
 	}
@@ -282,8 +295,18 @@ func TestPublicHTMLUsesPinnedOperationProgressAndFailsClosedOnMismatch(t *testin
 	}
 	for index, expected := range publicPartialRegistryOperations {
 		row := page.PartialScopes[index]
-		if row.ProviderLabel != expected.providerLabel || row.StatusClass == "badge-good" || row.StatusLabel != "검증된 검사 결과 없음" || !strings.Contains(row.AvailabilityLabel, "요청 조건 미확인") || !strings.Contains(row.AvailabilityLabel, "검사 실행 연결 전") || !strings.Contains(row.AvailabilityLabel, "실행 조건 확인 전") {
+		if row.ProviderLabel != expected.providerLabel || !strings.Contains(row.AvailabilityLabel, "제공처 전체 목록 미확인") {
 			t.Fatalf("partial scope identity or state was misprojected: %#v", row)
+		}
+		if index == 0 {
+			if row.StatusClass != "badge-good" || row.StatusLabel != "최근 검사 결과 통과" {
+				t.Fatalf("validated observation was lost from immutable partial-scope identity: %#v", row)
+			}
+		} else if row.StatusClass == "badge-good" || row.StatusLabel != "검증된 검사 결과 없음" || !strings.Contains(row.AvailabilityLabel, "요청 조건 미확인") || !strings.Contains(row.AvailabilityLabel, "검사 실행 연결 전") || !strings.Contains(row.AvailabilityLabel, "실행 조건 확인 전") {
+			t.Fatalf("unobserved partial scope status was misprojected: %#v", row)
+		}
+		if row.OperationName != "API 기능 이름 확인 필요" || row.Purpose != "기능 설명을 확인할 수 없습니다" || row.MetadataAction != "공식 제공처 설명과 Registry 등록 항목을 연결해야 합니다" {
+			t.Fatalf("missing partial-scope metadata lacked a Korean explanation and next action: %#v", row)
 		}
 		if strings.Contains(row.OperationName, expected.operationID) || strings.Contains(row.Title, expected.operationID) || strings.Contains(row.Purpose, expected.operationID) {
 			t.Fatalf("Registry identity leaked as metadata: %#v", row)
@@ -532,10 +555,10 @@ func publicOperationPlanRowFixture(t *testing.T, metadata RegistryAPIMetadata, l
 		t.Fatal("canary operation missing from pinned metadata")
 	}
 	apiID := link.RegistryAPIID
-	name, nameState := sanitizeClassifiedMetadata(sourceOperation.Name, sourceOperation.NameState)
-	title, titleState := sanitizeClassifiedMetadata(api.Title, api.TitleState)
-	organization, organizationState := sanitizeClassifiedMetadata(api.Organization, api.OrganizationState)
-	purpose, purposeState := sanitizeClassifiedMetadata(api.Description, api.DescriptionState)
+	name, nameState := sanitizeClassifiedMetadata(sourceOperation.Name, sourceOperation.NameState, maxPublicOperationLabelBytes, maxPublicOperationLabelRunes)
+	title, titleState := sanitizeClassifiedMetadata(api.Title, api.TitleState, maxPublicOperationLabelBytes, maxPublicOperationLabelRunes)
+	organization, organizationState := sanitizeClassifiedMetadata(api.Organization, api.OrganizationState, maxPublicOperationLabelBytes, maxPublicOperationLabelRunes)
+	purpose, purposeState := sanitizeClassifiedMetadata(api.Description, api.DescriptionState, maxPublicOperationPurposeBytes, maxPublicOperationPurposeRunes)
 	row := OperationReadModelRow{
 		SourceID: "data_go_kr", RegistryOperationID: link.RegistryOperationID, APIID: &apiID,
 		Provider: "data.go.kr", AdapterID: "data-go-kr", Protocol: sourceOperation.Protocol,

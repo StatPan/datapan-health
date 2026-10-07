@@ -204,6 +204,7 @@ const publicStatusHTMLTemplate = `<!doctype html>
           <p><strong>API 이름:</strong> {{.Title}}</p>
           <p><strong>기관:</strong> {{.Organization}}</p>
           <p><strong>기능 설명:</strong> {{.Purpose}}</p>
+          {{if .MetadataAction}}<p><strong>정보 확인:</strong> {{.MetadataAction}}</p>{{end}}
         </li>{{end}}
       </ul>
     </section>{{end}}
@@ -520,6 +521,7 @@ type publicHTMLPartialScope struct {
 	Title             string
 	Organization      string
 	Purpose           string
+	MetadataAction    string
 	AvailabilityLabel string
 	StatusLabel       string
 	StatusClass       string
@@ -870,26 +872,65 @@ func attachPublicPartialScopes(page *publicHTMLPage, source PublicRegistryOperat
 	rows := make([]publicHTMLPartialScope, 0, len(publicPartialRegistryOperations))
 	for index, expected := range publicPartialRegistryOperations {
 		operation := operations[index]
-		if operation.SourceID != expected.sourceID || operation.RegistryOperationID != expected.operationID || operation.APIID != nil || operation.Provider != expected.provider || operation.MissingReason != "inventory_unknown" || operation.ValidatePublicProjection(now) != nil {
+		if operation.SourceID != expected.sourceID || operation.RegistryOperationID != expected.operationID || operation.APIID != nil || operation.Provider != expected.provider || !operation.InventoryUnknown || operation.ValidatePublicProjection(now) != nil {
 			return
 		}
-		name := publicReadModelField(operation.OperationName, operation.OperationNameState, "API 기능 이름", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes)
+		name := publicPartialScopeField(operation.OperationName, operation.OperationNameState, "API 기능 이름", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes)
 		if operation.OperationName == operation.RegistryOperationID {
-			name = "API 기능 이름 없음 (원본 미제공)"
+			name = "API 기능 이름 확인 필요"
 		}
 		statusLabel, statusClass := publicPartialOperationObservation(operation)
+		title := publicPartialScopeField(operation.Title, operation.TitleState, "API 이름", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes)
+		organization := publicPartialScopeField(operation.Organization, operation.OrganizationState, "기관 정보", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes)
+		purpose, purposeAction := publicPartialScopePurpose(operation)
 		rows = append(rows, publicHTMLPartialScope{
 			ProviderLabel:     expected.providerLabel,
 			OperationName:     name,
-			Title:             publicReadModelField(operation.Title, operation.TitleState, "API 이름", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes),
-			Organization:      publicReadModelField(operation.Organization, operation.OrganizationState, "기관 정보", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes),
-			Purpose:           publicReadModelField(operation.Purpose, operation.PurposeState, "기능 설명", maxPublicOperationPurposeBytes, maxPublicOperationPurposeRunes),
+			Title:             title,
+			Organization:      organization,
+			Purpose:           purpose,
+			MetadataAction:    purposeAction,
 			AvailabilityLabel: publicPartialOperationAvailability(operation),
 			StatusLabel:       statusLabel, StatusClass: statusClass,
 		})
 	}
 	page.PartialScopes = rows
 	page.PartialScopesUnavailable = false
+}
+
+func publicPartialScopeField(value, state, label string, maximumBytes, maximumRunes int) string {
+	if state == "present" {
+		return publicReadModelField(value, state, label, maximumBytes, maximumRunes)
+	}
+	switch state {
+	case "missing", "blank":
+		return label + " 확인 필요"
+	case "unsafe":
+		return label + "은 안전한 공개 기준에 따라 생략했습니다"
+	case "invalid":
+		return label + " 출처 확인 필요"
+	default:
+		return label + " 정보를 확인할 수 없습니다"
+	}
+}
+
+func publicPartialScopePurpose(operation OperationReadModelRow) (purpose, action string) {
+	if operation.PurposeState == "present" {
+		if value := safePublicOperationReadText(operation.Purpose, maxPublicOperationPurposeBytes, maxPublicOperationPurposeRunes); value != "" {
+			return value, ""
+		}
+		return "기능 설명을 안전하게 표시할 수 없습니다", "공식 제공처의 안전한 설명과 Registry 기록을 대조해야 합니다"
+	}
+	switch operation.PurposeState {
+	case "missing", "blank":
+		return "기능 설명을 확인할 수 없습니다", "공식 제공처 설명과 Registry 등록 항목을 연결해야 합니다"
+	case "unsafe":
+		return "기능 설명은 안전한 공개 기준에 따라 생략했습니다", "공식 제공처의 안전한 설명과 Registry 기록을 대조해야 합니다"
+	case "invalid":
+		return "기능 설명 원본을 확인할 수 없습니다", "Registry에 저장된 원본 출처와 설명을 검증해야 합니다"
+	default:
+		return "기능 설명 상태를 확인할 수 없습니다", "Registry의 원본 출처와 설명을 검증해야 합니다"
+	}
 }
 
 func publicPartialOperationObservation(operation OperationReadModelRow) (label, statusClass string) {
@@ -914,6 +955,9 @@ func publicPartialOperationObservation(operation OperationReadModelRow) (label, 
 
 func publicPartialOperationAvailability(operation OperationReadModelRow) string {
 	var states []string
+	if operation.InventoryUnknown {
+		states = append(states, "제공처 전체 목록 미확인")
+	}
 	if operation.RequestPlanState != "complete" {
 		states = append(states, "요청 조건 미확인")
 	}
@@ -989,6 +1033,9 @@ func publicHTMLReadModelOperation(operation OperationReadModelRow, now time.Time
 
 func publicOperationAvailabilityLabel(operation OperationReadModelRow) string {
 	var states []string
+	if operation.InventoryUnknown {
+		states = append(states, "제공처 전체 목록 미확인")
+	}
 	if operation.RequestPlanState != "complete" {
 		states = append(states, "요청 조건 미완료")
 	}
