@@ -329,6 +329,25 @@ func TestPublicHTMLReadModelOperationStatusAndDiagnosisAreAllowlisted(t *testing
 	if pass.StatusClass != "badge-good" || pass.ObservationLabel != "최근 검사 결과 통과" || pass.Name != "현재 대기소 조회" {
 		t.Fatalf("validated pass was not localized safely: %#v", pass)
 	}
+	longPurpose := strings.Repeat("공공 API 자료 설명입니다. ", 40)
+	if len(longPurpose) <= 512 {
+		t.Fatal("long-purpose fixture did not exceed the former byte cutoff")
+	}
+	longDescription := base
+	longDescription.Purpose = longPurpose
+	if got := publicHTMLReadModelOperation(longDescription, now).Description; got != strings.TrimSpace(longPurpose) {
+		t.Fatalf("valid long Korean purpose was dropped or changed: %d bytes", len(got))
+	}
+	credentialGuidance := base
+	credentialGuidance.Purpose = "API key is required after portal approval."
+	if got := publicHTMLReadModelOperation(credentialGuidance, now).Description; got != credentialGuidance.Purpose {
+		t.Fatalf("safe credential guidance was removed with its keyword: %q", got)
+	}
+	credentialValue := base
+	credentialValue.Purpose = "API key=do-not-publish"
+	if got := publicHTMLReadModelOperation(credentialValue, now).Description; strings.Contains(got, "do-not-publish") {
+		t.Fatalf("assigned credential value reached the public projection: %q", got)
+	}
 
 	indeterminate := base
 	indeterminate.ObservationState, indeterminate.ResultState, indeterminate.ResultCategory = "current_indeterminate", "indeterminate", "observer_failure"

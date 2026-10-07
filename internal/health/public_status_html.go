@@ -21,12 +21,17 @@ import (
 )
 
 const (
-	publicAPIsPageSize         = 50
-	maxPublicHTMLBytes         = 2 * 1024 * 1024
-	maxPublicHTMLRawQueryBytes = 1600
-	maxPublicHTMLSearchBytes   = 256
-	maxPublicHTMLSearchRunes   = 128
-	maxPublicHTMLPage          = 10000
+	publicAPIsPageSize             = 50
+	maxPublicHTMLBytes             = 2 * 1024 * 1024
+	maxPublicHTMLRawQueryBytes     = 1600
+	maxPublicHTMLSearchBytes       = 256
+	maxPublicHTMLSearchRunes       = 128
+	maxPublicHTMLPage              = 10000
+	maxPublicOperationLabelBytes   = 1024
+	maxPublicOperationLabelRunes   = 1024
+	maxPublicOperationPurposeBytes = 8192
+	maxPublicOperationPurposeRunes = 8192
+	maxPublicOperationPageBytes    = 1 * 1024 * 1024
 )
 
 var (
@@ -758,7 +763,7 @@ func validPublicOperationPage(page OperationReadModelPage, metadata RegistryAPIM
 		return false
 	}
 	encoded, err := json.Marshal(page)
-	return err == nil && len(encoded) <= 512*1024 && schemas.ValidateHealthRegistryOperationsPageV2(encoded) == nil
+	return err == nil && len(encoded) <= maxPublicOperationPageBytes && schemas.ValidateHealthRegistryOperationsPageV2(encoded) == nil
 }
 
 func attachPublicOperationDetailRows(page *publicHTMLPage, metadata RegistryAPIMetadata, source PublicRegistryOperationsSource, apiID string, request publicHTMLRequest, legacyStatuses map[string]PublicOperationStatus, legacyAvailable bool, legacyDocument PublicStatusDocument, now time.Time) int {
@@ -868,7 +873,7 @@ func attachPublicPartialScopes(page *publicHTMLPage, source PublicRegistryOperat
 		if operation.SourceID != expected.sourceID || operation.RegistryOperationID != expected.operationID || operation.APIID != nil || operation.Provider != expected.provider || operation.MissingReason != "inventory_unknown" || operation.ValidatePublicProjection(now) != nil {
 			return
 		}
-		name := publicReadModelField(operation.OperationName, operation.OperationNameState, "API 기능 이름")
+		name := publicReadModelField(operation.OperationName, operation.OperationNameState, "API 기능 이름", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes)
 		if operation.OperationName == operation.RegistryOperationID {
 			name = "API 기능 이름 없음 (원본 미제공)"
 		}
@@ -876,9 +881,9 @@ func attachPublicPartialScopes(page *publicHTMLPage, source PublicRegistryOperat
 		rows = append(rows, publicHTMLPartialScope{
 			ProviderLabel:     expected.providerLabel,
 			OperationName:     name,
-			Title:             publicReadModelField(operation.Title, operation.TitleState, "API 이름"),
-			Organization:      publicReadModelField(operation.Organization, operation.OrganizationState, "기관 정보"),
-			Purpose:           publicReadModelField(operation.Purpose, operation.PurposeState, "기능 설명"),
+			Title:             publicReadModelField(operation.Title, operation.TitleState, "API 이름", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes),
+			Organization:      publicReadModelField(operation.Organization, operation.OrganizationState, "기관 정보", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes),
+			Purpose:           publicReadModelField(operation.Purpose, operation.PurposeState, "기능 설명", maxPublicOperationPurposeBytes, maxPublicOperationPurposeRunes),
 			AvailabilityLabel: publicPartialOperationAvailability(operation),
 			StatusLabel:       statusLabel, StatusClass: statusClass,
 		})
@@ -925,16 +930,16 @@ func publicPartialOperationAvailability(operation OperationReadModelRow) string 
 }
 
 func publicHTMLReadModelOperation(operation OperationReadModelRow, now time.Time) publicHTMLOperation {
-	name := publicReadModelField(operation.OperationName, operation.OperationNameState, "API 기능 이름")
+	name := publicReadModelField(operation.OperationName, operation.OperationNameState, "API 기능 이름", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes)
 	protocol := "제공 방식 미확인"
 	if operation.Protocol == "REST" || operation.Protocol == "SOAP" {
 		protocol = operation.Protocol
 	}
 	row := publicHTMLOperation{
 		Name: name, Protocol: protocol, NameState: metadataStateLabel(operation.OperationNameState),
-		Title:        publicReadModelField(operation.Title, operation.TitleState, "API 이름"),
-		Organization: publicReadModelField(operation.Organization, operation.OrganizationState, "기관 정보"),
-		Description:  publicReadModelField(operation.Purpose, operation.PurposeState, "기능 설명"),
+		Title:        publicReadModelField(operation.Title, operation.TitleState, "API 이름", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes),
+		Organization: publicReadModelField(operation.Organization, operation.OrganizationState, "기관 정보", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes),
+		Description:  publicReadModelField(operation.Purpose, operation.PurposeState, "기능 설명", maxPublicOperationPurposeBytes, maxPublicOperationPurposeRunes),
 		StatusClass:  "badge-unknown",
 	}
 	if operation.ProviderObservedAt != nil {
@@ -1094,17 +1099,36 @@ func publicHTMLLegacyProvenanceValue(metadata RegistryAPIMetadata, document Publ
 	}
 }
 
-func publicReadModelField(value, state, label string) string {
+func publicReadModelField(value, state, label string, maximumBytes, maximumRunes int) string {
 	if state != "present" {
-		return metadataFieldText("", state, label)
+		switch state {
+		case "missing":
+			return label + " 없음 (원본 미제공)"
+		case "blank":
+			return label + " 없음 (원본이 비어 있음)"
+		case "unsafe":
+			return label + "은 안전한 공개를 위해 생략했습니다"
+		case "invalid":
+			return label + " 원문 검증이 필요합니다"
+		default:
+			return label + " 정보를 확인할 수 없습니다"
+		}
 	}
-	if len(value) > 512 {
-		return label + "을 안전하게 공개할 수 없습니다"
-	}
-	if safe := safeOperationReadText(value); safe != "" {
+	if safe := safePublicOperationReadText(value, maximumBytes, maximumRunes); safe != "" {
 		return safe
 	}
 	return label + "을 안전하게 공개할 수 없습니다"
+}
+
+func safePublicOperationReadText(value string, maximumBytes, maximumRunes int) string {
+	value = strings.TrimSpace(value)
+	if value == "" || maximumBytes <= 0 || maximumRunes <= 0 || len(value) > maximumBytes || !utf8.ValidString(value) || utf8.RuneCountInString(value) > maximumRunes || strings.ContainsAny(value, "\r\n\x00<>`\\") {
+		return ""
+	}
+	if publicMetadataURLPattern.MatchString(value) || publicMetadataDomainPattern.MatchString(value) || publicMetadataCredentialPattern.MatchString(value) || publicInternalTargetPattern.MatchString(value) || operationReadModelDomainPattern.MatchString(value) || operationReadModelIPPattern.MatchString(value) || operationReadModelSecretPattern.MatchString(value) || operationReadModelPathPattern.MatchString(value) {
+		return ""
+	}
+	return value
 }
 
 func publicLastResultLabel(state string) string {
@@ -1943,6 +1967,10 @@ func metadataStateLabel(state string) string {
 		return "안전상 생략"
 	case "invalid_source":
 		return "원문 검증 필요"
+	case "invalid":
+		return "원문 검증 필요"
+	case "unsafe":
+		return "안전상 생략"
 	default:
 		return "상태 확인 필요"
 	}
