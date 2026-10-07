@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.datapan.dev/datapan.health-registry-api-metadata.v1.schema.json",
+  "title": "Datapan Health Registry API metadata inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "registry_revision", "scope", "source", "catalog", "counts", "apis", "health_canary_links"],
+  "properties": {
+    "schema_version": { "const": "datapan.health-registry-api-metadata.v1" },
+    "registry_revision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "source_snapshot_complete", "registry_wide_metadata_complete", "coverage_note"],
+      "properties": {
+        "provider": { "const": "data.go.kr" },
+        "source_snapshot_complete": { "const": true },
+        "registry_wide_metadata_complete": { "const": false },
+        "coverage_note": { "const": "Complete for the pinned data.go.kr source only; not a complete inventory of all Registry adapters." }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "size_bytes"],
+      "properties": {
+        "path": { "const": "data/data-go-kr.registry.json" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "size_bytes": { "type": "integer", "minimum": 1, "maximum": 167772160 }
+      }
+    },
+    "catalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "entry_count"],
+      "properties": {
+        "path": { "const": "config/registry/health-probe-catalog.json" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "entry_count": { "type": "integer", "minimum": 1, "maximum": 100 }
+      }
+    },
+    "counts": { "$ref": "#/$defs/counts" },
+    "apis": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20000,
+      "items": { "$ref": "#/$defs/api" }
+    },
+    "health_canary_links": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": { "$ref": "#/$defs/canary_link" }
+    }
+  },
+  "$defs": {
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["api_entities", "api_operations", "link_operations", "operationless_catalog_entries", "filedata_catalog_entries", "institutions", "matched_health_canaries"],
+      "properties": {
+        "api_entities": { "type": "integer", "minimum": 1, "maximum": 20000 },
+        "api_operations": { "type": "integer", "minimum": 1, "maximum": 50000 },
+        "link_operations": { "type": "integer", "minimum": 0, "maximum": 50000 },
+        "operationless_catalog_entries": { "type": "integer", "minimum": 0, "maximum": 20000 },
+        "filedata_catalog_entries": { "type": "integer", "minimum": 0, "maximum": 20000 },
+        "institutions": { "type": "integer", "minimum": 1, "maximum": 20000 },
+        "matched_health_canaries": { "type": "integer", "minimum": 1, "maximum": 100 }
+      }
+    },
+    "text_state": {
+      "type": "string",
+      "enum": ["present", "sanitized", "missing", "blank", "redacted_unsafe", "invalid_source"]
+    },
+    "api": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["registry_api_id", "provider", "title", "title_state", "organization", "organization_state", "description", "description_state", "link_operation_count", "operations"],
+      "properties": {
+        "registry_api_id": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$" },
+        "provider": { "const": "data.go.kr" },
+        "title": { "type": "string", "maxLength": 1024 },
+        "title_state": { "$ref": "#/$defs/text_state" },
+        "organization": { "type": "string", "maxLength": 1024 },
+        "organization_state": { "$ref": "#/$defs/text_state" },
+        "description": { "type": "string", "maxLength": 8192 },
+        "description_state": { "$ref": "#/$defs/text_state" },
+        "link_operation_count": { "type": "integer", "minimum": 0, "maximum": 50000 },
+        "operations": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": { "$ref": "#/$defs/operation" }
+        }
+      }
+    },
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["registry_operation_id", "dataset_id", "source_system", "upstream_operation_key", "upstream_operation_seq", "name", "name_state", "protocol"],
+      "properties": {
+        "registry_operation_id": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "dataset_id": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$" },
+        "source_system": { "type": "string", "maxLength": 128 },
+        "upstream_operation_key": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$" },
+        "upstream_operation_seq": { "type": "string", "pattern": "^$|^[A-Za-z0-9._-]{1,128}$" },
+        "name": { "type": "string", "maxLength": 1024 },
+        "name_state": { "$ref": "#/$defs/text_state" },
+        "protocol": { "enum": ["REST", "SOAP"] }
+      }
+    },
+    "canary_link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["health_operation_id", "registry_api_id", "registry_operation_id", "dataset_id", "upstream_operation_seq", "operation_name", "cli_operation_key"],
+      "properties": {
+        "health_operation_id": { "type": "string", "pattern": "^[a-z0-9-]{1,64}$" },
+        "registry_api_id": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$" },
+        "registry_operation_id": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "dataset_id": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$" },
+        "upstream_operation_seq": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$" },
+        "operation_name": { "type": "string", "maxLength": 1024 },
+        "cli_operation_key": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    }
+  }
+}

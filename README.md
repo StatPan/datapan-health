@@ -168,6 +168,47 @@ proves provider entitlement, quota, call safety, or live provider health; the
 ten service canaries remain a separate observation input and scheduler boundary.
 The current manifest is not a runtime probe-admission pin.
 
+## Registry API metadata directory
+
+`config/registry/api-metadata.v1.json` is a bounded, redacted projection of the
+complete pinned `data.go.kr` source snapshot. Its source pin records immutable
+Registry snapshot revision `d7dba637a06e345cba7ae058cba96fe53d3e532b`, the source SHA-256
+and byte count, the ten-entry Health catalog SHA-256, expected category counts,
+and the generated artifact SHA-256. The snapshot contains 12,282 API entities,
+12,662 REST/SOAP API operations (12,627 REST and 35 SOAP), and 8,871 separate
+LINK operations. It has 473 operationless entities, no filedata entities, and
+416 distinct source institution names. Those counts describe different source
+objects and do not assert that an operation is safe to call or is being
+observed. The current Gatus observations still cover only the ten canaries.
+
+This metadata source is provider-scoped, not a Registry-wide catalogue of every
+adapter: `scope.registry_wide_metadata_complete` is false. Its API, operation,
+institution, and purpose fields are copied only from the pinned source and have
+explicit state values when absent, blank, malformed, or unsafe to show. The
+projection omits endpoint addresses and paths, query data, credentials,
+request/response examples, and response rows. A canary link joins by exact
+dataset ID, upstream operation sequence, and operation name. Its CLI operation
+key remains a Health-local selector; the link alone is not a provider
+observation.
+
+Regenerate from a local copy of the exact pinned Registry source with:
+
+```sh
+go run ./cmd/health-registry-metadata \
+  --source /path/to/data-go-kr.registry.json
+```
+
+The command makes no network or provider calls. It streams the top-level source
+array, verifies source and catalog hashes, and bounds input at 160 MiB, each
+record at 16 MiB, JSON nesting at 128, all operation values (including LINK)
+at 50,000, and the artifact at 32 MiB. Operation arrays are counted before
+typed decoding; duplicate case-insensitive `operations` fields fail closed.
+Prose projection removes
+credential assignments and authorization tokens along with URLs, paths, and
+structured examples. It writes the pinned metadata artifact and a receipt
+containing the generated timestamp, source/catalog and artifact hashes, and
+separate counts. Runtime code does not load the 139 MB Registry source.
+
 ## Full-population schedule coverage
 
 `health-schedule-coverage` deterministically queues every pinned Registry

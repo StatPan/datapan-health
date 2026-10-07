@@ -37,6 +37,12 @@ var healthBoundedObservationRunSchema []byte
 //go:embed datapan.health-schedule-coverage.v1.schema.json
 var healthScheduleCoverageSchema []byte
 
+//go:embed datapan.health-registry-api-metadata.v1.schema.json
+var healthRegistryAPIMetadataSchema []byte
+
+//go:embed datapan.health-registry-api-metadata-source-pin.v1.schema.json
+var healthRegistryAPIMetadataSourcePinSchema []byte
+
 var (
 	healthProbeOnce                   sync.Once
 	healthProbe                       *jsonschema.Schema
@@ -65,6 +71,12 @@ var (
 	healthScheduleCoverageOnce        sync.Once
 	healthScheduleCoverage            *jsonschema.Schema
 	healthScheduleCoverageErr         error
+	healthRegistryAPIMetadataOnce     sync.Once
+	healthRegistryAPIMetadata         *jsonschema.Schema
+	healthRegistryAPIMetadataErr      error
+	healthRegistryMetadataPinOnce     sync.Once
+	healthRegistryMetadataPin         *jsonschema.Schema
+	healthRegistryMetadataPinErr      error
 )
 
 func ValidateHealthProbeV1(data []byte) error {
@@ -136,6 +148,20 @@ func ValidateHealthScheduleCoverageV1(data []byte) error {
 		healthScheduleCoverage, healthScheduleCoverageErr = compile(healthScheduleCoverageSchema, "https://schemas.datapan.dev/datapan.health-schedule-coverage.v1.schema.json")
 	})
 	return validate(data, healthScheduleCoverage, healthScheduleCoverageErr, "schedule coverage")
+}
+
+func ValidateHealthRegistryAPIMetadataV1(data []byte) error {
+	healthRegistryAPIMetadataOnce.Do(func() {
+		healthRegistryAPIMetadata, healthRegistryAPIMetadataErr = compile(healthRegistryAPIMetadataSchema, "https://schemas.datapan.dev/datapan.health-registry-api-metadata.v1.schema.json")
+	})
+	return validate(data, healthRegistryAPIMetadata, healthRegistryAPIMetadataErr, "Registry API metadata")
+}
+
+func ValidateHealthRegistryAPIMetadataSourcePinV1(data []byte) error {
+	healthRegistryMetadataPinOnce.Do(func() {
+		healthRegistryMetadataPin, healthRegistryMetadataPinErr = compile(healthRegistryAPIMetadataSourcePinSchema, "https://schemas.datapan.dev/datapan.health-registry-api-metadata-source-pin.v1.schema.json")
+	})
+	return validate(data, healthRegistryMetadataPin, healthRegistryMetadataPinErr, "Registry API metadata source pin")
 }
 
 func compile(source []byte, uri string) (*jsonschema.Schema, error) {

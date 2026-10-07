@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.datapan.dev/datapan.health-registry-api-metadata-source-pin.v1.schema.json",
+  "title": "Datapan Health Registry API metadata source pin",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "registry_revision", "source", "catalog", "expected_counts", "artifact"],
+  "properties": {
+    "schema_version": { "const": "datapan.health-registry-api-metadata-source-pin.v1" },
+    "registry_revision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "size_bytes"],
+      "properties": {
+        "path": { "const": "data/data-go-kr.registry.json" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "size_bytes": { "type": "integer", "minimum": 1, "maximum": 167772160 }
+      }
+    },
+    "catalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "entry_count"],
+      "properties": {
+        "path": { "const": "config/registry/health-probe-catalog.json" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "entry_count": { "type": "integer", "minimum": 1, "maximum": 100 }
+      }
+    },
+    "expected_counts": { "$ref": "#/$defs/counts" },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "const": "config/registry/api-metadata.v1.json" },
+        "sha256": { "type": "string", "pattern": "^([a-f0-9]{64})?$" }
+      }
+    }
+  },
+  "$defs": {
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["api_entities", "api_operations", "link_operations", "operationless_catalog_entries", "filedata_catalog_entries", "institutions", "matched_health_canaries"],
+      "properties": {
+        "api_entities": { "type": "integer", "minimum": 1, "maximum": 20000 },
+        "api_operations": { "type": "integer", "minimum": 1, "maximum": 50000 },
+        "link_operations": { "type": "integer", "minimum": 0, "maximum": 50000 },
+        "operationless_catalog_entries": { "type": "integer", "minimum": 0, "maximum": 20000 },
+        "filedata_catalog_entries": { "type": "integer", "minimum": 0, "maximum": 20000 },
+        "institutions": { "type": "integer", "minimum": 1, "maximum": 20000 },
+        "matched_health_canaries": { "type": "integer", "minimum": 1, "maximum": 100 }
+      }
+    }
+  }
+}
