@@ -10,7 +10,7 @@ import (
 )
 
 func TestHealthRegistryOperationsPageV2Schema(t *testing.T) {
-	const expectedSchemaSHA256 = "cf20e703076bafe97845245beb472000b03f574e1d01e145b9a3d9a1f06cf180"
+	const expectedSchemaSHA256 = "ebdcb86e114b52887fd2a34f13ae9611e8932d984f88fb1632bf0595a4918405"
 	if got := schemas.HealthRegistryOperationsPageV2SchemaSHA256(); got != expectedSchemaSHA256 {
 		t.Fatalf("pinned page schema digest = %s, want %s", got, expectedSchemaSHA256)
 	}
@@ -34,6 +34,12 @@ func TestHealthRegistryOperationsPageV2Schema(t *testing.T) {
 	}
 	if err := schemas.ValidateHealthRegistryOperationsPageV2(raw); err != nil {
 		t.Fatalf("valid page rejected: %v", err)
+	}
+	page.Operations[0].Purpose = "안전하게 정제된 설명"
+	page.Operations[0].PurposeState = "sanitized"
+	raw, err = json.Marshal(page)
+	if err != nil || schemas.ValidateHealthRegistryOperationsPageV2(raw) != nil {
+		t.Fatalf("valid Registry-sanitized metadata state was rejected: %s (%v)", raw, err)
 	}
 	var object map[string]any
 	if err := json.Unmarshal(raw, &object); err != nil {
