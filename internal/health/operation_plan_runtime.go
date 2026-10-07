@@ -2,8 +2,10 @@ package health
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -49,6 +51,8 @@ type VerifiedOperationPlanRuntime struct {
 	IdentityMapping  OperationGatusIdentityMapping
 	ActiveTargets    []OperationPlanWorkerTarget
 	SuppressedLegacy []string
+	verified         bool
+	verificationSeal string
 }
 
 // LoadVerifiedOperationPlanRuntime verifies the exact image-owned inputs
@@ -140,11 +144,50 @@ func verifyOperationGatusRuntimeArtifacts(paths OperationPlanRuntimePaths, canar
 	if err != nil || len(targets) != mapping.ActivatedPlanOperations {
 		return nil, errOperationPlanRuntimeUnavailable
 	}
-	return &VerifiedOperationPlanRuntime{
+	runtime := &VerifiedOperationPlanRuntime{
 		Plan: plan, Metadata: metadata, Canaries: canaries, Artifacts: artifacts,
 		IdentityMapping: mapping, ActiveTargets: targets,
 		SuppressedLegacy: append([]string(nil), artifacts.LegacySuppressedHealthIDs...),
-	}, nil
+		verified: true,
+	}
+	runtime.verificationSeal = operationPlanRuntimeSeal(runtime)
+	if runtime.verificationSeal == "" {
+		return nil, errOperationPlanRuntimeUnavailable
+	}
+	return runtime, nil
+}
+
+type operationPlanRuntimeSealWire struct {
+	RegistryRevision       string                     `json:"registry_revision"`
+	ReleaseManifestSHA256 string                     `json:"release_manifest_sha256"`
+	IndexSHA256            string                     `json:"index_sha256"`
+	ConfigSHA256           string                     `json:"config_sha256"`
+	MappingSHA256          string                     `json:"mapping_sha256"`
+	RuntimePinSHA256       string                     `json:"runtime_pin_sha256"`
+	Targets                []OperationPlanWorkerTarget `json:"targets"`
+	SuppressedLegacy       []string                   `json:"suppressed_legacy"`
+}
+
+func operationPlanRuntimeSeal(runtime *VerifiedOperationPlanRuntime) string {
+	if runtime == nil || !runtime.verified || runtime.Plan.state == nil || !runtime.Plan.state.verified {
+		return ""
+	}
+	wire := operationPlanRuntimeSealWire{
+		RegistryRevision: runtime.Plan.RegistryRevision(), ReleaseManifestSHA256: runtime.Plan.binding.ReleaseManifestSHA256,
+		IndexSHA256: runtime.Plan.IndexSHA256(), ConfigSHA256: digestOperationGatusBytes(runtime.Artifacts.Config),
+		MappingSHA256: digestOperationGatusBytes(runtime.Artifacts.Mapping), RuntimePinSHA256: digestOperationGatusBytes(runtime.Artifacts.RuntimePin),
+		Targets: runtime.ActiveTargets, SuppressedLegacy: runtime.SuppressedLegacy,
+	}
+	raw, err := json.Marshal(wire)
+	if err != nil || len(raw) == 0 || len(raw) > maxOperationGatusRuntimeInputBytes {
+		return ""
+	}
+	sum := sha256.Sum256(raw)
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func validVerifiedOperationPlanRuntime(runtime *VerifiedOperationPlanRuntime) bool {
+	return runtime != nil && runtime.verified && sha256Pattern.MatchString(runtime.verificationSeal) && operationPlanRuntimeSeal(runtime) == runtime.verificationSeal
 }
 
 func validOperationPlanRuntimePaths(paths OperationPlanRuntimePaths) bool {
