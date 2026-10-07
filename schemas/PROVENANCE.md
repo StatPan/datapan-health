@@ -50,6 +50,8 @@ Datapan service state.
 bounded full-operation read-model contract from issue #95. It is a separate
 projection from the fixed ten-canary v1 DTO and binds the pinned Registry
 operation-plan source and the independently pinned Korean metadata source.
+Its protocol label preserves the source value (`HTTP`, `REST`, or `SOAP`); it
+does not normalize one protocol into another or imply request-method evidence.
 The page schema's exact digest is recorded in
 `config/registry/operation-read-model-v2-contract-pin.json`. Its synthetic
 fixtures establish type/schema and pagination behavior only; they are not
