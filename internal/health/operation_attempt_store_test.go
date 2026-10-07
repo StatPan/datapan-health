@@ -88,14 +88,14 @@ func TestOperationAttemptSnapshotSeparatesClaimReceiptObservationAndReadback(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding := testOperationAttemptBinding()
 	started := time.Date(2026, 10, 7, 5, 0, 0, 0, time.UTC)
+	model := testOperationReadModelForStore(t, started)
+	binding := testOperationReadModelAttemptBinding(t, model, "synthetic_test", "synthetic-rest-list")
 	claim, err := store.BeginAttempt(binding, strings.Repeat("9", 64), started, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	model := testOperationReadModelForStore(t, started)
 	if err := model.RefreshFromStore(store, started.Add(time.Second)); err != nil {
 		t.Fatalf("refresh claim snapshot: %v", err)
 	}
@@ -156,14 +156,14 @@ func TestOperationAttemptSnapshotSeparatesClaimReceiptObservationAndReadback(t *
 
 	// A later claim is not a provider attempt and must not erase the last
 	// persisted observation while the worker is running.
-	next, err := store.BeginAttempt(binding, strings.Repeat("7", 64), started.Add(5*time.Minute), time.Minute)
+	next, err := store.BeginAttempt(binding, strings.Repeat("7", 64), started.Add(time.Hour), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := model.RefreshFromStore(store, started.Add(5*time.Minute+time.Second)); err != nil {
+	if err := model.RefreshFromStore(store, started.Add(time.Hour+time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	page, err = model.PageOperations(OperationPageQuery{Query: "synthetic-rest-list", Limit: 10}, started.Add(5*time.Minute+time.Second))
+	page, err = model.PageOperations(OperationPageQuery{Query: "synthetic-rest-list", Limit: 10}, started.Add(time.Hour+time.Second))
 	if err != nil || len(page.Operations) != 1 {
 		t.Fatalf("read newer claim: %#v %v", page, err)
 	}
@@ -171,7 +171,7 @@ func TestOperationAttemptSnapshotSeparatesClaimReceiptObservationAndReadback(t *
 	if latest.AttemptState != "claimed" || !latest.Attempted || latest.ProviderObservedAt == nil || !latest.ProviderObservedAt.Equal(providerObserved) || latest.GatusDeliveryState != "readback_verified" {
 		t.Fatalf("new claim erased or promoted the previous durable observation: %#v", latest)
 	}
-	if err := store.RecordBlockedAttempt(next, strings.Repeat("6", 64), "credential_unavailable", started.Add(5*time.Minute+2*time.Second)); err != nil {
+	if err := store.RecordBlockedAttempt(next, strings.Repeat("6", 64), "credential_unavailable", started.Add(time.Hour+2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -182,8 +182,9 @@ func TestOperationReadModelRefreshFailureKeepsLastAtomicSnapshotAndPagesAvoidDis
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding := testOperationAttemptBinding()
 	started := time.Date(2026, 10, 7, 6, 0, 0, 0, time.UTC)
+	model := testOperationReadModelForStore(t, started)
+	binding := testOperationReadModelAttemptBinding(t, model, "synthetic_test", "synthetic-rest-list")
 	claim, err := store.BeginAttempt(binding, strings.Repeat("5", 64), started, time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -191,7 +192,6 @@ func TestOperationReadModelRefreshFailureKeepsLastAtomicSnapshotAndPagesAvoidDis
 	if err := store.CompleteAttempt(claim, OperationObservationResult{State: "unhealthy", Category: "provider_failure", ObservedAt: started.Add(time.Second), ReceiptSHA: strings.Repeat("4", 64), LatencyMS: 10}, started.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	model := testOperationReadModelForStore(t, started)
 	if err := model.RefreshFromStore(store, started.Add(3*time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -212,6 +212,97 @@ func TestOperationReadModelRefreshFailureKeepsLastAtomicSnapshotAndPagesAvoidDis
 	after, err := model.PageOperations(OperationPageQuery{Query: "synthetic-rest-list", Limit: 10}, started.Add(4*time.Second))
 	if err != nil || len(after.Operations) != 1 || after.Operations[0].ObservationState != "current_fail" || !after.Operations[0].ProviderObservedAt.Equal(*before.Operations[0].ProviderObservedAt) {
 		t.Fatalf("failed refresh damaged the last good in-memory view: %#v %v", after, err)
+	}
+}
+
+func TestOperationAttemptSnapshotKeepsPlanLineageAcrossRevisionChangeAndDelayedGatusReadback(t *testing.T) {
+	rootA, planBindingA, _ := writeSyntheticOperationObservationPlanVersion(t, false, strings.Repeat("a", 40), 300)
+	planA, err := LoadPinnedOperationObservationPlan(rootA, planBindingA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelA, err := NewOperationReadModel(planA, testRegistryAPIMetadataPin(0, 0), nil, nil, time.Date(2026, 10, 7, 7, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rootB, planBindingB, _ := writeSyntheticOperationObservationPlanVersion(t, false, strings.Repeat("b", 40), 600)
+	planB, err := LoadPinnedOperationObservationPlan(rootB, planBindingB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelB, err := NewOperationReadModel(planB, testRegistryAPIMetadataPin(0, 0), nil, nil, time.Date(2026, 10, 7, 7, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindingA := testOperationReadModelAttemptBinding(t, modelA, "synthetic_test", "synthetic-rest-list")
+	bindingB := testOperationReadModelAttemptBinding(t, modelB, "synthetic_test", "synthetic-rest-list")
+	if bindingA.RegistryRevision == bindingB.RegistryRevision || bindingA.IndexSHA == bindingB.IndexSHA || bindingA.ObservationPeriod == bindingB.ObservationPeriod {
+		t.Fatal("synthetic Registry plan change did not alter revision, index, and cadence")
+	}
+
+	store, err := OpenOperationAttemptStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Date(2026, 10, 7, 7, 0, 0, 0, time.UTC)
+	claimA, err := store.BeginAttempt(bindingA, strings.Repeat("a", 64), started, time.Minute)
+	if err != nil {
+		t.Fatalf("claim under plan A: %v", err)
+	}
+	providerObserved := started.Add(20 * time.Second)
+	healthReceived := started.Add(30 * time.Second)
+	if err := store.CompleteAttempt(claimA, OperationObservationResult{State: "healthy", Category: "healthy", ObservedAt: providerObserved, ReceiptSHA: strings.Repeat("c", 64), LatencyMS: 10}, healthReceived); err != nil {
+		t.Fatalf("persist plan A observation: %v", err)
+	}
+
+	claimBAt := started.Add(10 * time.Minute)
+	claimB, err := store.BeginAttempt(bindingB, strings.Repeat("b", 64), claimBAt, time.Minute)
+	if err != nil {
+		t.Fatalf("claim under changed plan B at its cadence: %v", err)
+	}
+	// A's publisher was delayed until after B started. The readback remains
+	// bound to A and must neither invalidate the snapshot nor appear under B.
+	delivery, err := store.ClaimDelivery(bindingA.SourceID, bindingA.OperationID, claimA.AttemptID, claimA.Generation, claimBAt.Add(time.Minute), time.Minute)
+	if err != nil {
+		t.Fatalf("claim delayed plan A delivery: %v", err)
+	}
+	acknowledgedAt := claimBAt.Add(2 * time.Minute)
+	if err := store.AcknowledgeDelivery(delivery, acknowledgedAt); err != nil {
+		t.Fatalf("acknowledge delayed plan A delivery: %v", err)
+	}
+	readbackAt := claimBAt.Add(3 * time.Minute)
+	if err := store.RecordGatusReadback(bindingA.SourceID, bindingA.OperationID, claimA.AttemptID, claimA.Generation, readbackAt, "healthy"); err != nil {
+		t.Fatalf("record delayed plan A readback: %v", err)
+	}
+
+	snapshots, err := store.SnapshotReadModelAttempts()
+	if err != nil || len(snapshots) != 1 {
+		t.Fatalf("delayed delivery made the full snapshot unavailable: count=%d err=%v", len(snapshots), err)
+	}
+	snapshot := snapshots[0]
+	if snapshot.LatestPlanBinding.IndexSHA != bindingB.IndexSHA || snapshot.ObservationPlanBinding == nil || snapshot.ObservationPlanBinding.IndexSHA != bindingA.IndexSHA || !snapshot.UpdatedAt.Equal(readbackAt) || snapshot.UpdatedAt.Before(claimB.StartedAt) {
+		t.Fatalf("snapshot lost independent plan lineage or event watermark: %#v", snapshot)
+	}
+
+	if err := modelB.RefreshAttempts(snapshots, readbackAt.Add(time.Second)); err != nil {
+		t.Fatalf("refresh changed plan B from valid A/B lineage: %v", err)
+	}
+	pageB, err := modelB.PageOperations(OperationPageQuery{Query: "synthetic-rest-list", Limit: 10}, readbackAt.Add(time.Second))
+	if err != nil || len(pageB.Operations) != 1 {
+		t.Fatalf("read plan B projection: %#v %v", pageB, err)
+	}
+	rowB := pageB.Operations[0]
+	if rowB.AttemptState != "claimed" || rowB.ObservationAttemptState != "none" || rowB.ResultState != "" || rowB.ProviderObservedAt != nil || rowB.HealthReceivedAt != nil || rowB.GatusDeliveryState != "not_ready" {
+		t.Fatalf("plan A receipt/readback was relabeled as plan B evidence: %#v", rowB)
+	}
+
+	if err := modelA.RefreshAttempts(snapshots, readbackAt.Add(time.Second)); err != nil {
+		t.Fatalf("refresh old plan model with newer plan claim: %v", err)
+	}
+	pageA, err := modelA.PageOperations(OperationPageQuery{Query: "synthetic-rest-list", Limit: 10}, readbackAt.Add(time.Second))
+	if err != nil || len(pageA.Operations) != 1 || pageA.Operations[0].ObservationAttemptState != "none" || pageA.Operations[0].ProviderObservedAt != nil {
+		t.Fatalf("old plan model exposed a newer plan result or stale claim: %#v %v", pageA, err)
 	}
 }
 

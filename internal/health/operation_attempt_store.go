@@ -495,28 +495,26 @@ func operationReadModelAttemptFromState(state operationAttemptState) (OperationR
 	latest := state.Attempts[len(state.Attempts)-1]
 	projection := OperationReadModelAttempt{
 		SourceID: state.SourceID, OperationID: state.OperationID, AttemptState: latest.State, ObservationAttemptState: "none",
-		ReceiptValidated: latest.ReceiptValidated, RequestStarted: cloneBool(latest.RequestStarted),
+		LatestPlanBinding: latest.Binding,
+		ReceiptValidated:  latest.ReceiptValidated, RequestStarted: cloneBool(latest.RequestStarted),
 		EverRequestStarted: state.EverRequestStarted, GatusDeliveryState: "not_ready", UpdatedAt: latest.StartedAt,
 	}
-	if !latest.FinishedAt.IsZero() && latest.FinishedAt.After(projection.UpdatedAt) {
-		projection.UpdatedAt = latest.FinishedAt
-	}
-	if latest.DeliveryAckAt.After(projection.UpdatedAt) {
-		projection.UpdatedAt = latest.DeliveryAckAt
-	}
-	if latest.GatusReceivedAt.After(projection.UpdatedAt) {
-		projection.UpdatedAt = latest.GatusReceivedAt
-	}
+	projection.UpdatedAt = laterOperationAttemptTime(projection.UpdatedAt, latest.FinishedAt)
 	for index := len(state.Attempts) - 1; index >= 0; index-- {
 		attempt := state.Attempts[index]
 		if attempt.Result == nil {
 			continue
 		}
+		observationBinding := attempt.Binding
+		projection.ObservationPlanBinding = &observationBinding
 		projection.ResultState = attempt.Result.State
 		projection.ResultCategory = attempt.Result.Category
 		projection.ObservationAttemptState = "observed"
 		projection.ProviderObservedAt = attempt.Result.ObservedAt
 		projection.HealthReceivedAt = attempt.Result.ReceivedAt
+		projection.UpdatedAt = laterOperationAttemptTime(projection.UpdatedAt,
+			attempt.StartedAt, attempt.FinishedAt, attempt.Result.ObservedAt, attempt.Result.ReceivedAt,
+			attempt.DeliveryStartedAt, attempt.DeliveryAckAt, attempt.GatusReceivedAt)
 		switch attempt.DeliveryState {
 		case "not_ready", "pending":
 			projection.GatusDeliveryState = "pending"
@@ -532,6 +530,15 @@ func operationReadModelAttemptFromState(state operationAttemptState) (OperationR
 		break
 	}
 	return projection, validOperationReadModelAttempt(projection)
+}
+
+func laterOperationAttemptTime(current time.Time, candidates ...time.Time) time.Time {
+	for _, candidate := range candidates {
+		if candidate.After(current) {
+			current = candidate
+		}
+	}
+	return current
 }
 
 // PendingDeliveries returns the bounded per-operation outbox entries. It may

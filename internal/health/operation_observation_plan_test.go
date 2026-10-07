@@ -117,7 +117,14 @@ func TestLoadPinnedOperationObservationPlanRejectsUnboundEvidenceAndAdmissionCon
 }
 
 func writeSyntheticOperationObservationPlan(t *testing.T, omitEvidence bool) (string, OperationObservationPlanBinding, string) {
+	return writeSyntheticOperationObservationPlanVersion(t, omitEvidence, strings.Repeat("a", 40), 3600)
+}
+
+func writeSyntheticOperationObservationPlanVersion(t *testing.T, omitEvidence bool, registryRevision string, observationPeriodSeconds int64) (string, OperationObservationPlanBinding, string) {
 	t.Helper()
+	if !commitPattern.MatchString(registryRevision) || observationPeriodSeconds < 1 {
+		t.Fatal("invalid synthetic Registry plan version")
+	}
 	root := t.TempDir()
 	const sourcePath = "fixtures/operation-observation-plan/source.json"
 	sourceBytes := []byte("synthetic test source; no provider data\n")
@@ -135,6 +142,13 @@ func writeSyntheticOperationObservationPlan(t *testing.T, omitEvidence bool) (st
 			t.Fatal(err)
 		}
 		rewritePlanTestEvidence(value, sourcePath, sourceSHA, int64(len(sourceBytes)))
+		if operation, ok := value.(map[string]any); ok {
+			runtimeBinding, ok := operation["runtime_binding"].(map[string]any)
+			if !ok {
+				t.Fatal("synthetic operation is missing runtime binding")
+			}
+			runtimeBinding["observation_period_seconds"] = observationPeriodSeconds
+		}
 		recordRaw, err := json.Marshal(value)
 		if err != nil {
 			t.Fatal(err)
@@ -206,7 +220,7 @@ func writeSyntheticOperationObservationPlan(t *testing.T, omitEvidence bool) (st
 	}
 	manifestArtifacts = append(manifestArtifacts, RegistryReleaseManifestArtifact{Path: sourcePath, Kind: "source", Schema: "application/json", Bytes: int64(len(sourceBytes)), SHA256: sourceSHA})
 	index := operationObservationPlanIndex{
-		SchemaVersion: OperationObservationPlanSchemaVersion, ArtifactKind: "index", RegistryRevision: strings.Repeat("a", 40),
+		SchemaVersion: OperationObservationPlanSchemaVersion, ArtifactKind: "index", RegistryRevision: registryRevision,
 		GenerationInputs: generationInputsRaw, InventoryContext: operationPlanInventoryContext{},
 		Summary:      OperationObservationPlanCounts{KnownOperations: 2, RequestPlansComplete: 2, RuntimeBindingsBound: 2, Admitted: 2},
 		SourceScopes: []OperationObservationPlanSourceScope{{SourceID: "synthetic_test", Provider: "synthetic-test-provider", AdapterID: "synthetic-test", InventoryStatus: "source_complete", InventoryUnknown: false, TestOnly: true, RegisteredOperations: 2, IdentitySetSHA256: identitySet.digest(), SourceArtifacts: []operationPlanArtifactRef{{Path: sourcePath, Bytes: int64(len(sourceBytes)), SHA256: sourceSHA}}}},

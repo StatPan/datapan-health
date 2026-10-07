@@ -68,6 +68,8 @@ type RegistryAPIMetadataPin struct {
 type OperationReadModelAttempt struct {
 	SourceID                string
 	OperationID             string
+	LatestPlanBinding       OperationAttemptBinding
+	ObservationPlanBinding  *OperationAttemptBinding
 	AttemptState            string // claimed, request_started, observed, failed, unknown
 	ObservationAttemptState string // none, observed; separate from the latest claim state
 	ReceiptValidated        bool
@@ -210,6 +212,21 @@ type OperationReadModel struct {
 	staticRows             []OperationReadModelRow
 	byIdentity             map[string]int
 	byAPI                  map[string][]int
+	expectedBindings       map[string]operationReadModelPlanBinding
+}
+
+// operationReadModelPlanBinding contains the immutable Registry plan fields
+// used to prevent a durable attempt from being relabeled under a later plan.
+// GatusKey is separately validated because it is a delivery target, not part
+// of the Registry operation-plan artifact.
+type operationReadModelPlanBinding struct {
+	SourceID           string
+	OperationID        string
+	RegistryRevision   string
+	ReleaseManifestSHA string
+	IndexSHA           string
+	ShardSHA           string
+	ObservationPeriod  time.Duration
 }
 
 // NewOperationReadModel verifies the full pinned plan once, joins metadata by
@@ -241,6 +258,7 @@ func NewOperationReadModel(plan PinnedOperationObservationPlan, metadataPin Regi
 		generatedAt:            generatedAt.UTC(),
 		byIdentity:             make(map[string]int),
 		byAPI:                  make(map[string][]int),
+		expectedBindings:       make(map[string]operationReadModelPlanBinding, plan.Counts().KnownOperations),
 	}
 	joinedMetadata := make(map[string]struct{}, len(metadataByOperationID))
 	for shardIndex := 0; shardIndex < plan.ShardCount(); shardIndex++ {
@@ -264,6 +282,15 @@ func NewOperationReadModel(plan PinnedOperationObservationPlan, metadataPin Regi
 				return nil, ErrOperationReadModelUnavailable
 			}
 			model.byIdentity[key] = len(model.rows)
+			shard := plan.state.index.Shards[shardIndex]
+			if shard.SourceID != record.SourceID {
+				return nil, ErrOperationReadModelUnavailable
+			}
+			model.expectedBindings[key] = operationReadModelPlanBinding{
+				SourceID: record.SourceID, OperationID: record.OperationID,
+				RegistryRevision: plan.RegistryRevision(), ReleaseManifestSHA: plan.binding.ReleaseManifestSHA256,
+				IndexSHA: plan.binding.IndexSHA256, ShardSHA: shard.SHA256, ObservationPeriod: record.ObservationPeriod,
+			}
 			model.rows = append(model.rows, row)
 		}
 	}
@@ -278,8 +305,8 @@ func NewOperationReadModel(plan PinnedOperationObservationPlan, metadataPin Regi
 	})
 	model.reindex()
 	model.staticRows = append([]OperationReadModelRow(nil), model.rows...)
-	for _, attempt := range attempts {
-		if err := model.ApplyAttempt(attempt); err != nil {
+	if len(attempts) > 0 {
+		if err := model.RefreshAttempts(attempts, generatedAt); err != nil {
 			return nil, ErrOperationReadModelUnavailable
 		}
 	}
@@ -298,6 +325,13 @@ func (model *OperationReadModel) ApplyAttempt(attempt OperationReadModelAttempt)
 	if !ok {
 		return ErrOperationReadModelUnavailable
 	}
+	key := operationReadModelIdentityKey(attempt.SourceID, attempt.OperationID)
+	if !operationReadModelLatestBindingMatches(model.expectedBindings[key], attempt.LatestPlanBinding) {
+		return ErrOperationReadModelUnavailable
+	}
+	if attempt.ObservationPlanBinding != nil && !operationReadModelObservationBindingMatches(model.expectedBindings[key], *attempt.ObservationPlanBinding) {
+		attempt = withoutOperationReadModelObservation(attempt)
+	}
 	row := model.rows[index]
 	applyOperationReadModelAttempt(&row, attempt)
 	model.rows[index] = row
@@ -311,7 +345,7 @@ func (model *OperationReadModel) ApplyAttempt(attempt OperationReadModelAttempt)
 // bounded durable-store snapshot. It is intended for startup/background
 // refresh; page methods never read or stat operation files.
 func (model *OperationReadModel) RefreshAttempts(attempts []OperationReadModelAttempt, generatedAt time.Time) error {
-	if model == nil || generatedAt.IsZero() || len(attempts) > len(model.staticRows) {
+	if model == nil || generatedAt.IsZero() || len(attempts) > maxOperationAttemptStoreOperations {
 		return ErrOperationReadModelUnavailable
 	}
 	model.mu.Lock()
@@ -329,13 +363,48 @@ func (model *OperationReadModel) RefreshAttempts(attempts []OperationReadModelAt
 		seen[key] = struct{}{}
 		index, ok := model.byIdentity[key]
 		if !ok {
-			return ErrOperationReadModelUnavailable
+			// The durable store may retain an identity removed from this exact
+			// Registry release. It has no row in the current model.
+			continue
+		}
+		expected := model.expectedBindings[key]
+		if !operationReadModelLatestBindingMatches(expected, attempt.LatestPlanBinding) {
+			// Do not relabel an older plan's claim or result as current. The
+			// static row stays unobserved for this immutable release.
+			continue
+		}
+		if attempt.ObservationPlanBinding != nil && !operationReadModelObservationBindingMatches(expected, *attempt.ObservationPlanBinding) {
+			attempt = withoutOperationReadModelObservation(attempt)
 		}
 		applyOperationReadModelAttempt(&rows[index], attempt)
 	}
 	model.rows = rows
 	model.generatedAt = generatedAt.UTC()
 	return nil
+}
+
+func operationReadModelLatestBindingMatches(expected operationReadModelPlanBinding, actual OperationAttemptBinding) bool {
+	return expected.SourceID != "" && actual.SourceID == expected.SourceID && actual.OperationID == expected.OperationID &&
+		actual.RegistryRevision == expected.RegistryRevision && actual.ReleaseManifestSHA == expected.ReleaseManifestSHA &&
+		actual.IndexSHA == expected.IndexSHA && actual.ShardSHA == expected.ShardSHA && actual.ObservationPeriod == expected.ObservationPeriod
+}
+
+func operationReadModelObservationBindingMatches(expected operationReadModelPlanBinding, actual OperationAttemptBinding) bool {
+	return operationReadModelLatestBindingMatches(expected, actual)
+}
+
+func withoutOperationReadModelObservation(attempt OperationReadModelAttempt) OperationReadModelAttempt {
+	attempt.ObservationAttemptState = "none"
+	attempt.ResultState = ""
+	attempt.ResultCategory = ""
+	attempt.ProviderObservedAt = time.Time{}
+	attempt.HealthReceivedAt = time.Time{}
+	attempt.GatusDeliveryState = "not_ready"
+	attempt.GatusAcknowledgedAt = time.Time{}
+	attempt.GatusReadbackAt = time.Time{}
+	attempt.GatusObservedState = ""
+	attempt.ObservationPlanBinding = nil
+	return attempt
 }
 
 // RefreshFromStore obtains one bounded snapshot from the durable attempt
@@ -662,7 +731,10 @@ func operationMissingReason(record OperationObservationPlanRecord) string {
 }
 
 func validOperationReadModelAttempt(attempt OperationReadModelAttempt) bool {
-	if !operationSourceIDPattern.MatchString(attempt.SourceID) || attempt.OperationID == "" || len(attempt.OperationID) > 256 || !validOperationReadModelAttemptState(attempt.AttemptState) || !validOperationReadModelObservationAttemptState(attempt.ObservationAttemptState) || !validOperationReadModelDeliveryState(attempt.GatusDeliveryState) || attempt.UpdatedAt.IsZero() {
+	if !operationSourceIDPattern.MatchString(attempt.SourceID) || attempt.OperationID == "" || len(attempt.OperationID) > 256 || !validOperationAttemptBinding(attempt.LatestPlanBinding) || attempt.LatestPlanBinding.SourceID != attempt.SourceID || attempt.LatestPlanBinding.OperationID != attempt.OperationID || !validOperationReadModelAttemptState(attempt.AttemptState) || !validOperationReadModelObservationAttemptState(attempt.ObservationAttemptState) || !validOperationReadModelDeliveryState(attempt.GatusDeliveryState) || attempt.UpdatedAt.IsZero() {
+		return false
+	}
+	if attempt.ObservationPlanBinding != nil && (!validOperationAttemptBinding(*attempt.ObservationPlanBinding) || attempt.ObservationPlanBinding.SourceID != attempt.SourceID || attempt.ObservationPlanBinding.OperationID != attempt.OperationID) {
 		return false
 	}
 	if attempt.RequestStarted != nil && !attempt.ReceiptValidated {
@@ -691,6 +763,9 @@ func validOperationReadModelAttempt(attempt OperationReadModelAttempt) bool {
 	}
 	hasObservation := !attempt.ProviderObservedAt.IsZero() || !attempt.HealthReceivedAt.IsZero() || attempt.ResultState != "" || attempt.ResultCategory != ""
 	if hasObservation != (attempt.ObservationAttemptState == "observed") {
+		return false
+	}
+	if hasObservation != (attempt.ObservationPlanBinding != nil) {
 		return false
 	}
 	if hasObservation {

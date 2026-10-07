@@ -18,8 +18,15 @@ func TestOperationReadModelBuildsPinnedPageAndSeparatesProviderAndHealthTimes(t 
 	}
 	now := time.Date(2026, 10, 7, 2, 0, 0, 0, time.UTC)
 	requestStarted := true
-	model, err := NewOperationReadModel(plan, testRegistryAPIMetadataPin(0, 0), nil, []OperationReadModelAttempt{{
+	model, err := NewOperationReadModel(plan, testRegistryAPIMetadataPin(0, 0), nil, nil, now)
+	if err != nil {
+		t.Fatalf("construct pinned read model: %v", err)
+	}
+	planBinding := testOperationReadModelAttemptBinding(t, model, "synthetic_test", "synthetic-rest-list")
+	observationBinding := planBinding
+	model, err = NewOperationReadModel(plan, testRegistryAPIMetadataPin(0, 0), nil, []OperationReadModelAttempt{{
 		SourceID: "synthetic_test", OperationID: "synthetic-rest-list", AttemptState: "observed", ObservationAttemptState: "observed", ReceiptValidated: true, RequestStarted: &requestStarted, EverRequestStarted: true,
+		LatestPlanBinding: planBinding, ObservationPlanBinding: &observationBinding,
 		ResultState: "healthy", ResultCategory: "healthy", ProviderObservedAt: now.Add(-10 * time.Minute), HealthReceivedAt: now.Add(-9 * time.Minute),
 		GatusDeliveryState: "acknowledged", GatusAcknowledgedAt: now.Add(-8 * time.Minute), UpdatedAt: now,
 	}}, now)
@@ -129,8 +136,19 @@ func testOperationReadModelForAPIProgress(t *testing.T, now time.Time) *Operatio
 	}
 	model := &OperationReadModel{registryRevision: strings.Repeat("a", 40), manifestSHA: strings.Repeat("b", 64), indexSHA: strings.Repeat("c", 64), planSchemaSHA: strings.Repeat("d", 64), pageSchemaSHA: strings.Repeat("e", 64), metadataPin: testRegistryAPIMetadataPin(2, 3), generatedAt: now, inventoryUnknownScopes: 1, rows: rows}
 	model.reindex()
+	model.expectedBindings = make(map[string]operationReadModelPlanBinding, len(rows))
+	for _, row := range rows {
+		period := time.Duration(0)
+		if row.ObservationPeriodSeconds != nil {
+			period = time.Duration(*row.ObservationPeriodSeconds) * time.Second
+		}
+		key := operationReadModelIdentityKey(row.SourceID, row.RegistryOperationID)
+		model.expectedBindings[key] = operationReadModelPlanBinding{SourceID: row.SourceID, OperationID: row.RegistryOperationID, RegistryRevision: model.registryRevision, ReleaseManifestSHA: model.manifestSHA, IndexSHA: model.indexSHA, ShardSHA: strings.Repeat("f", 64), ObservationPeriod: period}
+	}
 	requestStarted := true
-	if err := model.ApplyAttempt(OperationReadModelAttempt{SourceID: "data_go_kr", OperationID: operationID1, AttemptState: "observed", ObservationAttemptState: "observed", ReceiptValidated: true, RequestStarted: &requestStarted, EverRequestStarted: true, ResultState: "healthy", ResultCategory: "healthy", ProviderObservedAt: now.Add(-30 * time.Second), HealthReceivedAt: now.Add(-20 * time.Second), GatusDeliveryState: "readback_verified", GatusAcknowledgedAt: now.Add(-15 * time.Second), GatusReadbackAt: now.Add(-10 * time.Second), GatusObservedState: "healthy", UpdatedAt: now}); err != nil {
+	planBinding := testOperationReadModelAttemptBinding(t, model, "data_go_kr", operationID1)
+	observationBinding := planBinding
+	if err := model.ApplyAttempt(OperationReadModelAttempt{SourceID: "data_go_kr", OperationID: operationID1, LatestPlanBinding: planBinding, ObservationPlanBinding: &observationBinding, AttemptState: "observed", ObservationAttemptState: "observed", ReceiptValidated: true, RequestStarted: &requestStarted, EverRequestStarted: true, ResultState: "healthy", ResultCategory: "healthy", ProviderObservedAt: now.Add(-30 * time.Second), HealthReceivedAt: now.Add(-20 * time.Second), GatusDeliveryState: "readback_verified", GatusAcknowledgedAt: now.Add(-15 * time.Second), GatusReadbackAt: now.Add(-10 * time.Second), GatusObservedState: "healthy", UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	return model
@@ -170,15 +188,24 @@ func TestOperationReadModelPreservesIndeterminateAndRejectsContradictoryOrFuture
 			ObservationState: "unobserved", GatusDeliveryState: "not_ready",
 		}},
 	}
+	model.expectedBindings = make(map[string]operationReadModelPlanBinding, 1)
+	model.expectedBindings[operationReadModelIdentityKey("data_go_kr", operationID)] = operationReadModelPlanBinding{
+		SourceID: "data_go_kr", OperationID: operationID, RegistryRevision: model.registryRevision,
+		ReleaseManifestSHA: model.manifestSHA, IndexSHA: model.indexSHA, ShardSHA: strings.Repeat("e", 64), ObservationPeriod: 5 * time.Minute,
+	}
 	model.reindex()
 	started := true
+	planBinding := testOperationReadModelAttemptBinding(t, model, "data_go_kr", operationID)
 	base := OperationReadModelAttempt{
 		SourceID: "data_go_kr", OperationID: operationID, AttemptState: "observed", ObservationAttemptState: "observed",
-		ReceiptValidated: true, RequestStarted: &started, EverRequestStarted: true,
+		LatestPlanBinding: planBinding,
+		ReceiptValidated:  true, RequestStarted: &started, EverRequestStarted: true,
 		ProviderObservedAt: now.Add(-20 * time.Second), HealthReceivedAt: now.Add(-10 * time.Second), UpdatedAt: now,
 		GatusDeliveryState: "not_ready",
 	}
 	indeterminate := base
+	observationBinding := planBinding
+	indeterminate.ObservationPlanBinding = &observationBinding
 	indeterminate.ResultState, indeterminate.ResultCategory = "indeterminate", "observer_failure"
 	if err := model.ApplyAttempt(indeterminate); err != nil {
 		t.Fatalf("apply indeterminate receipt: %v", err)
@@ -193,17 +220,20 @@ func TestOperationReadModelPreservesIndeterminateAndRejectsContradictoryOrFuture
 	}
 
 	contradictory := base
+	contradictory.ObservationPlanBinding = &observationBinding
 	contradictory.ResultState, contradictory.ResultCategory = "unhealthy", "healthy"
 	if err := model.ApplyAttempt(contradictory); !errors.Is(err, ErrOperationReadModelUnavailable) {
 		t.Fatalf("unhealthy/healthy contradictory result pair was accepted: %v", err)
 	}
 	unknownCategory := base
+	unknownCategory.ObservationPlanBinding = &observationBinding
 	unknownCategory.ResultState, unknownCategory.ResultCategory = "unhealthy", "provider-secret-description"
 	if err := model.ApplyAttempt(unknownCategory); !errors.Is(err, ErrOperationReadModelUnavailable) {
 		t.Fatalf("unrecognized category reached the public model: %v", err)
 	}
 
 	future := base
+	future.ObservationPlanBinding = &observationBinding
 	future.ProviderObservedAt = now.Add(time.Minute)
 	future.HealthReceivedAt = now.Add(time.Minute + 5*time.Second)
 	future.UpdatedAt = now.Add(time.Minute + 10*time.Second)
@@ -221,6 +251,7 @@ func TestOperationReadModelPreservesIndeterminateAndRejectsContradictoryOrFuture
 	}
 
 	badAck := base
+	badAck.ObservationPlanBinding = &observationBinding
 	badAck.ResultState, badAck.ResultCategory = "healthy", "healthy"
 	badAck.GatusDeliveryState = "acknowledged"
 	badAck.GatusAcknowledgedAt = now.Add(-15 * time.Second) // earlier than Health persistence
@@ -228,6 +259,7 @@ func TestOperationReadModelPreservesIndeterminateAndRejectsContradictoryOrFuture
 		t.Fatalf("Gatus acknowledgement before Health persistence was accepted: %v", err)
 	}
 	badReadback := base
+	badReadback.ObservationPlanBinding = &observationBinding
 	badReadback.ResultState, badReadback.ResultCategory = "healthy", "healthy"
 	badReadback.GatusDeliveryState = "readback_verified"
 	badReadback.GatusAcknowledgedAt = now.Add(-12 * time.Second)
@@ -238,6 +270,7 @@ func TestOperationReadModelPreservesIndeterminateAndRejectsContradictoryOrFuture
 	}
 
 	futureAck := base
+	futureAck.ObservationPlanBinding = &observationBinding
 	futureAck.ResultState, futureAck.ResultCategory = "healthy", "healthy"
 	futureAck.GatusDeliveryState = "acknowledged"
 	futureAck.GatusAcknowledgedAt = now.Add(10 * time.Second)
@@ -251,6 +284,7 @@ func TestOperationReadModelPreservesIndeterminateAndRejectsContradictoryOrFuture
 	}
 
 	futureReadback := base
+	futureReadback.ObservationPlanBinding = &observationBinding
 	futureReadback.ResultState, futureReadback.ResultCategory = "healthy", "healthy"
 	futureReadback.GatusDeliveryState = "readback_verified"
 	futureReadback.GatusAcknowledgedAt = now.Add(-5 * time.Second)
@@ -269,6 +303,19 @@ func TestOperationReadModelPreservesIndeterminateAndRejectsContradictoryOrFuture
 func stringPointer(value string) *string     { return &value }
 func int64Pointer(value int64) *int64        { return &value }
 func timePointer(value time.Time) *time.Time { return &value }
+
+func testOperationReadModelAttemptBinding(t *testing.T, model *OperationReadModel, sourceID, operationID string) OperationAttemptBinding {
+	t.Helper()
+	expected, ok := model.expectedBindings[operationReadModelIdentityKey(sourceID, operationID)]
+	if !ok {
+		t.Fatalf("missing synthetic expected binding for %s/%s", sourceID, operationID)
+	}
+	return OperationAttemptBinding{
+		SourceID: expected.SourceID, OperationID: expected.OperationID, RegistryRevision: expected.RegistryRevision,
+		ReleaseManifestSHA: expected.ReleaseManifestSHA, IndexSHA: expected.IndexSHA, ShardSHA: expected.ShardSHA,
+		GatusKey: "public-data_registry-" + strings.Repeat("e", 64), ObservationPeriod: expected.ObservationPeriod,
+	}
+}
 
 func testRegistryAPIMetadataPin(apiEntities, operations int) RegistryAPIMetadataPin {
 	return RegistryAPIMetadataPin{RegistryRevision: strings.Repeat("a", 40), SourceSHA256: strings.Repeat("b", 64), CatalogSHA256: strings.Repeat("c", 64), ArtifactSHA256: strings.Repeat("d", 64), APIEntityCount: apiEntities, OperationCount: operations}
