@@ -10,6 +10,15 @@
 
 Compatibility tests validate every accepted fixture with this copy and assert its digest. Update the copy and provenance together only after a reviewed CLI schema change.
 
+`datapan.operation-observation-plan.v1.schema.json` is the pinned Registry-owned
+contract for the bounded full-operation observation-plan reader in Health
+issue #95. It is copied byte-for-byte from `StatPan/datapan-registry` source
+revision `da02fccaee4989c5c6dcf3b60e8e627ecd477cca`; its exact SHA-256 is
+`cafa93014d7a32ef072f74df1a730f681e5b206440e4a83e9cdf426f6686e162`.
+`config/registry/operation-observation-plan-contract-pin.json` records the
+same source revision and digest. This schema pin is separate from the
+Registry release manifest and operation-plan index pins loaded at runtime.
+
 `datapan.health-public-status.v1.schema.json` is Health-owned. Issue #20 adds
 it as the default-deny public projection of the exact Registry/Health identity
 proof merged by PR #23. It is not copied from Gatus and intentionally excludes
