@@ -1,0 +1,224 @@
+{
+  "admission": {
+    "evidence_refs": [
+      {
+        "artifact_path": "fixtures/operation-observation-plan/synthetic-source.json",
+        "evidence_kind": "synthetic_fixture",
+        "json_pointer": "#/test_only",
+        "sha256": "1532cc4a9d728d0cea6c614d4a0ade1f9ed22bfc33b28101de05f7855bf07d3c"
+      }
+    ],
+    "reasons": [],
+    "status": "admitted"
+  },
+  "artifact_kind": "operation_plan",
+  "operation_identity": {
+    "operation_id": "synthetic-rest-list",
+    "protocol": "REST",
+    "registered_endpoint": {
+      "host": "api.example.invalid",
+      "path": "/v1/items"
+    }
+  },
+  "request_plan": {
+    "evidence_refs": [
+      {
+        "artifact_path": "fixtures/operation-observation-plan/synthetic-source.json",
+        "evidence_kind": "synthetic_fixture",
+        "json_pointer": "#/operations/rest",
+        "sha256": "1532cc4a9d728d0cea6c614d4a0ade1f9ed22bfc33b28101de05f7855bf07d3c"
+      }
+    ],
+    "request_contract": {
+      "authentication": {
+        "cardinality": "required_single",
+        "credential_reference_required": true,
+        "evidence_refs": [
+          {
+            "artifact_path": "fixtures/operation-observation-plan/synthetic-source.json",
+            "evidence_kind": "synthetic_fixture",
+            "json_pointer": "#/operations/rest/authentication",
+            "sha256": "1532cc4a9d728d0cea6c614d4a0ade1f9ed22bfc33b28101de05f7855bf07d3c"
+          }
+        ],
+        "mechanism": "service_key",
+        "parameter_name": "serviceKey",
+        "placement": "query",
+        "requirement": "required"
+      },
+      "limits": {
+        "evidence_refs": [
+          {
+            "artifact_path": "fixtures/operation-observation-plan/synthetic-source.json",
+            "evidence_kind": "synthetic_fixture",
+            "json_pointer": "#/operations/rest/limits",
+            "sha256": "1532cc4a9d728d0cea6c614d4a0ade1f9ed22bfc33b28101de05f7855bf07d3c"
+          }
+        ],
+        "max_request_bytes": 4096,
+        "max_response_bytes": 16384,
+        "request_budget": 1,
+        "timeout_ms": 1000
+      },
+      "operation_effect": {
+        "authority": "synthetic_fixture",
+        "classification": "read_only",
+        "evidence_refs": [
+          {
+            "artifact_path": "fixtures/operation-observation-plan/synthetic-source.json",
+            "evidence_kind": "synthetic_fixture",
+            "json_pointer": "#/operations/rest/effect",
+            "sha256": "1532cc4a9d728d0cea6c614d4a0ade1f9ed22bfc33b28101de05f7855bf07d3c"
+          }
+        ]
+      },
+      "parameter_inventory_evidence_refs": [
+        {
+          "artifact_path": "fixtures/operation-observation-plan/synthetic-source.json",
+          "evidence_kind": "synthetic_fixture",
+          "json_pointer": "#/operations/rest/parameters",
+          "sha256": "1532cc4a9d728d0cea6c614d4a0ade1f9ed22bfc33b28101de05f7855bf07d3c"
+        }
+      ],
+      "parameters": [
+        {
+          "cardinality": "required_single",
+          "evidence_refs": [
+            {
+              "artifact_path": "fixtures/operation-observation-plan/synthetic-source.json",
+              "evidence_kind": "synthetic_fixture",
+              "json_pointer": "#/operations/rest/parameters/0",
+              "sha256": "1532cc4a9d728d0cea6c614d4a0ade1f9ed22bfc33b28101de05f7855bf07d3c"
+            }
+          ],
+          "location": "query",
+          "name": "page",
+          "value_strategy": {
+            "authority": "synthetic_fixture",
+            "kind": "bounded_integer",
+            "maximum": 1,
+            "minimum": 1,
+            "selected_value": 1,
+            "selection": "fixed"
+          }
+        },
+        {
+          "cardinality": "required_single",
+          "evidence_refs": [
+            {
+              "artifact_path": "fixtures/operation-observation-plan/synthetic-source.json",
+              "evidence_kind": "synthetic_fixture",
+              "json_pointer": "#/operations/rest/parameters/1",
+              "sha256": "1532cc4a9d728d0cea6c614d4a0ade1f9ed22bfc33b28101de05f7855bf07d3c"
+            }
+          ],
+          "location": "query",
+          "name": "serviceKey",
+          "value_strategy": {
+            "authority": "runtime_binding",
+            "binding_field": "credential_reference",
+            "kind": "credential_reference"
+          }
+        }
+      ],
+      "response_assertion": {
+        "empty_result_semantics": "valid",
+        "evidence_refs": [
+          {
+            "artifact_path": "fixtures/operation-observation-plan/synthetic-source.json",
+            "evidence_kind": "synthetic_fixture",
+            "json_pointer": "#/operations/rest/response_assertion",
+            "sha256": "1532cc4a9d728d0cea6c614d4a0ade1f9ed22bfc33b28101de05f7855bf07d3c"
+          }
+        ],
+        "expected_status_codes": [
+          200
+        ],
+        "kind": "http_status"
+      },
+      "transport": {
+        "authority": "synthetic_fixture",
+        "evidence_refs": [
+          {
+            "artifact_path": "fixtures/operation-observation-plan/synthetic-source.json",
+            "evidence_kind": "synthetic_fixture",
+            "json_pointer": "#/operations/rest/transport",
+            "sha256": "1532cc4a9d728d0cea6c614d4a0ade1f9ed22bfc33b28101de05f7855bf07d3c"
+          }
+        ],
+        "host": "api.example.invalid",
+        "http_method": "GET",
+        "path": "/v1/items",
+        "protocol": "REST",
+        "scheme": "https"
+      }
+    },
+    "status": "complete"
+  },
+  "runtime_binding": {
+    "credential_reference": "test-vault/open-data/rest-and-soap",
+    "credential_scope_key": "synthetic:credential-group:local-test",
+    "evidence_refs": [
+      {
+        "artifact_path": "fixtures/operation-observation-plan/synthetic-source.json",
+        "evidence_kind": "synthetic_fixture",
+        "json_pointer": "#/operations/rest/runtime_binding",
+        "sha256": "1532cc4a9d728d0cea6c614d4a0ade1f9ed22bfc33b28101de05f7855bf07d3c"
+      }
+    ],
+    "observation_period_seconds": 3600,
+    "quota_policies": [
+      {
+        "evidence_refs": [
+          {
+            "artifact_path": "fixtures/operation-observation-plan/synthetic-source.json",
+            "evidence_kind": "synthetic_fixture",
+            "json_pointer": "#/shared_quota_policy",
+            "sha256": "1532cc4a9d728d0cea6c614d4a0ade1f9ed22bfc33b28101de05f7855bf07d3c"
+          }
+        ],
+        "max_concurrent": 1,
+        "minimum_interval_seconds": 60,
+        "requests_per_window": 2,
+        "scope_key": "synthetic:credential-group:local-test",
+        "scope_kind": "credential",
+        "scope_sha256": "9edfd346f33fb2c2b2308b096260bb16a9c5dc8910c216095c7f23fb3cc78ddf",
+        "window_seconds": 3600
+      },
+      {
+        "evidence_refs": [
+          {
+            "artifact_path": "fixtures/operation-observation-plan/synthetic-source.json",
+            "evidence_kind": "synthetic_fixture",
+            "json_pointer": "#/api_quota_policies/rest",
+            "sha256": "1532cc4a9d728d0cea6c614d4a0ade1f9ed22bfc33b28101de05f7855bf07d3c"
+          }
+        ],
+        "max_concurrent": 1,
+        "minimum_interval_seconds": 3600,
+        "requests_per_window": 1,
+        "scope_key": "synthetic:api:rest-list",
+        "scope_kind": "api",
+        "scope_sha256": "37515f9b96e1920f519f5e7f8fd2a984999eb819894a277db58a2a9803280166",
+        "window_seconds": 3600
+      }
+    ],
+    "status": "bound"
+  },
+  "schema_version": "datapan.operation-observation-plan.v1",
+  "source_binding": {
+    "adapter_id": "synthetic-test",
+    "inventory_status": "source_complete",
+    "inventory_unknown": false,
+    "provider": "synthetic-test-provider",
+    "source_artifacts": [
+      {
+        "bytes": 4248,
+        "path": "fixtures/operation-observation-plan/synthetic-source.json",
+        "sha256": "1532cc4a9d728d0cea6c614d4a0ade1f9ed22bfc33b28101de05f7855bf07d3c"
+      }
+    ],
+    "source_id": "synthetic_test",
+    "test_only": true
+  }
+}

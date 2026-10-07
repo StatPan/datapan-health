@@ -1,0 +1,12 @@
+{
+  "schema_version": "datapan.health-registry-operations-page.v2",
+  "schema_uri": "https://schemas.datapan.dev/datapan.health-registry-operations-page.v2.schema.json",
+  "schema_sha256": "6e7459c0e7e5f92924076961f083231bfe4a899a24e2864986901a3edb4ade97",
+  "route": "/datapan/v2/operations",
+  "maximum_page_size": 50,
+  "maximum_api_progress_ids": 50,
+  "operation_identity": ["source_id", "registry_operation_id"],
+  "data_go_kr_api_join": ["source_id=data_go_kr", "registry_operation_id", "dataset_id=registry_api_id"],
+  "provider_observation_started_only_from_validated_receipt": true,
+  "gatus_delivery_ack_is_not_readback_verification": true
+}

@@ -30,3 +30,13 @@ surfaces and requires an immutable deployment identity before `operational` or
 observations. The legacy schema is dependency-only and has a separate
 deprecation/removal gate; no external observation may be converted to a
 Datapan service state.
+
+`datapan.health-registry-operations-page.v2.schema.json` is a Health-owned,
+bounded full-operation read-model contract from issue #95. It is a separate
+projection from the fixed ten-canary v1 DTO and binds the pinned Registry
+operation-plan source and the independently pinned Korean metadata source.
+The page schema's exact digest is recorded in
+`config/registry/operation-read-model-v2-contract-pin.json`. Its synthetic
+fixtures establish type/schema and pagination behavior only; they are not
+evidence that a current Registry plan is released or that any provider call
+has run.

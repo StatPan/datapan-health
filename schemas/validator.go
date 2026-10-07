@@ -2,7 +2,9 @@
 package schemas
 
 import (
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -37,34 +39,46 @@ var healthBoundedObservationRunSchema []byte
 //go:embed datapan.health-schedule-coverage.v1.schema.json
 var healthScheduleCoverageSchema []byte
 
+//go:embed datapan.operation-observation-plan.v1.schema.json
+var operationObservationPlanSchema []byte
+
+//go:embed datapan.health-registry-operations-page.v2.schema.json
+var healthRegistryOperationsPageV2Schema []byte
+
 var (
-	healthProbeOnce                   sync.Once
-	healthProbe                       *jsonschema.Schema
-	healthProbeErr                    error
-	healthArchiveOnce                 sync.Once
-	healthArchive                     *jsonschema.Schema
-	healthArchiveErr                  error
-	healthPublicStatusOnce            sync.Once
-	healthPublicStatus                *jsonschema.Schema
-	healthPublicStatusErr             error
-	serviceStatusOnce                 sync.Once
-	serviceStatus                     *jsonschema.Schema
-	serviceStatusErr                  error
-	dependencyObservationOnce         sync.Once
-	dependencyObservation             *jsonschema.Schema
-	dependencyObservationErr          error
-	legacyDependencyOnce              sync.Once
-	legacyDependency                  *jsonschema.Schema
-	legacyDependencyErr               error
-	healthPublicDiagnosisSnapshotOnce sync.Once
-	healthPublicDiagnosisSnapshot     *jsonschema.Schema
-	healthPublicDiagnosisSnapshotErr  error
-	healthBoundedObservationRunOnce   sync.Once
-	healthBoundedObservationRun       *jsonschema.Schema
-	healthBoundedObservationRunErr    error
-	healthScheduleCoverageOnce        sync.Once
-	healthScheduleCoverage            *jsonschema.Schema
-	healthScheduleCoverageErr         error
+	healthProbeOnce                    sync.Once
+	healthProbe                        *jsonschema.Schema
+	healthProbeErr                     error
+	healthArchiveOnce                  sync.Once
+	healthArchive                      *jsonschema.Schema
+	healthArchiveErr                   error
+	healthPublicStatusOnce             sync.Once
+	healthPublicStatus                 *jsonschema.Schema
+	healthPublicStatusErr              error
+	serviceStatusOnce                  sync.Once
+	serviceStatus                      *jsonschema.Schema
+	serviceStatusErr                   error
+	dependencyObservationOnce          sync.Once
+	dependencyObservation              *jsonschema.Schema
+	dependencyObservationErr           error
+	legacyDependencyOnce               sync.Once
+	legacyDependency                   *jsonschema.Schema
+	legacyDependencyErr                error
+	healthPublicDiagnosisSnapshotOnce  sync.Once
+	healthPublicDiagnosisSnapshot      *jsonschema.Schema
+	healthPublicDiagnosisSnapshotErr   error
+	healthBoundedObservationRunOnce    sync.Once
+	healthBoundedObservationRun        *jsonschema.Schema
+	healthBoundedObservationRunErr     error
+	healthScheduleCoverageOnce         sync.Once
+	healthScheduleCoverage             *jsonschema.Schema
+	healthScheduleCoverageErr          error
+	operationObservationPlanOnce       sync.Once
+	operationObservationPlan           *jsonschema.Schema
+	operationObservationPlanErr        error
+	healthRegistryOperationsPageV2Once sync.Once
+	healthRegistryOperationsPageV2     *jsonschema.Schema
+	healthRegistryOperationsPageV2Err  error
 )
 
 func ValidateHealthProbeV1(data []byte) error {
@@ -136,6 +150,38 @@ func ValidateHealthScheduleCoverageV1(data []byte) error {
 		healthScheduleCoverage, healthScheduleCoverageErr = compile(healthScheduleCoverageSchema, "https://schemas.datapan.dev/datapan.health-schedule-coverage.v1.schema.json")
 	})
 	return validate(data, healthScheduleCoverage, healthScheduleCoverageErr, "schedule coverage")
+}
+
+// ValidateOperationObservationPlanV1 validates a Registry-owned operation
+// plan, shard, or index against the exact schema pinned by Health.
+func ValidateOperationObservationPlanV1(data []byte) error {
+	operationObservationPlanOnce.Do(func() {
+		operationObservationPlan, operationObservationPlanErr = compile(operationObservationPlanSchema, "https://schemas.datapan.dev/datapan.operation-observation-plan.v1.schema.json")
+	})
+	return validate(data, operationObservationPlan, operationObservationPlanErr, "operation observation plan")
+}
+
+// ValidateHealthRegistryOperationsPageV2 validates the bounded public
+// Registry operation read model. The existing v1 canary DTO remains separate.
+func ValidateHealthRegistryOperationsPageV2(data []byte) error {
+	healthRegistryOperationsPageV2Once.Do(func() {
+		healthRegistryOperationsPageV2, healthRegistryOperationsPageV2Err = compile(healthRegistryOperationsPageV2Schema, "https://schemas.datapan.dev/datapan.health-registry-operations-page.v2.schema.json")
+	})
+	return validate(data, healthRegistryOperationsPageV2, healthRegistryOperationsPageV2Err, "Registry operations page v2")
+}
+
+// HealthRegistryOperationsPageV2SchemaSHA256 returns the exact Health-owned
+// bounded Registry-operation page contract embedded in this build.
+func HealthRegistryOperationsPageV2SchemaSHA256() string {
+	sum := sha256.Sum256(healthRegistryOperationsPageV2Schema)
+	return hex.EncodeToString(sum[:])
+}
+
+// OperationObservationPlanV1SchemaSHA256 returns the digest of the exact
+// embedded Registry contract bytes pinned into this Health build.
+func OperationObservationPlanV1SchemaSHA256() string {
+	sum := sha256.Sum256(operationObservationPlanSchema)
+	return hex.EncodeToString(sum[:])
 }
 
 func compile(source []byte, uri string) (*jsonschema.Schema, error) {
