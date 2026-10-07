@@ -30,6 +30,7 @@ jobs:
       SOURCE_SHA: ${{ inputs.source_sha }}
       ROLLBACK_IMAGE: ${{ inputs.rollback_image }}
       RELEASE_ARTIFACT: datapan-health-runtime-release-${{ inputs.source_sha }}
+      BUILD_ARTIFACT: datapan-health-runtime-build-${{ inputs.source_sha }}
       RECEIPT_MAX_AGE_SECONDS: "900"
     steps:
       - name: Validate immutable dispatch inputs
@@ -72,6 +73,22 @@ jobs:
           runtime_digest="$(awk -F@ '/^DATAPAN_HEALTH_IMAGE=/{print $2}' dist/images/infra-image-inputs.env)"
           [[ "$runtime_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           printf 'local_runtime_digest=%s\n' "$runtime_digest" >> "$GITHUB_ENV"
+
+      - name: Verify local OCI identity and write build-only evidence
+        shell: bash
+        run: python3 scripts/write-runtime-build-receipt.py
+
+      - name: Preserve verified build before registry access
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.BUILD_ARTIFACT }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            dist/images/runtime-build-receipt.json
+            dist/images/infra-image-inputs.env
+            dist/images/sha256sums.txt
+            dist/images/runtime.oci.tar
 
       - name: Log in to GHCR with workflow-scoped authority
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
