@@ -430,7 +430,11 @@ func NewPublicStatusHandlerWithRegistryMetadataAndSelfReadiness(source PublicSta
 	if err != nil {
 		return nil, err
 	}
-	handler.registry = &metadata
+	frozenMetadata, err := cloneVerifiedRegistryAPIMetadata(metadata)
+	if err != nil {
+		return nil, errors.New("verified Registry API metadata is required")
+	}
+	handler.registry = &frozenMetadata
 	handler.readiness = readiness
 	return handler, nil
 }

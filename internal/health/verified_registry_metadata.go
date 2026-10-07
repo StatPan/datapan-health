@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
+	"strings"
 )
 
 var errRegistryAPIMetadataUnavailable = errors.New("verified Registry API metadata unavailable")
@@ -91,6 +93,67 @@ func NewVerifiedRegistryAPIMetadata(metadata RegistryAPIMetadata) (VerifiedRegis
 		},
 		operations: operations,
 	}, nil
+}
+
+// cloneVerifiedRegistryAPIMetadata freezes the public metadata projection for
+// handlers. It copies every exported slice and every derived index, then
+// revalidates the loader's artifact/source/projection markers on that copy.
+func cloneVerifiedRegistryAPIMetadata(metadata RegistryAPIMetadata) (RegistryAPIMetadata, error) {
+	clone := metadata
+	clone.APIs = make([]RegistryAPIMetadataAPI, len(metadata.APIs))
+	if metadata.HealthCanaryLinks != nil {
+		clone.HealthCanaryLinks = make([]RegistryHealthCanaryLink, len(metadata.HealthCanaryLinks))
+		copy(clone.HealthCanaryLinks, metadata.HealthCanaryLinks)
+	}
+	clone.byID = make(map[string]int, len(metadata.APIs))
+	clone.operationByID = make(map[string]RegistryAPIMetadataOperation, metadata.Counts.APIOperations)
+	clone.canaryByOpID = make(map[string]RegistryHealthCanaryLink, len(metadata.HealthCanaryLinks))
+	clone.canaryByHealthID = make(map[string]RegistryHealthCanaryLink, len(metadata.HealthCanaryLinks))
+	if metadata.canaryDisplays != nil {
+		clone.canaryDisplays = make([]RegistryCanaryDisplay, len(metadata.canaryDisplays))
+		copy(clone.canaryDisplays, metadata.canaryDisplays)
+	}
+	clone.orderedAPIIndices = make([]int, len(metadata.APIs))
+	clone.searchText = make([]string, len(metadata.APIs))
+
+	for index, api := range metadata.APIs {
+		if api.Operations != nil {
+			operations := make([]RegistryAPIMetadataOperation, len(api.Operations))
+			copy(operations, api.Operations)
+			api.Operations = operations
+		}
+		clone.APIs[index] = api
+		clone.byID[api.RegistryAPIID] = index
+		parts := []string{api.Title, api.Organization, api.Description}
+		for _, operation := range api.Operations {
+			if operation.RegistryOperationID != "" {
+				clone.operationByID[operation.RegistryOperationID] = operation
+			}
+			parts = append(parts, operation.Name)
+		}
+		clone.orderedAPIIndices[index] = index
+		clone.searchText[index] = strings.ToLower(strings.Join(parts, "\n"))
+	}
+	for _, link := range clone.HealthCanaryLinks {
+		clone.canaryByOpID[link.RegistryOperationID] = link
+		clone.canaryByHealthID[link.HealthOperationID] = link
+	}
+	sort.SliceStable(clone.orderedAPIIndices, func(i, j int) bool {
+		left := clone.APIs[clone.orderedAPIIndices[i]]
+		right := clone.APIs[clone.orderedAPIIndices[j]]
+		leftTitle, rightTitle := strings.ToLower(left.Title), strings.ToLower(right.Title)
+		if leftTitle == rightTitle {
+			return left.RegistryAPIID < right.RegistryAPIID
+		}
+		return leftTitle < rightTitle
+	})
+	if metadataProjectionDigest(clone) != clone.verifiedProjectionSHA256 {
+		return RegistryAPIMetadata{}, errors.New("verified Registry API metadata projection changed while freezing")
+	}
+	if _, err := NewVerifiedRegistryAPIMetadata(clone); err != nil {
+		return RegistryAPIMetadata{}, fmt.Errorf("verified Registry API metadata copy failed validation: %w", err)
+	}
+	return clone, nil
 }
 
 func metadataProjectionDigest(metadata RegistryAPIMetadata) string {

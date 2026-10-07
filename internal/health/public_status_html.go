@@ -176,6 +176,7 @@ const publicStatusHTMLTemplate = `<!doctype html>
         <p><strong>기관:</strong> {{.Organization}}</p>
         <p><strong>기능:</strong> {{.Description}}</p>
         <p><strong>API 기능:</strong> {{count .APIOperations}}개 · <strong>외부 링크:</strong> {{count .LinkOperations}}개</p>
+        {{if .RegistrationNote}}<p class="notice">{{.RegistrationNote}}</p>{{end}}
         <p><strong>검사 연결:</strong> {{count .ConfiguredOperations}}개 · <strong>검사 연결 전:</strong> {{count .UnconfiguredOperations}}개</p>
         <p><strong>기존 Gatus 수신 결과:</strong> {{.RecentObservations}}</p>
         {{if .Progress}}<p><strong>전체 기능 검사 상태:</strong> <span class="badge {{.Progress.StatusClass}}">{{.Progress.StatusLabel}}</span></p><p><strong>검사 계획:</strong> {{count .Progress.PlannedFunctions}} / {{count .Progress.RegisteredFunctions}}개 기능 · <strong>최근 통과:</strong> {{count .Progress.CurrentPass}} · <strong>최근 실패:</strong> {{count .Progress.CurrentFail}} · <strong>판정 필요:</strong> {{count .Progress.CurrentIndeterminate}} · <strong>결과 없음:</strong> {{count .Progress.Unobserved}} · <strong>기한 지남:</strong> {{count .Progress.Stale}}{{if .Progress.Pending}} · <strong>진행 중:</strong> {{count .Progress.Pending}}{{end}}</p>{{end}}
@@ -257,6 +258,7 @@ const publicStatusHTMLTemplate = `<!doctype html>
       <p><strong>기능:</strong> {{.DetailDescription}}</p>
       <p><strong>API 기능:</strong> {{.DetailAPIOperations}}개</p>
       <p><strong>외부 링크:</strong> {{.DetailLinkOperations}}개</p>
+      {{if .DetailRegistrationNote}}<p class="notice">{{.DetailRegistrationNote}}</p>{{end}}
         <p><strong>검사 연결:</strong> {{.DetailConfigured}}개 · <strong>최근 결과:</strong> {{.DetailRecentObservations}}</p>
       {{if .DetailProgress}}<p><strong>전체 기능 검사 상태:</strong> <span class="badge {{.DetailProgress.StatusClass}}">{{.DetailProgress.StatusLabel}}</span> · 계획 {{count .DetailProgress.PlannedFunctions}} / {{count .DetailProgress.RegisteredFunctions}} · 통과 {{count .DetailProgress.CurrentPass}} · 실패 {{count .DetailProgress.CurrentFail}} · 판정 필요 {{count .DetailProgress.CurrentIndeterminate}} · 결과 없음 {{count .DetailProgress.Unobserved}} · 기한 지남 {{count .DetailProgress.Stale}}</p>{{end}}
       <p class="muted">검사 결과는 연결된 개별 API 기능에만 표시합니다.</p>
@@ -453,6 +455,7 @@ type publicHTMLPage struct {
 	DetailDescription        string
 	DetailAPIOperations      int
 	DetailLinkOperations     int
+	DetailRegistrationNote   string
 	DetailConfigured         int
 	DetailRecentObservations string
 	DetailProgress           *publicHTMLAPIProgress
@@ -490,6 +493,7 @@ type publicHTMLAPI struct {
 	Description            string
 	APIOperations          int
 	LinkOperations         int
+	RegistrationNote       string
 	ConfiguredOperations   int
 	UnconfiguredOperations int
 	RecentObservations     string
@@ -899,8 +903,8 @@ func attachPublicPartialScopes(page *publicHTMLPage, source PublicRegistryOperat
 }
 
 func publicPartialScopeField(value, state, label string, maximumBytes, maximumRunes int) string {
-	if state == "present" {
-		return publicReadModelField(value, state, label, maximumBytes, maximumRunes)
+	if state == "present" || state == "sanitized" {
+		return publicUnverifiedReadModelField(value, state, label, maximumBytes, maximumRunes)
 	}
 	switch state {
 	case "missing", "blank":
@@ -915,7 +919,7 @@ func publicPartialScopeField(value, state, label string, maximumBytes, maximumRu
 }
 
 func publicPartialScopePurpose(operation OperationReadModelRow) (purpose, action string) {
-	if operation.PurposeState == "present" {
+	if operation.PurposeState == "present" || operation.PurposeState == "sanitized" {
 		if value := safePublicOperationReadText(operation.Purpose, maxPublicOperationPurposeBytes, maxPublicOperationPurposeRunes); value != "" {
 			return value, ""
 		}
@@ -1147,7 +1151,7 @@ func publicHTMLLegacyProvenanceValue(metadata RegistryAPIMetadata, document Publ
 }
 
 func publicReadModelField(value, state, label string, maximumBytes, maximumRunes int) string {
-	if state != "present" {
+	if state != "present" && state != "sanitized" {
 		switch state {
 		case "missing":
 			return label + " 없음 (원본 미제공)"
@@ -1160,6 +1164,16 @@ func publicReadModelField(value, state, label string, maximumBytes, maximumRunes
 		default:
 			return label + " 정보를 확인할 수 없습니다"
 		}
+	}
+	if safeVerifiedRegistryMetadataText(value, maximumBytes, maximumRunes) {
+		return value
+	}
+	return label + "을 안전하게 공개할 수 없습니다"
+}
+
+func publicUnverifiedReadModelField(value, state, label string, maximumBytes, maximumRunes int) string {
+	if state != "present" && state != "sanitized" {
+		return publicReadModelField(value, state, label, maximumBytes, maximumRunes)
 	}
 	if safe := safePublicOperationReadText(value, maximumBytes, maximumRunes); safe != "" {
 		return safe
@@ -1622,6 +1636,7 @@ func buildPublicHTMLDirectory(metadata RegistryAPIMetadata, statusByOperation ma
 			Organization:  metadataFieldText(api.Organization, api.OrganizationState, "기관"),
 			Description:   truncatePublicText(metadataFieldText(api.Description, api.DescriptionState, "기능 설명"), 320),
 			APIOperations: len(api.Operations), LinkOperations: api.LinkOperationCount,
+			RegistrationNote:     apiRegistrationNote(api),
 			ConfiguredOperations: stats.configured, UnconfiguredOperations: max(0, len(api.Operations)-stats.configured),
 			RecentObservations: stats.recentText,
 			LatestCheck:        stats.latestCheck, HistoryStart: stats.historyStart,
@@ -1647,7 +1662,8 @@ func buildPublicHTMLAPIDetail(metadata RegistryAPIMetadata, api RegistryAPIMetad
 		DetailOrganization:  metadataFieldText(api.Organization, api.OrganizationState, "기관"),
 		DetailDescription:   metadataFieldText(api.Description, api.DescriptionState, "기능 설명"),
 		DetailAPIOperations: len(api.Operations), DetailLinkOperations: api.LinkOperationCount,
-		DetailConfigured: stats.configured, DetailRecentObservations: stats.recentText,
+		DetailRegistrationNote: apiRegistrationNote(api),
+		DetailConfigured:       stats.configured, DetailRecentObservations: stats.recentText,
 		PageNumber:       request.page,
 		MetadataRevision: metadata.RegistryRevision, ObservationRevision: metadata.healthCatalogRevision,
 	}
@@ -1946,6 +1962,16 @@ func publicHTMLDiagnosis(diagnosis PublicDiagnosis) (cause, next string) {
 	return cause, "추가 검사 결과와 공급처 공지, API 사용 조건을 확인하세요."
 }
 
+func apiRegistrationNote(api RegistryAPIMetadataAPI) string {
+	if len(api.Operations) > 0 {
+		return ""
+	}
+	if api.LinkOperationCount > 0 {
+		return "외부 링크만 등록되어 API 기능별 검사 조건은 확인할 수 없습니다. 링크 정보와 API 기능 검사는 별개입니다."
+	}
+	return "등록된 API 기능과 외부 링크가 없습니다. 공식 제공처 자료와 Registry 등록 범위를 확인해야 합니다."
+}
+
 func buildPublicHTMLDirectoryAPIURL(apiID string) string {
 	return "/datapan/apis/" + url.PathEscape(apiID) + "/"
 }
@@ -1982,9 +2008,16 @@ func pagesFor(items, pageSize int) int {
 func metadataFieldText(value, state, fieldLabel string) string {
 	switch state {
 	case "present", "sanitized":
-		text := safePublicMetadataText(value)
+		maximumBytes, maximumRunes := maxPublicOperationLabelBytes, maxPublicOperationLabelRunes
+		if fieldLabel == "기능 설명" {
+			maximumBytes, maximumRunes = maxPublicOperationPurposeBytes, maxPublicOperationPurposeRunes
+		}
+		if !safeVerifiedRegistryMetadataText(value, maximumBytes, maximumRunes) {
+			return fieldLabel + "은 안전한 공개 기준에 따라 생략했습니다"
+		}
+		text := value
 		if state == "sanitized" {
-			return text + " (안전 처리된 원문)"
+			return text + " (안전 처리된 설명)"
 		}
 		return text
 	case "missing":
