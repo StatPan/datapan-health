@@ -333,6 +333,9 @@ func (model *OperationReadModel) ApplyAttempt(attempt OperationReadModelAttempt)
 		attempt = withoutOperationReadModelObservation(attempt)
 	}
 	row := model.rows[index]
+	if attempt.ObservationAttemptState == "none" && index < len(model.staticRows) {
+		row.MissingReason = model.staticRows[index].MissingReason
+	}
 	applyOperationReadModelAttempt(&row, attempt)
 	model.rows[index] = row
 	if attempt.UpdatedAt.After(model.generatedAt) {
@@ -805,17 +808,28 @@ func applyOperationReadModelAttempt(row *OperationReadModelRow, attempt Operatio
 	row.ObservationAttemptState = attempt.ObservationAttemptState
 	row.RequestStarted = cloneBool(attempt.RequestStarted)
 	row.Attempted = row.Attempted || attempt.EverRequestStarted || attempt.RequestStarted != nil && *attempt.RequestStarted
-	if !attempt.ProviderObservedAt.IsZero() {
-		row.MissingReason = ""
-		row.ResultState = attempt.ResultState
-		row.ResultCategory = attempt.ResultCategory
-		row.ProviderObservedAt = cloneTime(attempt.ProviderObservedAt)
-		row.HealthReceivedAt = cloneTime(attempt.HealthReceivedAt)
-		row.GatusDeliveryState = attempt.GatusDeliveryState
-		row.GatusAcknowledgedAt = cloneTime(attempt.GatusAcknowledgedAt)
-		row.GatusReadbackAt = cloneTime(attempt.GatusReadbackAt)
-		row.GatusObservedState = safePlanLabel(attempt.GatusObservedState)
+	if attempt.ObservationAttemptState == "none" {
+		row.ResultState = ""
+		row.ResultCategory = ""
+		row.ProviderObservedAt = nil
+		row.HealthReceivedAt = nil
+		row.GatusDeliveryState = "not_ready"
+		row.GatusAcknowledgedAt = nil
+		row.GatusReadbackAt = nil
+		row.GatusObservedState = ""
+		row.NextDueAt = nil
+		row.ObservationState = "unobserved"
+		return
 	}
+	row.MissingReason = ""
+	row.ResultState = attempt.ResultState
+	row.ResultCategory = attempt.ResultCategory
+	row.ProviderObservedAt = cloneTime(attempt.ProviderObservedAt)
+	row.HealthReceivedAt = cloneTime(attempt.HealthReceivedAt)
+	row.GatusDeliveryState = attempt.GatusDeliveryState
+	row.GatusAcknowledgedAt = cloneTime(attempt.GatusAcknowledgedAt)
+	row.GatusReadbackAt = cloneTime(attempt.GatusReadbackAt)
+	row.GatusObservedState = safePlanLabel(attempt.GatusObservedState)
 }
 
 func refreshOperationReadModelFreshness(row *OperationReadModelRow, at time.Time) {

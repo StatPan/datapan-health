@@ -194,6 +194,7 @@ func TestOperationReadModelPreservesIndeterminateAndRejectsContradictoryOrFuture
 		ReleaseManifestSHA: model.manifestSHA, IndexSHA: model.indexSHA, ShardSHA: strings.Repeat("e", 64), ObservationPeriod: 5 * time.Minute,
 	}
 	model.reindex()
+	model.staticRows = append([]OperationReadModelRow(nil), model.rows...)
 	started := true
 	planBinding := testOperationReadModelAttemptBinding(t, model, "data_go_kr", operationID)
 	base := OperationReadModelAttempt{
@@ -297,6 +298,18 @@ func TestOperationReadModelPreservesIndeterminateAndRejectsContradictoryOrFuture
 	page, err = model.PageOperations(OperationPageQuery{APIID: "api-indeterminate", Limit: 10}, now)
 	if err != nil || len(page.Operations) != 1 || page.Operations[0].GatusDeliveryState != "acknowledged" || page.Operations[0].GatusReadbackAt != nil || page.Operations[0].GatusObservedState != "" {
 		t.Fatalf("future Gatus readback was projected before its evaluation time: %#v %v", page, err)
+	}
+
+	claimed := OperationReadModelAttempt{
+		SourceID: "data_go_kr", OperationID: operationID, LatestPlanBinding: planBinding,
+		AttemptState: "claimed", ObservationAttemptState: "none", GatusDeliveryState: "not_ready", UpdatedAt: now.Add(time.Minute),
+	}
+	if err := model.ApplyAttempt(claimed); err != nil {
+		t.Fatalf("replace observed state with a full no-observation claim: %v", err)
+	}
+	page, err = model.PageOperations(OperationPageQuery{APIID: "api-indeterminate", Limit: 10}, now.Add(time.Minute))
+	if err != nil || len(page.Operations) != 1 || page.Operations[0].ObservationAttemptState != "none" || page.Operations[0].ObservationState != "unobserved" || page.Operations[0].ResultState != "" || page.Operations[0].ResultCategory != "" || page.Operations[0].ProviderObservedAt != nil || page.Operations[0].HealthReceivedAt != nil || page.Operations[0].GatusDeliveryState != "not_ready" {
+		t.Fatalf("no-observation replacement retained the previous result fields: %#v %v", page, err)
 	}
 }
 
