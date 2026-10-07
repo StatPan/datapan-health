@@ -54,6 +54,9 @@ var healthRegistryAPIMetadataSchema []byte
 //go:embed datapan.health-registry-api-metadata-source-pin.v1.schema.json
 var healthRegistryAPIMetadataSourcePinSchema []byte
 
+//go:embed datapan.health-operation-plan-probe.v1.schema.json
+var healthOperationPlanProbeV1Schema []byte
+
 var (
 	healthProbeOnce                    sync.Once
 	healthProbe                        *jsonschema.Schema
@@ -97,6 +100,9 @@ var (
 	healthRegistryMetadataPinOnce      sync.Once
 	healthRegistryMetadataPin          *jsonschema.Schema
 	healthRegistryMetadataPinErr       error
+	healthOperationPlanProbeV1Once     sync.Once
+	healthOperationPlanProbeV1         *jsonschema.Schema
+	healthOperationPlanProbeV1Err      error
 )
 
 func ValidateHealthProbeV1(data []byte) error {
@@ -188,6 +194,16 @@ func ValidateOperationObservationPlanV1(data []byte) error {
 	return validate(data, operationObservationPlan, operationObservationPlanErr, "operation observation plan")
 }
 
+// ValidateHealthOperationPlanProbeV1 validates the CLI's redacted per-attempt
+// receipt contract. Callers must also check its identity against their pinned
+// plan and attempt.
+func ValidateHealthOperationPlanProbeV1(data []byte) error {
+	healthOperationPlanProbeV1Once.Do(func() {
+		healthOperationPlanProbeV1, healthOperationPlanProbeV1Err = compile(healthOperationPlanProbeV1Schema, "https://schemas.datapan.dev/datapan.health-operation-plan-probe.v1.schema.json")
+	})
+	return validate(data, healthOperationPlanProbeV1, healthOperationPlanProbeV1Err, "health operation-plan probe receipt")
+}
+
 // ValidateHealthRegistryOperationsPageV2 validates the bounded public
 // Registry operation read model. The existing v1 canary DTO remains separate.
 func ValidateHealthRegistryOperationsPageV2(data []byte) error {
@@ -208,6 +224,13 @@ func HealthRegistryOperationsPageV2SchemaSHA256() string {
 // embedded Registry contract bytes pinned into this Health build.
 func OperationObservationPlanV1SchemaSHA256() string {
 	sum := sha256.Sum256(operationObservationPlanSchema)
+	return hex.EncodeToString(sum[:])
+}
+
+// HealthOperationPlanProbeV1SchemaSHA256 returns the exact CLI receipt schema
+// bytes embedded in this Health build.
+func HealthOperationPlanProbeV1SchemaSHA256() string {
+	sum := sha256.Sum256(healthOperationPlanProbeV1Schema)
 	return hex.EncodeToString(sum[:])
 }
 
