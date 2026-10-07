@@ -93,6 +93,9 @@ func TestVerifiedRegistryMetadataPreservesLongKoreanPurposeText(t *testing.T) {
 		t.Fatal(err)
 	}
 	preservedLong := 0
+	sourceNonempty := 0
+	retained := 0
+	droppedReasons := map[string]int{}
 	longByBytes := 0
 	longByRunes := 0
 	maxBytes := 0
@@ -101,6 +104,7 @@ func TestVerifiedRegistryMetadataPreservesLongKoreanPurposeText(t *testing.T) {
 		if api.DescriptionState != "present" && api.DescriptionState != "sanitized" {
 			continue
 		}
+		sourceNonempty++
 		byteCount := len(api.Description)
 		runeCount := utf8.RuneCountInString(api.Description)
 		if byteCount > maxBytes {
@@ -116,20 +120,67 @@ func TestVerifiedRegistryMetadataPreservesLongKoreanPurposeText(t *testing.T) {
 			longByRunes++
 		}
 		value, state := sanitizeClassifiedMetadata(api.Description, api.DescriptionState, 8192, 8192)
-		if state == "present" && value == api.Description && runeCount > 512 {
+		if (state == "present" || state == "sanitized") && value == api.Description {
+			retained++
+		} else {
+			droppedReasons[metadataTextDropReason(api.Description)]++
+		}
+		if (state == "present" || state == "sanitized") && value == api.Description && runeCount > 512 {
 			preservedLong++
 		}
 	}
 	// These floors are grounded in the exact byte-verified metadata pin. They
 	// catch byte-count truncation of valid Korean prose without pinning display
 	// coverage to every content-level redaction decision.
-	if longByBytes < 8000 || longByRunes < 700 || preservedLong < 700 || maxBytes > 8192 || maxRunes > 8192 {
-		t.Fatalf("verified Korean purpose corpus was unexpectedly dropped or over-bounded: long_bytes=%d long_runes=%d preserved_long=%d max_bytes=%d max_runes=%d", longByBytes, longByRunes, preservedLong, maxBytes, maxRunes)
+	if longByBytes < 8000 || longByRunes < 700 || preservedLong < 700 || retained < sourceNonempty-1000 || maxBytes > 8192 || maxRunes > 8192 {
+		t.Fatalf("verified Korean purpose corpus was unexpectedly dropped or over-bounded: source_nonempty=%d retained=%d dropped_reasons=%v long_bytes=%d long_runes=%d preserved_long=%d max_bytes=%d max_runes=%d", sourceNonempty, retained, droppedReasons, longByBytes, longByRunes, preservedLong, maxBytes, maxRunes)
 	}
 	longKorean := strings.Repeat("안전한 설명", 252) // 1,512 Unicode code points.
 	value, state := sanitizeClassifiedMetadata(longKorean, "present", 8192, 8192)
 	if state != "present" || value != longKorean {
 		t.Fatalf("long Korean purpose text was not preserved: state=%q bytes=%d runes=%d", state, len(value), utf8.RuneCountInString(value))
 	}
-	t.Logf("verified purpose corpus: long_bytes=%d long_runes=%d preserved_long=%d max_bytes=%d max_runes=%d", longByBytes, longByRunes, preservedLong, maxBytes, maxRunes)
+	comparison := "기준값 `1`보다 작은 값만 대상으로 처리"
+	value, state = sanitizeClassifiedMetadata(comparison, "sanitized", 8192, 8192)
+	if state != "sanitized" || value != comparison {
+		t.Fatal("verified prose with harmless inline-code punctuation was dropped")
+	}
+	t.Logf("verified purpose corpus counts: source_nonempty=%d retained=%d dropped_reasons=%v long_bytes=%d long_runes=%d preserved_long=%d max_bytes=%d max_runes=%d", sourceNonempty, retained, droppedReasons, longByBytes, longByRunes, preservedLong, maxBytes, maxRunes)
+}
+
+func metadataTextDropReason(value string) string {
+	value = strings.TrimSpace(value)
+	lower := strings.ToLower(value)
+	switch {
+	case value == "" || !utf8.ValidString(value):
+		return "empty_or_invalid_utf8"
+	case strings.TrimSpace(value) != value:
+		return "surrounding_whitespace"
+	case len(value) > 8192 || utf8.RuneCountInString(value) > 8192:
+		return "field_limit"
+	case strings.ContainsAny(value, "\r\n\x00"):
+		return "control_character"
+	case strings.Contains(value, "`"):
+		return "backtick"
+	case strings.Contains(value, "\\"):
+		return "backslash"
+	case operationReadModelMarkupPattern.MatchString(value):
+		return "html_like_markup"
+	case operationReadModelURLPattern.MatchString(value):
+		return "url"
+	case operationReadModelRequestTargetPattern.MatchString(value):
+		return "request_target"
+	case operationReadModelSecretPattern.MatchString(value):
+		return "credential_or_query_assignment"
+	case operationReadModelIPPattern.MatchString(value):
+		return "private_or_literal_ip"
+	case operationReadModelDomainPattern.MatchString(value):
+		return "domain"
+	case strings.Contains(lower, "authorization:") || strings.Contains(lower, "bearer "):
+		return "authorization_text"
+	case strings.Contains(lower, "localhost") || strings.Contains(lower, ".internal") || strings.Contains(lower, ".local"):
+		return "internal_target"
+	default:
+		return "other"
+	}
 }

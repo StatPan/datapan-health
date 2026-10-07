@@ -36,6 +36,9 @@ var (
 	operationReadModelIPPattern                  = regexp.MustCompile(`\b(10|127|192\.168|172\.(1[6-9]|2[0-9]|3[01]))(\.\d{1,3}){2}\b`)
 	operationReadModelSecretPattern              = regexp.MustCompile(`(?i)(\b(api[_ -]?key|service[_ -]?key|authorization|bearer|password|token|secret|client[_ -]?secret)\b\s*[:=]|[?&][a-z0-9_.-]+=)`)
 	operationReadModelPathPattern                = regexp.MustCompile(`(^|[\s:])/([a-z0-9._~%-]+/)*[a-z0-9._~%-]*`)
+	operationReadModelURLPattern                 = regexp.MustCompile(`(?i)\b(?:https?://|www\.)[^\s<>"')]+`)
+	operationReadModelRequestTargetPattern       = regexp.MustCompile(`(?i)\b(?:GET|POST|PUT|DELETE|PATCH)\s+/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*`)
+	operationReadModelMarkupPattern              = regexp.MustCompile(`(?is)<(?:/?[a-z][^>]*|!--.*?--)\s*>`)
 )
 
 // RegistryOperationMetadata contains only fields already projected and
@@ -437,6 +440,95 @@ func (model *OperationReadModel) RefreshFromStore(store *OperationAttemptStore, 
 	return model.RefreshAttempts(attempts, generatedAt)
 }
 
+// AttemptIdentities returns one bounded deterministic slice from the pinned
+// plan. A background reader can walk these slices without scanning the state
+// directory; public paging uses only the in-memory rows.
+func (model *OperationReadModel) AttemptIdentities(offset, limit int) ([]OperationAttemptIdentity, error) {
+	if model == nil || offset < 0 || limit < 1 || limit > operationAttemptIdentityBatchMaximum {
+		return nil, ErrOperationReadModelQuery
+	}
+	model.mu.RLock()
+	defer model.mu.RUnlock()
+	if offset > len(model.staticRows) {
+		return nil, ErrOperationReadModelQuery
+	}
+	end := offset + limit
+	if end > len(model.staticRows) {
+		end = len(model.staticRows)
+	}
+	identities := make([]OperationAttemptIdentity, 0, end-offset)
+	for _, row := range model.staticRows[offset:end] {
+		identities = append(identities, OperationAttemptIdentity{SourceID: row.SourceID, OperationID: row.RegistryOperationID})
+	}
+	return identities, nil
+}
+
+// RefreshFromStoreBatch checks at most 256 known identity files. The caller
+// schedules these bounded batches in a background refresh loop and tracks the
+// returned completion bit; no page request performs filesystem work.
+func (model *OperationReadModel) RefreshFromStoreBatch(store *OperationAttemptStore, offset, limit int, generatedAt time.Time) (nextOffset int, complete bool, err error) {
+	if store == nil || generatedAt.IsZero() {
+		return offset, false, ErrOperationReadModelUnavailable
+	}
+	identities, err := model.AttemptIdentities(offset, limit)
+	if err != nil || len(identities) == 0 {
+		return offset, false, ErrOperationReadModelUnavailable
+	}
+	attempts, err := store.SnapshotReadModelAttemptsForIdentities(identities)
+	if err != nil || model.ApplyAttempts(attempts, generatedAt) != nil {
+		return offset, false, ErrOperationReadModelUnavailable
+	}
+	nextOffset = offset + len(identities)
+	return nextOffset, nextOffset == len(model.staticRows), nil
+}
+
+// ApplyAttempts publishes one store batch atomically into the cached page
+// projection. Plan-mismatched historical state is ignored rather than
+// relabeled under the current Registry release.
+func (model *OperationReadModel) ApplyAttempts(attempts []OperationReadModelAttempt, generatedAt time.Time) error {
+	if model == nil || generatedAt.IsZero() || len(attempts) > operationAttemptIdentityBatchMaximum {
+		return ErrOperationReadModelUnavailable
+	}
+	model.mu.Lock()
+	defer model.mu.Unlock()
+	rows := append([]OperationReadModelRow(nil), model.rows...)
+	seen := make(map[string]struct{}, len(attempts))
+	for _, attempt := range attempts {
+		if !validOperationReadModelAttempt(attempt) {
+			return ErrOperationReadModelUnavailable
+		}
+		key := operationReadModelIdentityKey(attempt.SourceID, attempt.OperationID)
+		if _, duplicate := seen[key]; duplicate {
+			return ErrOperationReadModelUnavailable
+		}
+		seen[key] = struct{}{}
+		index, ok := model.byIdentity[key]
+		if !ok {
+			return ErrOperationReadModelUnavailable
+		}
+		expected := model.expectedBindings[key]
+		if !operationReadModelLatestBindingMatches(expected, attempt.LatestPlanBinding) {
+			continue
+		}
+		if attempt.ObservationPlanBinding != nil && !operationReadModelObservationBindingMatches(expected, *attempt.ObservationPlanBinding) {
+			attempt = withoutOperationReadModelObservation(attempt)
+		}
+		row := rows[index]
+		if attempt.ObservationAttemptState == "none" {
+			row.MissingReason = model.staticRows[index].MissingReason
+		}
+		applyOperationReadModelAttempt(&row, attempt)
+		refreshOperationReadModelFreshness(&row, generatedAt.UTC())
+		if row.ValidatePublicProjection(generatedAt.UTC()) != nil {
+			return ErrOperationReadModelUnavailable
+		}
+		rows[index] = row
+	}
+	model.rows = rows
+	model.generatedAt = generatedAt.UTC()
+	return nil
+}
+
 // LookupAPIProgress returns exact per-API identity-set rollups. It accepts at
 // most 50 unique IDs and reads only the already-built in-memory index.
 func (model *OperationReadModel) LookupAPIProgress(apiIDs []string, at time.Time) ([]OperationAPIProgress, error) {
@@ -698,11 +790,26 @@ func sanitizeClassifiedMetadata(value, state string, maxBytes, maxRunes int) (st
 	default:
 		return "", "invalid"
 	}
-	safe := safeOperationReadTextLimit(value, maxBytes, maxRunes)
-	if safe == "" {
+	if !safeVerifiedRegistryMetadataText(value, maxBytes, maxRunes) {
 		return "", "unsafe"
 	}
-	return safe, "present"
+	return value, state
+}
+
+// safeVerifiedRegistryMetadataText accepts only text from the byte-pinned
+// Registry metadata projection, whose producer has already stripped URL,
+// query, markup, request/response examples, and credential assignments. It
+// repeats high-confidence leak checks without treating ordinary slash or
+// punctuation prose as an endpoint.
+func safeVerifiedRegistryMetadataText(value string, maxBytes, maxRunes int) bool {
+	if value == "" || maxBytes < 1 || maxRunes < 1 || !utf8.ValidString(value) || strings.TrimSpace(value) != value || len(value) > maxBytes || utf8.RuneCountInString(value) > maxRunes {
+		return false
+	}
+	if strings.ContainsAny(value, "\r\n\x00\\") || operationReadModelURLPattern.MatchString(value) || operationReadModelRequestTargetPattern.MatchString(value) || operationReadModelMarkupPattern.MatchString(value) || operationReadModelSecretPattern.MatchString(value) || operationReadModelIPPattern.MatchString(value) || operationReadModelDomainPattern.MatchString(value) {
+		return false
+	}
+	lower := strings.ToLower(value)
+	return !strings.Contains(lower, "authorization:") && !strings.Contains(lower, "bearer ") && !strings.Contains(lower, "localhost") && !strings.Contains(lower, ".internal") && !strings.Contains(lower, ".local")
 }
 
 func safeOperationReadText(value string) string {
@@ -985,7 +1092,12 @@ func (model *OperationReadModel) CursorDigest() string {
 }
 
 func (row OperationReadModelRow) ValidatePublicProjection(at time.Time) error {
-	if at.IsZero() || !operationSourceIDPattern.MatchString(row.SourceID) || row.RegistryOperationID == "" || row.OperationNameState == "present" && safeOperationReadTextLimit(row.OperationName, 1024, 1024) == "" || row.TitleState == "present" && safeOperationReadTextLimit(row.Title, 1024, 1024) == "" || row.OrganizationState == "present" && safeOperationReadTextLimit(row.Organization, 1024, 1024) == "" || row.PurposeState == "present" && safeOperationReadTextLimit(row.Purpose, 8192, 8192) == "" || row.APIID != nil && !operationReadModelAPIIDPattern.MatchString(*row.APIID) || row.MissingReason == "inventory_unknown" && !row.InventoryUnknown {
+	if at.IsZero() || !operationSourceIDPattern.MatchString(row.SourceID) || row.RegistryOperationID == "" ||
+		!validOperationReadModelTextField(row.OperationName, row.OperationNameState, 1024, 1024, row.SourceID == "data_go_kr") ||
+		!validOperationReadModelTextField(row.Title, row.TitleState, 1024, 1024, row.SourceID == "data_go_kr") ||
+		!validOperationReadModelTextField(row.Organization, row.OrganizationState, 1024, 1024, row.SourceID == "data_go_kr") ||
+		!validOperationReadModelTextField(row.Purpose, row.PurposeState, 8192, 8192, row.SourceID == "data_go_kr") ||
+		row.APIID != nil && !operationReadModelAPIIDPattern.MatchString(*row.APIID) || row.MissingReason == "inventory_unknown" && !row.InventoryUnknown {
 		return fmt.Errorf("%w: unsafe projected operation metadata", ErrOperationReadModelUnavailable)
 	}
 	if !validOperationReadModelObservationAttemptState(row.ObservationAttemptState) || row.ObservationAttemptState == "observed" && (!validOperationReadModelResultPair(row.ResultState, row.ResultCategory) || row.ProviderObservedAt == nil || row.HealthReceivedAt == nil || row.ProviderObservedAt.After(*row.HealthReceivedAt)) || row.ObservationAttemptState == "none" && (row.ResultState != "" || row.ResultCategory != "" || row.ProviderObservedAt != nil || row.HealthReceivedAt != nil) {
@@ -1003,6 +1115,20 @@ func (row OperationReadModelRow) ValidatePublicProjection(at time.Time) error {
 		return fmt.Errorf("%w: public projection is inconsistent at evaluation time", ErrOperationReadModelUnavailable)
 	}
 	return nil
+}
+
+func validOperationReadModelTextField(value, state string, maxBytes, maxRunes int, verifiedMetadata bool) bool {
+	switch state {
+	case "present", "sanitized":
+		if verifiedMetadata {
+			return safeVerifiedRegistryMetadataText(value, maxBytes, maxRunes)
+		}
+		return safeOperationReadTextLimit(value, maxBytes, maxRunes) != ""
+	case "missing", "blank", "invalid", "unsafe":
+		return value == ""
+	default:
+		return false
+	}
 }
 
 func equalOptionalTime(left, right *time.Time) bool {

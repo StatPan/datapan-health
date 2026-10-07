@@ -220,6 +220,49 @@ func TestOperationAttemptIdentityBatchSnapshotTracksExternalAtomicReplacement(t 
 	}
 }
 
+func TestOperationAttemptIdentityBatchDoesNotAdvanceStampsOnPartialFailure(t *testing.T) {
+	store, err := OpenOperationAttemptStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 7, 5, 30, 0, 0, time.UTC)
+	bindingA := testOperationAttemptBinding()
+	bindingA.OperationID = "operation-a"
+	bindingB := testOperationAttemptBinding()
+	bindingB.OperationID = "operation-b"
+	if _, err := store.BeginAttempt(bindingA, strings.Repeat("a", 64), now, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BeginAttempt(bindingB, strings.Repeat("b", 64), now, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	pathB := store.statePath(bindingB.SourceID, bindingB.OperationID)
+	validB, err := os.ReadFile(pathB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pathB, []byte(`{"corrupt":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	identities := []OperationAttemptIdentity{
+		{SourceID: bindingA.SourceID, OperationID: bindingA.OperationID},
+		{SourceID: bindingB.SourceID, OperationID: bindingB.OperationID},
+	}
+	if attempts, err := store.SnapshotReadModelAttemptsForIdentities(identities); !errors.Is(err, ErrOperationAttemptUnavailable) || attempts != nil {
+		t.Fatalf("batch with a later corrupt identity was not rejected atomically: %#v %v", attempts, err)
+	}
+	if err := os.WriteFile(pathB, validB, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	attempts, err := store.SnapshotReadModelAttemptsForIdentities(identities)
+	if err != nil || len(attempts) != 2 {
+		t.Fatalf("repairing the later identity did not return the complete unstamped batch: %#v %v", attempts, err)
+	}
+	if attempts[0].OperationID != bindingA.OperationID || attempts[1].OperationID != bindingB.OperationID {
+		t.Fatalf("snapshot batch did not preserve deterministic identity order: %#v", attempts)
+	}
+}
+
 func TestOperationReadModelRefreshFailureKeepsLastAtomicSnapshotAndPagesAvoidDisk(t *testing.T) {
 	root := t.TempDir()
 	store, err := OpenOperationAttemptStore(filepath.Join(root, "attempts"))

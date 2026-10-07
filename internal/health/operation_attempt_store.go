@@ -191,6 +191,7 @@ func (store *OperationAttemptStore) SnapshotReadModelAttemptsForIdentities(ident
 		store.readStamps = make(map[string]operationAttemptFileStamp)
 	}
 	snapshots := make([]OperationReadModelAttempt, 0, len(identities))
+	stampUpdates := make(map[string]operationAttemptFileStamp, len(identities))
 	seen := make(map[string]struct{}, len(identities))
 	for _, identity := range identities {
 		if !operationSourceIDPattern.MatchString(identity.SourceID) || identity.OperationID == "" || len(identity.OperationID) > 256 {
@@ -214,7 +215,7 @@ func (store *OperationAttemptStore) SnapshotReadModelAttemptsForIdentities(ident
 			if known && previous.exists {
 				return nil, ErrOperationAttemptUnavailable
 			}
-			store.readStamps[path] = stamp
+			stampUpdates[path] = stamp
 			continue
 		}
 		state, found, err := store.readState(identity.SourceID, identity.OperationID)
@@ -231,7 +232,7 @@ func (store *OperationAttemptStore) SnapshotReadModelAttemptsForIdentities(ident
 		if !ok || projection.SourceID != identity.SourceID || projection.OperationID != identity.OperationID {
 			return nil, ErrOperationAttemptUnavailable
 		}
-		store.readStamps[path] = stamp
+		stampUpdates[path] = stamp
 		snapshots = append(snapshots, projection)
 	}
 	sort.Slice(snapshots, func(i, j int) bool {
@@ -240,6 +241,12 @@ func (store *OperationAttemptStore) SnapshotReadModelAttemptsForIdentities(ident
 		}
 		return snapshots[i].OperationID < snapshots[j].OperationID
 	})
+	// Do not advance any stamp until every identity in this batch has passed
+	// validation; otherwise a later corrupt file could discard earlier decoded
+	// snapshots and make the next pass skip them permanently.
+	for path, stamp := range stampUpdates {
+		store.readStamps[path] = stamp
+	}
 	return snapshots, nil
 }
 
