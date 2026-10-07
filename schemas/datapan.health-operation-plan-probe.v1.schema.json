@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.datapan.dev/datapan.health-operation-plan-probe.v1.schema.json",
+  "title": "Datapan Health operation-plan probe receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "attempt_id", "cli", "registry", "operation", "execution", "observation", "redaction"],
+  "properties": {
+    "schema_version": { "const": "datapan.health-operation-plan-probe.v1" },
+    "attempt_id": { "type": "string", "format": "uuid" },
+    "cli": { "$ref": "#/$defs/cli" },
+    "registry": { "$ref": "#/$defs/registry" },
+    "operation": { "$ref": "#/$defs/operation" },
+    "execution": { "$ref": "#/$defs/execution" },
+    "observation": { "$ref": "#/$defs/observation" },
+    "redaction": { "$ref": "#/$defs/redaction" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "cli": {
+      "type": "object", "additionalProperties": false,
+      "required": ["version", "binary_sha256"],
+      "properties": {
+        "version": { "type": "string", "minLength": 1 },
+        "binary_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "registry": {
+      "type": "object", "additionalProperties": false,
+      "required": ["dataset_id", "registry_revision", "distribution", "registry_sha256", "manifest_sha256", "operation_manifest_sha256", "provider_index_sha256", "plan_schema_sha256", "index_sha256", "shard_sha256", "source_identity_set_sha256"],
+      "properties": {
+        "dataset_id": { "type": "string", "minLength": 1 },
+        "registry_revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "distribution": { "type": "string", "minLength": 1 },
+        "distribution_dataset_revision": { "type": "string", "minLength": 1 },
+        "registry_sha256": { "$ref": "#/$defs/sha256" },
+        "manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "operation_manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "provider_index_sha256": { "$ref": "#/$defs/sha256" },
+        "plan_schema_sha256": { "$ref": "#/$defs/sha256" },
+        "index_sha256": { "$ref": "#/$defs/sha256" },
+        "shard_sha256": { "$ref": "#/$defs/sha256" },
+        "source_identity_set_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "operation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["operation_id", "source_id", "provider", "adapter_id", "protocol"],
+      "properties": {
+        "operation_id": { "type": "string", "minLength": 1 },
+        "source_id": { "type": "string", "minLength": 1 },
+        "provider": { "type": "string", "minLength": 1 },
+        "adapter_id": { "type": "string", "minLength": 1 },
+        "protocol": { "enum": ["REST", "SOAP"] }
+      }
+    },
+    "execution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_started", "request_budget", "timeout_ms", "duration_ms"],
+      "properties": {
+        "request_started": { "type": "boolean" },
+        "request_budget": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 30000 },
+        "duration_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "observation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["response_observed", "outcome", "reason_code", "assertion_kind", "assertion_status"],
+      "properties": {
+        "response_observed": { "type": "boolean" },
+        "observed_at": { "type": "string", "format": "date-time" },
+        "http_status": { "type": "integer", "minimum": 100, "maximum": 599 },
+        "outcome": { "enum": ["healthy", "unhealthy", "blocked", "indeterminate"] },
+        "reason_code": {
+          "enum": [
+            "response_assertion_passed", "response_assertion_failed", "response_assertion_invalid",
+            "credential_binding_unavailable", "credential_binding_mismatch", "credential_source_unavailable",
+            "operation_plan_unsupported", "deadline_expired_before_request", "request_deadline_exceeded",
+            "request_limit_exceeded", "response_limit_exceeded", "request_transport_failed",
+            "response_read_failed", "response_invalid"
+          ]
+        },
+        "assertion_kind": { "enum": ["http_status", "soap_fault_free", "json_contract", "xml_contract"] },
+        "assertion_status": { "enum": ["not_run", "passed", "failed"] }
+      }
+    },
+    "redaction": {
+      "type": "object", "additionalProperties": false,
+      "required": ["credential_values_removed", "credential_references_removed", "credential_env_names_removed", "query_values_removed", "request_body_removed", "response_body_removed", "response_rows_removed", "endpoint_details_removed", "quota_details_removed"],
+      "properties": {
+        "credential_values_removed": { "const": true },
+        "credential_references_removed": { "const": true },
+        "credential_env_names_removed": { "const": true },
+        "query_values_removed": { "const": true },
+        "request_body_removed": { "const": true },
+        "response_body_removed": { "const": true },
+        "response_rows_removed": { "const": true },
+        "endpoint_details_removed": { "const": true },
+        "quota_details_removed": { "const": true }
+      }
+    }
+  }
+}

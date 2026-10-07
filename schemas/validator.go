@@ -54,6 +54,9 @@ var healthRegistryAPIMetadataSchema []byte
 //go:embed datapan.health-registry-api-metadata-source-pin.v1.schema.json
 var healthRegistryAPIMetadataSourcePinSchema []byte
 
+//go:embed datapan.health-operation-plan-probe.v1.schema.json
+var healthOperationPlanProbeV1Schema []byte
+
 var (
 	healthProbeOnce                    sync.Once
 	healthProbe                        *jsonschema.Schema
@@ -97,6 +100,9 @@ var (
 	healthRegistryMetadataPinOnce      sync.Once
 	healthRegistryMetadataPin          *jsonschema.Schema
 	healthRegistryMetadataPinErr       error
+	healthOperationPlanProbeV1Once     sync.Once
+	healthOperationPlanProbeV1         *jsonschema.Schema
+	healthOperationPlanProbeV1Err      error
 )
 
 func ValidateHealthProbeV1(data []byte) error {
@@ -188,6 +194,16 @@ func ValidateOperationObservationPlanV1(data []byte) error {
 	return validate(data, operationObservationPlan, operationObservationPlanErr, "operation observation plan")
 }
 
+// ValidateHealthOperationPlanProbeV1 validates the CLI's redacted per-attempt
+// receipt contract. Callers must also check its identity against their pinned
+// plan and attempt.
+func ValidateHealthOperationPlanProbeV1(data []byte) error {
+	healthOperationPlanProbeV1Once.Do(func() {
+		healthOperationPlanProbeV1, healthOperationPlanProbeV1Err = compile(healthOperationPlanProbeV1Schema, "https://schemas.datapan.dev/datapan.health-operation-plan-probe.v1.schema.json")
+	})
+	return validate(data, healthOperationPlanProbeV1, healthOperationPlanProbeV1Err, "health operation-plan probe receipt")
+}
+
 // ValidateHealthRegistryOperationsPageV2 validates the bounded public
 // Registry operation read model. The existing v1 canary DTO remains separate.
 func ValidateHealthRegistryOperationsPageV2(data []byte) error {
@@ -211,6 +227,13 @@ func OperationObservationPlanV1SchemaSHA256() string {
 	return hex.EncodeToString(sum[:])
 }
 
+// HealthOperationPlanProbeV1SchemaSHA256 returns the exact CLI receipt schema
+// bytes embedded in this Health build.
+func HealthOperationPlanProbeV1SchemaSHA256() string {
+	sum := sha256.Sum256(healthOperationPlanProbeV1Schema)
+	return hex.EncodeToString(sum[:])
+}
+
 func ValidateHealthRegistryAPIMetadataV1(data []byte) error {
 	healthRegistryAPIMetadataOnce.Do(func() {
 		healthRegistryAPIMetadata, healthRegistryAPIMetadataErr = compile(healthRegistryAPIMetadataSchema, "https://schemas.datapan.dev/datapan.health-registry-api-metadata.v1.schema.json")
@@ -223,6 +246,18 @@ func ValidateHealthRegistryAPIMetadataSourcePinV1(data []byte) error {
 		healthRegistryMetadataPin, healthRegistryMetadataPinErr = compile(healthRegistryAPIMetadataSourcePinSchema, "https://schemas.datapan.dev/datapan.health-registry-api-metadata-source-pin.v1.schema.json")
 	})
 	return validate(data, healthRegistryMetadataPin, healthRegistryMetadataPinErr, "Registry API metadata source pin")
+}
+
+// ValidateRegistryOperationDocumentEvidenceV2 validates an exact Registry
+// release-bound operation-document schema copy and one bounded evidence row.
+func ValidateRegistryOperationDocumentEvidenceV2(data, sourceSchema []byte) error {
+	const schemaSHA256 = "d6edb7dad63b9d7cdac6753fc02cba962cb8d96d7c01119c031935abfc973108"
+	sum := sha256.Sum256(sourceSchema)
+	if hex.EncodeToString(sum[:]) != schemaSHA256 {
+		return errors.New("Registry operation evidence schema digest mismatch")
+	}
+	compiled, err := compile(sourceSchema, "https://schemas.datapan.dev/datapan.operation-document-evidence.v2.schema.json")
+	return validate(data, compiled, err, "Registry operation document evidence")
 }
 
 func compile(source []byte, uri string) (*jsonschema.Schema, error) {

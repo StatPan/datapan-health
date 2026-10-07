@@ -8,10 +8,20 @@ services:
       GATUS_DATABASE_URL: ${GATUS_DATABASE_URL:-postgres://datapan_health:local-dev-only@postgres:5432/datapan_health?sslmode=disable}
       GATUS_INCIDENT_WEBHOOK_URL: ${GATUS_INCIDENT_WEBHOOK_URL:-http://gatus:8080/health}
     volumes:
-      - ./config/gatus.yaml:/config/config.yaml:ro
+      - gatus-config-data:/config:ro
     depends_on:
+      gatus-config-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
+
+  gatus-config-init:
+    build:
+      context: .
+    entrypoint: ["/health-gatus-config"]
+    command: ["-base-config", "/opt/datapan-health/config/gatus.yaml", "-output-dir", "/generated"]
+    volumes:
+      - gatus-config-data:/generated
 
   postgres:
     image: postgres:17.5-alpine@sha256:ec68817297c5984a00c85c9e3bbd88079d0217284f1a3f0525603a6f9b883916
@@ -109,3 +119,4 @@ volumes:
   receipt-data:
   scheduler-data:
   operation-attempt-data:
+  gatus-config-data:

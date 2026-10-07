@@ -170,6 +170,7 @@ type OperationObservationPlanRecord struct {
 	AdmissionStatus       string
 	AdmissionReasons      []string
 	ObservationPeriod     time.Duration
+	RequestTimeout        time.Duration
 	QuotaPolicies         []OperationQuotaPolicy
 	QuotaPoliciesAdmitted bool
 	ExecutionEligible     bool
@@ -207,8 +208,9 @@ type operationPlanIdentityWire struct {
 }
 
 type operationPlanRequestWire struct {
-	Status        string   `json:"status"`
-	MissingFields []string `json:"missing_fields,omitempty"`
+	Status          string          `json:"status"`
+	MissingFields   []string        `json:"missing_fields,omitempty"`
+	RequestContract json.RawMessage `json:"request_contract,omitempty"`
 }
 
 type operationPlanRuntimeWire struct {
@@ -538,6 +540,17 @@ func decodeOperationObservationPlanRecord(raw json.RawMessage) (OperationObserva
 		RequestPlanStatus: request.Status, RequestPlanMissing: append([]string(nil), request.MissingFields...),
 		RuntimeBindingStatus: runtime.Status, RuntimeBindingMissing: append([]string(nil), runtime.MissingFields...),
 		AdmissionStatus: admission.Status, AdmissionReasons: append([]string(nil), admission.Reasons...),
+	}
+	if len(request.RequestContract) > 0 {
+		var contract struct {
+			Limits struct {
+				TimeoutMS int64 `json:"timeout_ms"`
+			} `json:"limits"`
+		}
+		if json.Unmarshal(request.RequestContract, &contract) != nil || contract.Limits.TimeoutMS < 1 || contract.Limits.TimeoutMS > maxOperationObservationTimeoutMS {
+			return OperationObservationPlanRecord{}, errOperationObservationPlanInvalid
+		}
+		record.RequestTimeout = time.Duration(contract.Limits.TimeoutMS) * time.Millisecond
 	}
 	if runtime.ObservationPeriodSeconds > 0 {
 		if runtime.ObservationPeriodSeconds > int64((365*24*time.Hour)/time.Second) {

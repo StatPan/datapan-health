@@ -17,10 +17,11 @@ var errRegistryAPIMetadataUnavailable = errors.New("verified Registry API metada
 // verifies the artifact bytes and source pin; callers cannot set that marker
 // outside this package.
 type VerifiedRegistryAPIMetadata struct {
-	verified          bool
-	pin               RegistryAPIMetadataPin
-	identitySetSHA256 string
-	operations        []RegistryOperationMetadata
+	verified              bool
+	pin                   RegistryAPIMetadataPin
+	identitySetSHA256     string
+	operations            []RegistryOperationMetadata
+	canaryLinksByHealthID map[string]RegistryHealthCanaryLink
 }
 
 // NewVerifiedRegistryAPIMetadata adapts the shared, byte-verified API metadata
@@ -81,8 +82,9 @@ func NewVerifiedRegistryAPIMetadata(metadata RegistryAPIMetadata) (VerifiedRegis
 		identitySet.add(operationID)
 	}
 	return VerifiedRegistryAPIMetadata{
-		verified:          true,
-		identitySetSHA256: identitySet.digest(),
+		verified:              true,
+		identitySetSHA256:     identitySet.digest(),
+		canaryLinksByHealthID: cloneRegistryCanaryLinksByHealthID(metadata),
 		pin: RegistryAPIMetadataPin{
 			RegistryRevision: metadata.RegistryRevision,
 			SourceSHA256:     metadata.Source.SHA256,
@@ -154,6 +156,14 @@ func cloneVerifiedRegistryAPIMetadata(metadata RegistryAPIMetadata) (RegistryAPI
 		return RegistryAPIMetadata{}, fmt.Errorf("verified Registry API metadata copy failed validation: %w", err)
 	}
 	return clone, nil
+}
+
+func cloneRegistryCanaryLinksByHealthID(metadata RegistryAPIMetadata) map[string]RegistryHealthCanaryLink {
+	links := make(map[string]RegistryHealthCanaryLink, len(metadata.HealthCanaryLinks))
+	for _, link := range metadata.HealthCanaryLinks {
+		links[link.HealthOperationID] = link
+	}
+	return links
 }
 
 func metadataProjectionDigest(metadata RegistryAPIMetadata) string {

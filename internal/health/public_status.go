@@ -624,6 +624,7 @@ type PublicStatusHandler struct {
 	origins    map[string]bool
 	registry   *RegistryAPIMetadata
 	operations PublicRegistryOperationsSource
+	display    *PublicOperationDisplayMetadata
 }
 
 // PublicRegistryOperationsSource serves a bounded page over the already
@@ -686,6 +687,23 @@ func NewPublicStatusHandlerWithRegistryOperations(source PublicStatusSource, ori
 		return nil, err
 	}
 	handler.operations = operations
+	return handler, nil
+}
+
+// NewPublicStatusHandlerWithOperationDisplay adds a separately pinned,
+// operator-authored identity label and verified source-document facts for the
+// partial Registry scopes. It leaves the underlying operation read model
+// unchanged.
+func NewPublicStatusHandlerWithOperationDisplay(source PublicStatusSource, origins []string, metadata RegistryAPIMetadata, readiness HealthSelfReadinessSource, operations PublicRegistryOperationsSource, display PublicOperationDisplayMetadata) (*PublicStatusHandler, error) {
+	frozenDisplay, err := clonePublicOperationDisplayMetadata(display)
+	if err != nil {
+		return nil, err
+	}
+	handler, err := NewPublicStatusHandlerWithRegistryOperations(source, origins, metadata, readiness, operations)
+	if err != nil {
+		return nil, err
+	}
+	handler.display = &frozenDisplay
 	return handler, nil
 }
 

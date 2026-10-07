@@ -277,7 +277,7 @@ func TestPublicHTMLUsesPinnedOperationProgressAndFailsClosedOnMismatch(t *testin
 	source := staticPublicRegistryOperations{page: base, progress: []OperationAPIProgress{progress}, lookup: partialRows}
 	page := publicHTMLPage{Directory: true, APIs: []publicHTMLAPI{{RegistryAPIID: "api-1", APIOperations: 2}}}
 	attachPublicOperationReadModel(&page, metadata, source, []string{"api-1"}, map[string]int{"api-1": 2}, now)
-	attachPublicPartialScopes(&page, source, now)
+	attachPublicPartialScopes(&page, source, nil, now)
 	if page.OperationReadModelUnavailable || !page.OperationPlan.Available || len(page.APIs) != 1 || page.APIs[0].Progress == nil {
 		t.Fatalf("valid pinned operation progress was unavailable: %#v", page)
 	}
@@ -316,7 +316,7 @@ func TestPublicHTMLUsesPinnedOperationProgressAndFailsClosedOnMismatch(t *testin
 	brokenPartial := source
 	brokenPartial.lookup = nil
 	closedPartial := publicHTMLPage{Directory: true, OperationPlan: page.OperationPlan}
-	attachPublicPartialScopes(&closedPartial, brokenPartial, now)
+	attachPublicPartialScopes(&closedPartial, brokenPartial, nil, now)
 	if !closedPartial.PartialScopesUnavailable || len(closedPartial.PartialScopes) != 0 {
 		t.Fatalf("missing partial scope source did not fail closed: %#v", closedPartial)
 	}
@@ -377,6 +377,36 @@ func TestPublicHTMLReadModelOperationStatusAndDiagnosisAreAllowlisted(t *testing
 	unknown := publicHTMLReadModelOperation(indeterminate, now)
 	if unknown.StatusClass == "badge-good" || unknown.StatusClass == "badge-bad" || unknown.ObservationLabel != "현재 결과로 상태 판정 불가" {
 		t.Fatalf("indeterminate result was mapped to a pass or confirmed provider failure: %#v", unknown)
+	}
+
+	semanticUnknown := base
+	semanticUnknown.ObservationState, semanticUnknown.ResultState, semanticUnknown.ResultCategory = "current_indeterminate", "indeterminate", "response_semantics_unestablished"
+	semanticUnknown.GatusDeliveryState = "not_applicable"
+	httpOK := 204
+	semanticUnknown.ProviderHTTPStatus = &httpOK
+	semanticRow := publicHTMLReadModelOperation(semanticUnknown, now)
+	if semanticRow.StatusClass != "badge-warn" || semanticRow.ObservationLabel != "응답 수신 · 이용 가능성 판정 근거 부족" || semanticRow.ResultLabel != "HTTP 204 응답 · 이용 가능성 판정 근거 부족" || semanticRow.DeliveryLabel != "전달 대상 아님 · 응답 의미 미판정" {
+		t.Fatalf("observation-only response was presented as usable or sent to Gatus: %#v", semanticRow)
+	}
+
+	httpFailure := base
+	httpFailure.ObservationState, httpFailure.ResultState, httpFailure.ResultCategory = "current_fail", "unhealthy", "response_http_failure"
+	httpStatus := 503
+	httpFailure.ProviderHTTPStatus = &httpStatus
+	httpFailureRow := publicHTMLReadModelOperation(httpFailure, now)
+	if httpFailureRow.StatusClass != "badge-bad" || httpFailureRow.CauseLabel != "HTTP 응답 오류 · 상태 코드 503" || strings.Contains(httpFailureRow.NextActionLabel, "provider_failure") {
+		t.Fatalf("HTTP response failure was broadened into an unsupported cause: %#v", httpFailureRow)
+	}
+
+	deferred := base
+	deferred.ObservationAttemptState, deferred.AttemptState = "none", "deferred"
+	deferred.ObservationState, deferred.ResultState, deferred.ResultCategory = "unobserved", "", ""
+	requestStarted := false
+	deferred.RequestStarted = &requestStarted
+	deferred.ExecutionBlockReason = "history_capacity"
+	deferredRow := publicHTMLReadModelOperation(deferred, now)
+	if deferredRow.StatusClass == "badge-good" || !strings.Contains(deferredRow.AttemptLabel, "검사 요청 전 보류") || !strings.Contains(deferredRow.AttemptLabel, "결과 저장 공간") {
+		t.Fatalf("pre-dispatch deferral was presented as a request or healthy result: %#v", deferredRow)
 	}
 
 	failed := base

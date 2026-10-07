@@ -19,6 +19,7 @@ COPY schemas ./schemas
 RUN CGO_ENABLED=0 GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-runner ./cmd/health-runner \
  && CGO_ENABLED=0 GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-scheduler ./cmd/health-scheduler \
  && CGO_ENABLED=0 GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-public ./cmd/health-public \
+ && CGO_ENABLED=0 GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-gatus-config ./cmd/health-gatus-config \
  && CGO_ENABLED=0 GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-runtime-dependencies ./cmd/health-runtime-dependencies \
  && CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w' -o /dependency-installer ./cmd/health-runtime-dependencies
 
@@ -47,6 +48,7 @@ LABEL org.opencontainers.image.title="Datapan Health runtime" \
 COPY --from=live-build /health-runner /health-runner
 COPY --from=live-build /health-scheduler /health-scheduler
 COPY --from=live-build /health-public /health-public
+COPY --from=live-build /health-gatus-config /health-gatus-config
 COPY --from=live-build /health-runtime-dependencies /health-runtime-dependencies
 COPY --from=runtime-inputs /runtime-cli /opt/datapan-cli
 COPY config /opt/datapan-health/config

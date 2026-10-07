@@ -22,6 +22,8 @@ func main() {
 	canaryPath := flag.String("canaries", env("CANARY_CONFIG", "config/canaries.json"), "reviewed public canary identity map")
 	registryMetadataPath := flag.String("registry-api-metadata", env("REGISTRY_API_METADATA", "/opt/datapan-health/config/registry/api-metadata.v1.json"), "pinned Registry API purpose and inventory metadata")
 	registryMetadataPinPath := flag.String("registry-api-metadata-pin", env("REGISTRY_API_METADATA_PIN", "/opt/datapan-health/config/registry/api-metadata-source-pin.v1.json"), "pinned Registry API metadata source and artifact identity")
+	operationDisplayPath := flag.String("operation-display-metadata", env("PUBLIC_OPERATION_DISPLAY_METADATA", "/opt/datapan-health/config/registry/operator-operation-display.v1.json"), "hash-pinned Korean display labels and Registry source-document facts for partial scopes")
+	operationDisplayEvidenceRoot := flag.String("operation-display-evidence-root", env("PUBLIC_OPERATION_DISPLAY_EVIDENCE_ROOT", "/opt/datapan-health/config/registry/operation-display-registry-760"), "manifest-bound Registry document-evidence subset used for partial-scope metadata")
 	diagnosisPath := flag.String("diagnosis-snapshot", env("PUBLIC_DIAGNOSIS_SNAPSHOT", "data/public-diagnosis-snapshot.json"), "atomic reviewed diagnosis snapshot")
 	assertionPinPath := flag.String("assertion-pin", env("ASSERTION_POLICY_PIN", "config/registry/assertion-policy-contract-pin.json"), "exact assertion policy contract")
 	operationPlanRoot := flag.String("operation-plan-root", os.Getenv("REGISTRY_OPERATION_PLAN_ROOT"), "installed pinned Registry operation-plan release root")
@@ -61,6 +63,10 @@ func main() {
 		return
 	}
 	registryMetadata, err := health.LoadRegistryAPIMetadata(*registryMetadataPath, *registryMetadataPinPath, canaries)
+	if err != nil {
+		fatal()
+	}
+	operationDisplay, err := health.LoadPublicOperationDisplayMetadata(*operationDisplayPath, *operationDisplayEvidenceRoot)
 	if err != nil {
 		fatal()
 	}
@@ -121,7 +127,7 @@ func main() {
 			}
 		}
 	}
-	handler, err := health.NewPublicStatusHandlerWithRegistryOperations(cachedSource, origins, registryMetadata, cachedReadiness, operationSource)
+	handler, err := health.NewPublicStatusHandlerWithOperationDisplay(cachedSource, origins, registryMetadata, cachedReadiness, operationSource, operationDisplay)
 	if err != nil {
 		fatal()
 	}
