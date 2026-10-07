@@ -1,6 +1,7 @@
 package health
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +11,75 @@ import (
 	"testing"
 	"time"
 )
+
+type fixedValidatedOperationProbeRecord struct {
+	record OperationHistoryRecord
+	result OperationPlanProbeResult
+}
+
+func (validator fixedValidatedOperationProbeRecord) ValidateStoredOperationHistoryRecord(_ context.Context, _ OperationHistoryRecord) (OperationHistoryRecord, error) {
+	return validator.record, nil
+}
+
+func (validator fixedValidatedOperationProbeRecord) ValidateStoredOperationPlanProbeRecord(_ context.Context, _ OperationHistoryRecord) (OperationHistoryRecord, OperationPlanProbeResult, error) {
+	return validator.record, validator.result, nil
+}
+
+func TestOperationAttemptRequiresStoreIssuedHistoryAppendProof(t *testing.T) {
+	store, err := OpenOperationAttemptStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := testOperationAttemptBinding()
+	startedAt := time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)
+	claim, err := store.BeginAttempt(binding, strings.Repeat("9", 64), startedAt, 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := OperationHistoryIdentity{
+		SourceID: binding.SourceID, OperationID: binding.OperationID, AttemptID: claim.AttemptID, Generation: claim.Generation,
+		RegistryRevision: binding.RegistryRevision, ReleaseManifestSHA256: binding.ReleaseManifestSHA,
+		IndexSHA256: binding.IndexSHA, ShardSHA256: binding.ShardSHA,
+	}
+	record := fixtureOperationHistoryRecord(t, identity, "healthy")
+	result := OperationPlanProbeResult{
+		ReceiptSHA256: record.ReceiptSHA256, RequestStarted: true, ObservedAt: startedAt.Add(time.Second),
+		ReceivedAt: record.ValidatedAt, Outcome: "healthy",
+	}
+	validator := fixedValidatedOperationProbeRecord{record: record, result: result}
+	contentSHA, err := record.ContentSHA256()
+	if err != nil {
+		t.Fatal(err)
+	}
+	forgedRef := OperationHistoryRecordRef{
+		RecordID: operationHistoryIdentityIDForTest(t, identity), SHA256: contentSHA,
+		AppendedAt: record.ValidatedAt,
+	}
+	if err := store.CompleteAttemptFromValidatedHistory(context.Background(), claim, record, forgedRef, validator, startedAt.Add(2*time.Minute)); !errors.Is(err, ErrOperationAttemptUnavailable) {
+		t.Fatalf("caller-constructed archive reference authorized an observation: %v", err)
+	}
+	latest, ok, err := store.Latest(binding.SourceID, binding.OperationID)
+	if err != nil || !ok || latest.State != "claimed" || latest.Result != nil {
+		t.Fatalf("rejected forged history ref changed the durable attempt: %#v %v", latest, err)
+	}
+
+	validRef, err := newDurableOperationHistoryRecordRef(record, record.ValidatedAt)
+	if err != nil || !validRef.MatchesValidatedRecord(record) {
+		t.Fatalf("construct store-issued archive reference: %#v %v", validRef, err)
+	}
+	if err := store.CompleteAttemptFromValidatedHistory(context.Background(), claim, record, validRef, validator, startedAt.Add(2*time.Minute)); err != nil {
+		t.Fatalf("store-issued archive reference did not authorize validated receipt: %v", err)
+	}
+}
+
+func operationHistoryIdentityIDForTest(t *testing.T, identity OperationHistoryIdentity) string {
+	t.Helper()
+	value, err := operationHistoryIdentityID(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
 
 func TestOperationAttemptStorePersistsReceiptBeforeIndependentDeliveryRetry(t *testing.T) {
 	root := t.TempDir()
