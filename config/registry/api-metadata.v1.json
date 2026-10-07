@@ -175243,7 +175243,7 @@
       "title_state": "present",
       "organization": "한국산업안전보건공단",
       "organization_state": "present",
-      "description": "택시운전 종사자를 위한 실시간 조건별(날씨, 요일, 날짜 등) 상황에 대응하는 스팟 추천 교육영상 정보를 조회하는 서비스 *요청메세지 명세 ServiceKey :공공데이터포털에서 발급받은 인증키 pageNo : 페이지 번호 numOfRows : 한 페이지 결과 수 dataType : 결과형식(XML/JSON) legaldongCode : 검색을 원하는 법정동 코드 lo : 검색을 원하는 위치의 경도(위도와 함께 요청) la : 검색을 원하는 위치의 경도(경도와 함께 요청) *응답메세지 명세 resultCode : 결과 코드 resultMsg : 결과 메시지 totalCount : 검색결과 총건수 numOfRows : 한 페이지 결과 수 pageNo : 페이지 번호 legaldongCode : 법정동코드 legaldongNm : 법정동이름 vidoUrl : 영상 URL *참고URL:",
+      "description": "택시운전 종사자를 위한 실시간 조건별(날씨, 요일, 날짜 등) 상황에 대응하는 스팟 추천 교육영상 정보를 조회하는 서비스 *요청메세지 명세 발급받은 인증키 pageNo : 페이지 번호 numOfRows : 한 페이지 결과 수 dataType : 결과형식(XML/JSON) legaldongCode : 검색을 원하는 법정동 코드 lo : 검색을 원하는 위치의 경도(위도와 함께 요청) la : 검색을 원하는 위치의 경도(경도와 함께 요청) *응답메세지 명세 resultCode : 결과 코드 resultMsg : 결과 메시지 totalCount : 검색결과 총건수 numOfRows : 한 페이지 결과 수 pageNo : 페이지 번호 legaldongCode : 법정동코드 legaldongNm : 법정동이름 vidoUrl : 영상 URL *참고URL:",
       "description_state": "sanitized",
       "link_operation_count": 0,
       "operations": [
@@ -175266,7 +175266,7 @@
       "title_state": "present",
       "organization": "한국산업안전보건공단",
       "organization_state": "present",
-      "description": "한국산업안전보건공단에서 제공하는 가전제품설치 및 수리원을 위한 실시간 조건별(날씨, 요일, 날짜 등) 상황에 대응하는 스팟 추천교육영상 정보를 조회하는 서비스입니다. *요청메세지 명세 ServiceKey :공공데이터포털에서 발급받은 인증키 pageNo : 페이지 번호 numOfRows : 한 페이지 결과 수 dataType : 결과형식(XML/JSON) legaldongCode : 검색을 원하는 법정동 코드 lo : 검색을 원하는 위치의 경도(위도와 함께 요청) la : 검색을 원하는 위치의 경도(경도와 함께 요청) *응답메세지 명세 resultCode : 결과 코드 resultMsg : 결과 메시지 totalCount : 검색결과 총건수 numOfRows : 한 페이지 결과 수 pageNo : 페이지 번호 legaldongCode : 법정동코드 legaldongNm : 법정동이름 vidoUrl : 영상 URL * 참고 url :",
+      "description": "한국산업안전보건공단에서 제공하는 가전제품설치 및 수리원을 위한 실시간 조건별(날씨, 요일, 날짜 등) 상황에 대응하는 스팟 추천교육영상 정보를 조회하는 서비스입니다. *요청메세지 명세 발급받은 인증키 pageNo : 페이지 번호 numOfRows : 한 페이지 결과 수 dataType : 결과형식(XML/JSON) legaldongCode : 검색을 원하는 법정동 코드 lo : 검색을 원하는 위치의 경도(위도와 함께 요청) la : 검색을 원하는 위치의 경도(경도와 함께 요청) *응답메세지 명세 resultCode : 결과 코드 resultMsg : 결과 메시지 totalCount : 검색결과 총건수 numOfRows : 한 페이지 결과 수 pageNo : 페이지 번호 legaldongCode : 법정동코드 legaldongNm : 법정동이름 vidoUrl : 영상 URL * 참고 url :",
       "description_state": "sanitized",
       "link_operation_count": 0,
       "operations": [
@@ -176106,7 +176106,7 @@
       "title_state": "present",
       "organization": "대전도시공사",
       "organization_state": "present",
-      "description": "대전도시공사에서 운영하는 중부권 최대 종합테마파크인 오월드의 월별 총입장객수 데이터입니다. 입장객 유형 : 성인, 청소년, 어린이, 경로, 유공자, 장애인, 3세미만, 연간회원 오월드 사파리 소개는 홈페이지( )를 참고하시기 바랍니다. 오월드의 위치는 주소(대전광역시 중구 사정공원로 70 (사정동))와 링크( )를 참고하시기 바랍니다. 파라미터정보 1. serviceKey : 개인 인증키 2. svcId : OPEN_43101_OEC 3. para1 : YYYYMM (202601) 4. para2 : YYYYMM (202606)",
+      "description": "대전도시공사에서 운영하는 중부권 최대 종합테마파크인 오월드의 월별 총입장객수 데이터입니다. 입장객 유형 : 성인, 청소년, 어린이, 경로, 유공자, 장애인, 3세미만, 연간회원 오월드 사파리 소개는 홈페이지( )를 참고하시기 바랍니다. 오월드의 위치는 주소(대전광역시 중구 사정공원로 70 (사정동))와 링크( )를 참고하시기 바랍니다. 파라미터정보 1. 인증키 2. svcId : OPEN_43101_OEC 3. para1 : YYYYMM (202601) 4. para2 : YYYYMM (202606)",
       "description_state": "sanitized",
       "link_operation_count": 0,
       "operations": [
@@ -179077,7 +179077,7 @@
       "title_state": "present",
       "organization": "한국산업안전보건공단",
       "organization_state": "present",
-      "description": "산언안전포털 홈페이지( )에서 제공 중인 국내재해사례 게시판 정보를 실시간으로 조회하실 수 있도록 제공하는 데이터입니다. ■ API 관련 - 홈페이지( ) 에서 게시판 종류 확인이 가능합니다. (제조업/건설업/조선업 등) - API는 홈페이지 자료 등록일 역순으로 조회됩니다. *요청메세지 명세 ServiceKey :공공데이터포털에서 발급받은 인증키 business : 게시판 종류 keyword : 게시판 제목 callApiId :국내재해사례 게시판 조회(필수입력 고정값) pageNo : 페이지번호 numOfRows : 한 페이지 결과 수",
+      "description": "산언안전포털 홈페이지( )에서 제공 중인 국내재해사례 게시판 정보를 실시간으로 조회하실 수 있도록 제공하는 데이터입니다. ■ API 관련 - 홈페이지( ) 에서 게시판 종류 확인이 가능합니다. (제조업/건설업/조선업 등) - API는 홈페이지 자료 등록일 역순으로 조회됩니다. *요청메세지 명세 발급받은 인증키 business : 게시판 종류 keyword : 게시판 제목 callApiId :국내재해사례 게시판 조회(필수입력 고정값) pageNo : 페이지번호 numOfRows : 한 페이지 결과 수",
       "description_state": "sanitized",
       "link_operation_count": 0,
       "operations": [
@@ -179100,7 +179100,7 @@
       "title_state": "present",
       "organization": "한국산업안전보건공단",
       "organization_state": "present",
-      "description": "산언안전포털 홈페이지( )에서 제공 중인 국내재해사례 게시판 첨부파일 정보를 실시간으로 조회하실 수 있도록 제공하는 데이터입니다. *요청메세지 명세 ServiceKey :공공데이터포털에서 발급받은 인증키 boardno : 국내재해사례 게시판 번호 numOfRows : 한 페이지 결과 수 pageNo : 페이지 번호 callApiId : 국내재해사례 게시판 첨부파일 조회(필수입력 고정값) *응답메세지 명세 boardno : 국내재해사례 게시판 번호 filepath : 첨부파일 다운로드 경로 filenm : 첨부파일명",
+      "description": "산언안전포털 홈페이지( )에서 제공 중인 국내재해사례 게시판 첨부파일 정보를 실시간으로 조회하실 수 있도록 제공하는 데이터입니다. *요청메세지 명세 발급받은 인증키 boardno : 국내재해사례 게시판 번호 numOfRows : 한 페이지 결과 수 pageNo : 페이지 번호 callApiId : 국내재해사례 게시판 첨부파일 조회(필수입력 고정값) *응답메세지 명세 boardno : 국내재해사례 게시판 번호 filepath : 첨부파일 다운로드 경로 filenm : 첨부파일명",
       "description_state": "sanitized",
       "link_operation_count": 0,
       "operations": [
@@ -259969,7 +259969,7 @@
       "title_state": "present",
       "organization": "한국수력원자력(주)",
       "organization_state": "present",
-      "description": "위 API는 한국수력원자력(주)_양수발전소 발전현황 조회 서비스 API입니다. 한국수력원자력에서 운영중인 양수발전소(청평양수발전소, 삼랑진양수발전소, 무주양수발전소, 산청양수발전소, 양양양수발전소, 청송양수발전소, 예천양수발전소)의 발전 현황(설명, 항목코드, 측정시간, 값)을 조회하는 서비스입니다. ○ serviceKey : 공공데이터포털에서 받은 인증키 ○ 발전코드 : 발전소 구분 코드 / 3310 : 청평 3320 : 삼량진 3330 : 무주 3340 : 산청 3350 : 양양 3360 : 청송 3370 : 예천 ○ expl: 설명, name : 항목코드, time: 측정시간, value : 값",
+      "description": "위 API는 한국수력원자력(주)_양수발전소 발전현황 조회 서비스 API입니다. 한국수력원자력에서 운영중인 양수발전소(청평양수발전소, 삼랑진양수발전소, 무주양수발전소, 산청양수발전소, 양양양수발전소, 청송양수발전소, 예천양수발전소)의 발전 현황(설명, 항목코드, 측정시간, 값)을 조회하는 서비스입니다. ○ 받은 인증키 ○ 발전코드 : 발전소 구분 코드 / 3310 : 청평 3320 : 삼량진 3330 : 무주 3340 : 산청 3350 : 양양 3360 : 청송 3370 : 예천 ○ expl: 설명, name : 항목코드, time: 측정시간, value : 값",
       "description_state": "sanitized",
       "link_operation_count": 0,
       "operations": [
@@ -260173,7 +260173,7 @@
       "title_state": "present",
       "organization": "한국수력원자력(주)",
       "organization_state": "present",
-      "description": "위 자료는 한국수력원자력(주)_양수발전소 수문 자료 현황 API입니다. 한국수력원자력에서 운영중인 양수발전소(청평양수발전소, 삼랑진양수발전소, 무주양수발전소, 산청양수발전소, 양양양수발전소, 청송양수발전소, 예천양수발전소)의 실시간 발전소 수문자료 현황(상,하부댐 수위, 수문개도, 강수량 등) 조회가 됩니다. ○ serviceKey : 공공데이터포털에서 받은 인증키 ○ genName : 발전소 구분 코드 CP:청평 SR:삼랑진 MJ:무주 SC:산청 YY:양양 CS:청송 YC:예천 ○ expl : 설명, name : 항목코드, time: 측정시간, value: 값",
+      "description": "위 자료는 한국수력원자력(주)_양수발전소 수문 자료 현황 API입니다. 한국수력원자력에서 운영중인 양수발전소(청평양수발전소, 삼랑진양수발전소, 무주양수발전소, 산청양수발전소, 양양양수발전소, 청송양수발전소, 예천양수발전소)의 실시간 발전소 수문자료 현황(상,하부댐 수위, 수문개도, 강수량 등) 조회가 됩니다. ○ 받은 인증키 ○ genName : 발전소 구분 코드 CP:청평 SR:삼랑진 MJ:무주 SC:산청 YY:양양 CS:청송 YC:예천 ○ expl : 설명, name : 항목코드, time: 측정시간, value: 값",
       "description_state": "sanitized",
       "link_operation_count": 0,
       "operations": [
@@ -260906,7 +260906,7 @@
       "title_state": "present",
       "organization": "한국수력원자력(주)",
       "organization_state": "present",
-      "description": "위 API는 수력발전소 발전현황 API입니다. 한국수력원자력에서 운영중인 수력발전소(안흥수력발전소, 춘천수력발전소, 의암수력발전소, 화천수력발전소, 청평수력발전소, 섬진강수력발전소, 보성강수력발전소, 팔당수력발전소, 괴산수력발전소)의 실시간 발전량 및 수문자료 조회 API 입니다. ○ genName : AH:안흥 CH:춘천 UA:의암 HC:화천 CP:청평 SJ:섬진강 BS:보성강 PD:팔당 GS:괴산 ○ serviceKey : 공공데이터포털에서 받은 인증키 ○ code : 수력발전소 코드 ○ power: 현재출력(MW) ○ time : 출력을 측정한 시간",
+      "description": "위 API는 수력발전소 발전현황 API입니다. 한국수력원자력에서 운영중인 수력발전소(안흥수력발전소, 춘천수력발전소, 의암수력발전소, 화천수력발전소, 청평수력발전소, 섬진강수력발전소, 보성강수력발전소, 팔당수력발전소, 괴산수력발전소)의 실시간 발전량 및 수문자료 조회 API 입니다. ○ genName : AH:안흥 CH:춘천 UA:의암 HC:화천 CP:청평 SJ:섬진강 BS:보성강 PD:팔당 GS:괴산 ○ 받은 인증키 ○ code : 수력발전소 코드 ○ power: 현재출력(MW) ○ time : 출력을 측정한 시간",
       "description_state": "sanitized",
       "link_operation_count": 0,
       "operations": [
@@ -260929,7 +260929,7 @@
       "title_state": "present",
       "organization": "한국수력원자력(주)",
       "organization_state": "present",
-      "description": "위 API 는 한국수력원자력(주)_원자력발전소 실시간 발전 현황 API입니다. 한국수력원자력에서 운영중인 원자력발전소(고리원자력본부, 한빛원자력본부, 월성원자력본부, 한울원자력본부, 새울원자력본부)의 실시간 발전소 출력량(원자로 및 발전기 출력량) 조회 API입니다. ○ serviceKey: 공공데이터포털에서 받은 인증키 ○ genName : 발전소 구분 WS : 월성 KR : 고리 YK : 한빛 UJ : 한울 SU:새울 ○ expl: 아이템 설명 ○ name :아이템 설명 ○ time : 갱신 시간 ○ value : 발전기 출력(MWe),원자로 출력(%)",
+      "description": "위 API 는 한국수력원자력(주)_원자력발전소 실시간 발전 현황 API입니다. 한국수력원자력에서 운영중인 원자력발전소(고리원자력본부, 한빛원자력본부, 월성원자력본부, 한울원자력본부, 새울원자력본부)의 실시간 발전소 출력량(원자로 및 발전기 출력량) 조회 API입니다. ○ 받은 인증키 ○ genName : 발전소 구분 WS : 월성 KR : 고리 YK : 한빛 UJ : 한울 SU:새울 ○ expl: 아이템 설명 ○ name :아이템 설명 ○ time : 갱신 시간 ○ value : 발전기 출력(MWe),원자로 출력(%)",
       "description_state": "sanitized",
       "link_operation_count": 0,
       "operations": [
@@ -260952,7 +260952,7 @@
       "title_state": "present",
       "organization": "한국수력원자력(주)",
       "organization_state": "present",
-      "description": "한국수력원자력에서 운영중인 수력발전소(안흥수력발전소, 춘천수력발전소, 의암수력발전소, 화천수력발전소, 청평수력발전소, 칠보수력발전소(구 섬진강), 보성강수력발전소, 팔당수력발전소, 괴산수력발전소)의 실시간 발전량 및 수문자료 조회 * 현재 강릉수력은 운영을 하고 있지 않습니다. ○ serviceKey : 공공데이터포털에서 받은 인증키 ○ genName : 발전소 구분 코드 3110:화천 3120:춘천 3140:의암 3150:청평 3160:팔당 3210:강릉 3170:괴산 3180:섬진강 3190:보성강 3130:안흥 ○ dgenymd: 측정일 ○ ippt : 발전소 코드 ○ ipptname : 발전소 명 ○ qart : 강우량 ○ qdag : 방류량 ○ quew: 사용수량 ○ qvodgen : 일일발전량 ○ qyhr : 유하량 ○ uairavetep : 대기평균온도 ○ ulwl : 저수위",
+      "description": "한국수력원자력에서 운영중인 수력발전소(안흥수력발전소, 춘천수력발전소, 의암수력발전소, 화천수력발전소, 청평수력발전소, 칠보수력발전소(구 섬진강), 보성강수력발전소, 팔당수력발전소, 괴산수력발전소)의 실시간 발전량 및 수문자료 조회 * 현재 강릉수력은 운영을 하고 있지 않습니다. ○ 받은 인증키 ○ genName : 발전소 구분 코드 3110:화천 3120:춘천 3140:의암 3150:청평 3160:팔당 3210:강릉 3170:괴산 3180:섬진강 3190:보성강 3130:안흥 ○ dgenymd: 측정일 ○ ippt : 발전소 코드 ○ ipptname : 발전소 명 ○ qart : 강우량 ○ qdag : 방류량 ○ quew: 사용수량 ○ qvodgen : 일일발전량 ○ qyhr : 유하량 ○ uairavetep : 대기평균온도 ○ ulwl : 저수위",
       "description_state": "sanitized",
       "link_operation_count": 0,
       "operations": [
@@ -260975,7 +260975,7 @@
       "title_state": "present",
       "organization": "한국수력원자력(주)",
       "organization_state": "present",
-      "description": "위 api는 한국수력원자력(주)_원전건설 공정률 현황 API 입니다. 한국수력원자력(주)에서 현재 건설중인 원자력발전소 신한울1,2호기 및 신고리5,6호기 실적공정률 현황조회 자료입니다. (발전소 파라미터를 이용하여 실적공정률 현황 조회가 가능합니다.) ○ servicekey : 공공데이터포털에서 받은 인증키 ○ genName : 발전소 코드 SKN56 : 신고리5\u00266, SHN12 : 신한울1\u00262 ( 샘플 : SKN56) ○ PROJ_CD : 발전소 코드(샘플 : SKN56) ○ PROJ_CD_DESC : 발전소 명(샘플 : 신고리5,6) ○ ACT : 실적공정률 (샘플 : 62.32)",
+      "description": "위 api는 한국수력원자력(주)_원전건설 공정률 현황 API 입니다. 한국수력원자력(주)에서 현재 건설중인 원자력발전소 신한울1,2호기 및 신고리5,6호기 실적공정률 현황조회 자료입니다. (발전소 파라미터를 이용하여 실적공정률 현황 조회가 가능합니다.) ○ 받은 인증키 ○ genName : 발전소 코드 SKN56 : 신고리5\u00266, SHN12 : 신한울1\u00262 ( 샘플 : SKN56) ○ PROJ_CD : 발전소 코드(샘플 : SKN56) ○ PROJ_CD_DESC : 발전소 명(샘플 : 신고리5,6) ○ ACT : 실적공정률 (샘플 : 62.32)",
       "description_state": "sanitized",
       "link_operation_count": 0,
       "operations": [
@@ -261941,7 +261941,7 @@
       "title_state": "present",
       "organization": "한국수력원자력(주)",
       "organization_state": "present",
-      "description": "한수원에 등록된 유자격 공급자 중 단독공급자 품목역무, 운용구분, 품질등급, 품목코드, 품목명, 공급사명, 유자격만료일 정보현황자료 입니다. ○ serviceKey : 공공데이터포털에서 받은 인증키 ○ itemKind : 1: 보조기기, 3: 예비품, 4: 정비공사, 5: 용역, 6: 기기수리 ○ ITEMKIND : 품목역무 ○ MANAGEKIND : 운용구분 ○ QUALITYLEVEL : 품질등급 ○ ITEMCODE : 품목코드 ○ ITEMNAME : 품목명 ○ VENDORNAME : 공급사명 ○ VALIDENDDATE : 유자격만료일",
+      "description": "한수원에 등록된 유자격 공급자 중 단독공급자 품목역무, 운용구분, 품질등급, 품목코드, 품목명, 공급사명, 유자격만료일 정보현황자료 입니다. ○ 받은 인증키 ○ itemKind : 1: 보조기기, 3: 예비품, 4: 정비공사, 5: 용역, 6: 기기수리 ○ ITEMKIND : 품목역무 ○ MANAGEKIND : 운용구분 ○ QUALITYLEVEL : 품질등급 ○ ITEMCODE : 품목코드 ○ ITEMNAME : 품목명 ○ VENDORNAME : 공급사명 ○ VALIDENDDATE : 유자격만료일",
       "description_state": "sanitized",
       "link_operation_count": 0,
       "operations": [
@@ -262010,7 +262010,7 @@
       "title_state": "present",
       "organization": "한국수력원자력(주)",
       "organization_state": "present",
-      "description": "한국수력원자력의 가동원전의 운영변경허가 완료목록 문서제목 및 진행중 또는 완료된 심의현황 건수 조회 ○ E_MEG_CODE : 결과코드 ○ E_MEG_TEXT : 결과메시지 ○ E_PROCESS_CNT : 운영변경허가 진행 건수 ○ E_COMPL_CNT : 운영변경허가 완료 건수 ○ BASSIC_DATE : 기준일(추출일) ○ DOKAR : 문서유형 ○ DOKNR : 문서번호 ○ DOKVR : 문서버전 ○ DOKTL : 문서부분 ○ TITLE : 문서제목 ○ APP_DATE : 인허가신청일 ○ CRE_USER : 생성자 ○ serviceKey : 공공데이터포털에서 받은 인증키",
+      "description": "한국수력원자력의 가동원전의 운영변경허가 완료목록 문서제목 및 진행중 또는 완료된 심의현황 건수 조회 ○ E_MEG_CODE : 결과코드 ○ E_MEG_TEXT : 결과메시지 ○ E_PROCESS_CNT : 운영변경허가 진행 건수 ○ E_COMPL_CNT : 운영변경허가 완료 건수 ○ BASSIC_DATE : 기준일(추출일) ○ DOKAR : 문서유형 ○ DOKNR : 문서번호 ○ DOKVR : 문서버전 ○ DOKTL : 문서부분 ○ TITLE : 문서제목 ○ APP_DATE : 인허가신청일 ○ CRE_USER : 생성자 ○ 받은 인증키",
       "description_state": "sanitized",
       "link_operation_count": 0,
       "operations": [
@@ -262033,7 +262033,7 @@
       "title_state": "present",
       "organization": "한국수력원자력(주)",
       "organization_state": "present",
-      "description": "한국수력원자력에서 건설중인 신한울1\u00262 및 신고리5\u00266 건설주요사업의 착공월, 준공월 및 현재공정 현황 조회 ○ ServiceKey : 공공데이터포털에서 받은 인증키 ○ genName : 발전소 코드 SKN5 : 신고리5, SKN6 : 신고리6, SHN1 : 신한울1, SHN2 : 신한울2 ○ resultCode : 결과코드 ○ resultMsg : 결과메시지 ○ numOfRows : 한 페이지 결과 수 ○ pageNo : 페이지 번호 ○ totalCount : 전체 결과 수 ○ PROJ_CD : 발전소 코드 ○ START_DATE : 착공일 ○ FIN_PLAN_DATE : 준공(예정)일 ○ MEMO : 현재공정",
+      "description": "한국수력원자력에서 건설중인 신한울1\u00262 및 신고리5\u00266 건설주요사업의 착공월, 준공월 및 현재공정 현황 조회 ○ 받은 인증키 ○ genName : 발전소 코드 SKN5 : 신고리5, SKN6 : 신고리6, SHN1 : 신한울1, SHN2 : 신한울2 ○ resultCode : 결과코드 ○ resultMsg : 결과메시지 ○ numOfRows : 한 페이지 결과 수 ○ pageNo : 페이지 번호 ○ totalCount : 전체 결과 수 ○ PROJ_CD : 발전소 코드 ○ START_DATE : 착공일 ○ FIN_PLAN_DATE : 준공(예정)일 ○ MEMO : 현재공정",
       "description_state": "sanitized",
       "link_operation_count": 0,
       "operations": [
@@ -271229,8 +271229,8 @@
       "title_state": "present",
       "organization": "한국수력원자력(주)",
       "organization_state": "present",
-      "description": "위 자료는 한국수력원자력(주)_양수발전소 수문 자료 현황 API입니다. 한국수력원자력에서 운영중인 양수발전소(청평양수발전소, 삼랑진양수발전소, 무주양수발전소, 산청양수발전소, 양양양수발전소, 청송양수발전소, 예천양수발전소)의 실시간 발전소 수문자료 현황(상,하부댐 수위, 수문개도, 강수량 등) 조회가 됩니다. ○ serviceKey : 공공데이터포털에서 받은 인증키 ○ genName : 발전소 구분 코드 CP:청평 SR:삼랑진 MJ:무주 SC:산청 YY:양양 CS:청송 YC:예천 ○ expl : 설명, name : 항목코드, time: 측정시간, value: 값",
-      "description_state": "present",
+      "description": "위 자료는 한국수력원자력(주)_양수발전소 수문 자료 현황 API입니다. 한국수력원자력에서 운영중인 양수발전소(청평양수발전소, 삼랑진양수발전소, 무주양수발전소, 산청양수발전소, 양양양수발전소, 청송양수발전소, 예천양수발전소)의 실시간 발전소 수문자료 현황(상,하부댐 수위, 수문개도, 강수량 등) 조회가 됩니다. ○ 받은 인증키 ○ genName : 발전소 구분 코드 CP:청평 SR:삼랑진 MJ:무주 SC:산청 YY:양양 CS:청송 YC:예천 ○ expl : 설명, name : 항목코드, time: 측정시간, value: 값",
+      "description_state": "sanitized",
       "link_operation_count": 0,
       "operations": [
         {
@@ -271627,7 +271627,7 @@
       "title_state": "present",
       "organization": "대전도시공사",
       "organization_state": "present",
-      "description": "대전도시공사에서 업무추진에 필요에 따라 구매하여 보유 중인 도서(책) 현황 정보입니다. 제공정보 : 도서번호, 도서구분, 도서명, 취득일자, 관리팀, 출판사, 저자, 취득구분, 구입금액, 기준일자 대전도시공사에 대한 자세한 사항은 홈페이지( )를 참고하시기 바랍니다. 대전도시공사 위치는 주소(대전광역시 중구 중앙로118(대흥동))와 지도( )를 참고하시기 바랍니다. 파라미터정보 1. serviceKey : 개인 인증키 2. svcId : OPEN_41041_BOOK",
+      "description": "대전도시공사에서 업무추진에 필요에 따라 구매하여 보유 중인 도서(책) 현황 정보입니다. 제공정보 : 도서번호, 도서구분, 도서명, 취득일자, 관리팀, 출판사, 저자, 취득구분, 구입금액, 기준일자 대전도시공사에 대한 자세한 사항은 홈페이지( )를 참고하시기 바랍니다. 대전도시공사 위치는 주소(대전광역시 중구 중앙로118(대흥동))와 지도( )를 참고하시기 바랍니다. 파라미터정보 1. 인증키 2. svcId : OPEN_41041_BOOK",
       "description_state": "sanitized",
       "link_operation_count": 0,
       "operations": [
