@@ -10,7 +10,7 @@ import (
 )
 
 func TestHealthRegistryOperationsPageV2Schema(t *testing.T) {
-	const expectedSchemaSHA256 = "ebdcb86e114b52887fd2a34f13ae9611e8932d984f88fb1632bf0595a4918405"
+	const expectedSchemaSHA256 = "3ffb2d60fb7cb849719dec273f42944a03eb96419bb1bf2f2cc2ec31e461389e"
 	if got := schemas.HealthRegistryOperationsPageV2SchemaSHA256(); got != expectedSchemaSHA256 {
 		t.Fatalf("pinned page schema digest = %s, want %s", got, expectedSchemaSHA256)
 	}
@@ -37,9 +37,32 @@ func TestHealthRegistryOperationsPageV2Schema(t *testing.T) {
 	}
 	page.Operations[0].Purpose = "안전하게 정제된 설명"
 	page.Operations[0].PurposeState = "sanitized"
+	httpOperation := page.Operations[0]
+	httpOperation.SourceID = "ecos"
+	httpOperation.RegistryOperationID = "ecos-statistic-search-102y004"
+	httpOperation.APIID = nil
+	httpOperation.Provider = "ECOS"
+	httpOperation.AdapterID = "ecos"
+	httpOperation.Protocol = "HTTP"
+	httpOperation.OperationName = ""
+	httpOperation.OperationNameState = "missing"
+	httpOperation.Title = ""
+	httpOperation.TitleState = "missing"
+	httpOperation.Organization = ""
+	httpOperation.OrganizationState = "missing"
+	httpOperation.Purpose = ""
+	httpOperation.PurposeState = "missing"
+	httpOperation.InventoryUnknown = true
+	httpOperation.MissingReason = "inventory_unknown"
+	page.Operations = append(page.Operations, httpOperation)
+	page.IdentityCounts.Known = 2
+	page.IdentityCounts.InventoryUnknownScopes = 1
+	page.IdentityCounts.InventoryUnknownOperations = 1
+	page.IdentityCounts.Missing = 2
+	page.TotalAfterSearch = 2
 	raw, err = json.Marshal(page)
 	if err != nil || schemas.ValidateHealthRegistryOperationsPageV2(raw) != nil {
-		t.Fatalf("valid Registry-sanitized metadata state was rejected: %s (%v)", raw, err)
+		t.Fatalf("valid Registry-sanitized metadata or mixed HTTP protocol rows were rejected: %s (%v)", raw, err)
 	}
 	var object map[string]any
 	if err := json.Unmarshal(raw, &object); err != nil {
@@ -47,6 +70,13 @@ func TestHealthRegistryOperationsPageV2Schema(t *testing.T) {
 	}
 	operations := object["operations"].([]any)
 	operation := operations[0].(map[string]any)
+	httpRow := operations[1].(map[string]any)
+	httpRow["protocol"] = "GRPC"
+	unsupportedProtocolRaw, _ := json.Marshal(object)
+	if err := schemas.ValidateHealthRegistryOperationsPageV2(unsupportedProtocolRaw); err == nil {
+		t.Fatal("schema accepted an unsupported protocol label")
+	}
+	httpRow["protocol"] = "HTTP"
 	delete(operation, "inventory_unknown")
 	raw, _ = json.Marshal(object)
 	if err := schemas.ValidateHealthRegistryOperationsPageV2(raw); err == nil {

@@ -59,7 +59,7 @@
         "api_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
         "provider": {"type": "string", "maxLength": 128},
         "adapter_id": {"type": "string", "maxLength": 128},
-        "protocol": {"enum": ["REST", "SOAP", "unknown"]},
+        "protocol": {"enum": ["HTTP", "REST", "SOAP", "unknown"]},
         "operation_name": {"type": "string", "maxLength": 1024},
         "operation_name_state": {"enum": ["present", "sanitized", "missing", "blank", "invalid", "unsafe"]},
         "title": {"type": "string", "maxLength": 1024},
