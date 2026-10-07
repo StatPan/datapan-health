@@ -126,16 +126,47 @@ Publishing is optional and retried only after a complete local export; it is nev
 
 The ten public service canaries are a deliberately small observation input,
 not a coverage denominator. `make manifest-verify` validates the Health-owned,
-redacted receipt and the vendored immutable Registry operation-manifest fixture.
-It reproduces 12,385 operation-status subjects (12,350 REST and 35 SOAP) and
-7,365 API metadata records. A status subject is the Registry operation identity:
+redacted receipt and the vendored July Registry operation-manifest fixture. It
+reproduces 12,385 operation-status subjects (12,350 REST and 35 SOAP) and 7,365
+API metadata records. A status subject is the Registry operation identity:
 REST includes its method and SOAP includes its action. API, dataset, host, and
 endpoint are metadata only and cannot collapse subjects.
 
-The fixture is pinned to Registry commit `420edc34b16d1243e2a2389226615fff9e5b708f`.
-It is contract-test input: it can prove a deterministic full-population queue,
-but it does not attach a provider worker or change the ten-canary scheduler
-boundary.
+The July fixture is pinned to Registry commit
+`420edc34b16d1243e2a2389226615fff9e5b708f`. It remains contract-test input and
+does not set the validator's accepted protocol counts. The receipt is checked
+for exact supported protocol and exclusion keys, nonnegative counts, and
+matching operation, eligibility, protocol, and API-metadata totals.
+
+On 2026-10-07, the CLI verifier also accepted the current Registry `main` source
+at commit [`968a76d04e73016db7433018ddc4e27e9f3b2dcb`](https://github.com/StatPan/datapan-registry/tree/968a76d04e73016db7433018ddc4e27e9f3b2dcb)
+using the operation manifest and release manifest fetched by their immutable
+commit paths into a private temporary directory and an ephemeral Health
+receipt. The operation manifest was 24,366,827 bytes with SHA-256
+`b68601aee31acdb90b0a655dcb079c185af2c7fdd107333712c9b84e6a2700be`; the
+release manifest was 50,272 bytes with SHA-256
+`687dd364ab5a3fa1d208bde08e9ca94bb407e5b90ebc1d54c9f7eb1f4192a069`; and the
+schema, fetched and hashed separately at the same commit, was 5,981 bytes with
+SHA-256 `5373b37df4e6b21cae52cb3735ed5d2c156102d5457d3be9e68531b9b96290d7`.
+The release manifest binds both the operation-manifest and schema artifact
+hashes.
+The operation manifest records its source snapshot as 139,155,499 bytes with
+SHA-256 `0520d0db0d9ee07b7cbccce0c08439d0b02be901bf10e8491187d96e59d7a0d0`;
+the raw source snapshot was not fetched for this verification.
+
+That current artifact contains 12,662 API-operation subjects (12,627 REST and
+35 SOAP) across 7,587 dataset metadata identities. Its 8,871 `link_operations`
+are separate catalog entries, giving 21,533 rows only when the two inventories
+are combined. The operation eligibility summary has 12,520 `approval_required`
+and 142 `excluded` entries. All REST records carry method `GET` with
+`registry_default_get` evidence, which is a Registry generator inference; SOAP
+records carry `soap_action`. The Health verifier preserves these method checks.
+
+This current-manifest run used an ephemeral receipt for verification only. The
+default receipt and fixture remain on the July commit. Neither verification
+proves provider entitlement, quota, call safety, or live provider health; the
+ten service canaries remain a separate observation input and scheduler boundary.
+The current manifest is not a runtime probe-admission pin.
 
 ## Full-population schedule coverage
 
