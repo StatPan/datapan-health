@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -29,8 +30,10 @@ const (
 	maxOperationHistoryStoredFile                 = int64(MaxOperationHistoryReservedBytes)
 	maxOperationHistoryCheckpointFile             = int64(8 * 1024)
 	maxOperationHistoryPublicationTransactionFile = int64(1024 * 1024)
+	maxOperationHistoryPendingBatchDescriptorFile = int64(512 * 1024)
 	operationHistoryOperationIndexMaximumBytes    = int64(8 * 1024)
-	operationHistoryPublicationHeadroom           = int64(3 * 1024 * 1024)
+	operationHistoryPublicationHeadroom           = int64(5 * 1024 * 1024)
+	operationHistoryPublicationTailroom           = int64(4 * 1024 * 1024)
 )
 
 type OperationHistoryStore struct {
@@ -83,6 +86,40 @@ type operationHistoryStoredRecord struct {
 	RecordSHA256  string                 `json:"record_sha256"`
 	Sequence      uint64                 `json:"sequence"`
 	AppendedAt    time.Time              `json:"appended_at"`
+}
+
+type operationHistoryPendingSequenceIndex struct {
+	SchemaVersion   string    `json:"schema_version"`
+	Sequence        uint64    `json:"sequence"`
+	RecordID        string    `json:"record_id"`
+	RecordSHA       string    `json:"record_sha256"`
+	SerializedBytes int64     `json:"serialized_record_bytes"`
+	AppendedAt      time.Time `json:"appended_at"`
+	IndexSHA256     string    `json:"index_sha256"`
+}
+
+type operationHistoryPendingSequenceIndexPayload struct {
+	SchemaVersion   string    `json:"schema_version"`
+	Sequence        uint64    `json:"sequence"`
+	RecordID        string    `json:"record_id"`
+	RecordSHA       string    `json:"record_sha256"`
+	SerializedBytes int64     `json:"serialized_record_bytes"`
+	AppendedAt      time.Time `json:"appended_at"`
+}
+
+type operationHistoryPendingBatchDescriptor struct {
+	SchemaVersion string                      `json:"schema_version"`
+	BatchID       string                      `json:"batch_id"`
+	RecordSetSHA  string                      `json:"record_set_sha256"`
+	Records       []operationHistoryAckRecord `json:"records"`
+	DescriptorSHA string                      `json:"descriptor_sha256"`
+}
+
+type operationHistoryPendingBatchDescriptorPayload struct {
+	SchemaVersion string                      `json:"schema_version"`
+	BatchID       string                      `json:"batch_id"`
+	RecordSetSHA  string                      `json:"record_set_sha256"`
+	Records       []operationHistoryAckRecord `json:"records"`
 }
 
 type operationHistoryAckRecord struct {
@@ -172,7 +209,7 @@ func OpenOperationHistoryStore(root string, maxBytes int64, validator OperationH
 		return nil, ErrOperationHistoryUnavailable
 	}
 	store := &OperationHistoryStore{root: abs, maxBytes: maxBytes, validator: validator}
-	for _, name := range []string{"records", "reservations", "operation-index"} {
+	for _, name := range []string{"records", "reservations", "operation-index", "pending-sequence"} {
 		directory := filepath.Join(abs, name)
 		if err := os.MkdirAll(directory, 0o700); err != nil {
 			return nil, ErrOperationHistoryUnavailable
@@ -345,7 +382,19 @@ func (store *OperationHistoryStore) AppendValidated(ctx context.Context, token O
 		if err != nil {
 			return ErrOperationHistoryUnavailable
 		}
-		fileCharge := operationHistoryPendingRecordCharge(int64(len(encoded)))
+		serializedRecord, err := json.Marshal(record)
+		if err != nil {
+			return ErrOperationHistoryUnavailable
+		}
+		sequenceIndex, err := newOperationHistoryPendingSequenceIndex(sequence, recordID, contentSHA, int64(len(serializedRecord)), appendedAt)
+		if err != nil {
+			return err
+		}
+		encodedSequenceIndex, err := json.Marshal(sequenceIndex)
+		if err != nil {
+			return ErrOperationHistoryUnavailable
+		}
+		fileCharge := operationHistoryPendingRecordCharge(int64(len(encoded))) + fileCharge(int64(len(encodedSequenceIndex)))
 		if fileCharge > reservation.ReservedBytes || fileCharge > MaxOperationHistoryReservedBytes {
 			return ErrOperationHistoryCapacity
 		}
@@ -357,6 +406,9 @@ func (store *OperationHistoryStore) AppendValidated(ctx context.Context, token O
 			return err
 		}
 		if err := writePrivateBytesAtomic(store.recordPath(recordID), encoded); err != nil {
+			return ErrOperationHistoryUnavailable
+		}
+		if err := writePrivateBytesAtomic(store.pendingSequencePath(sequence), encodedSequenceIndex); err != nil {
 			return ErrOperationHistoryUnavailable
 		}
 		if err := removePrivateFile(store.reservationPath(recordID)); err != nil {
@@ -581,6 +633,7 @@ func (store *OperationHistoryStore) rebuildUsageLocked(ctx context.Context) erro
 		return ErrOperationHistoryCorrupt
 	}
 	pendingSequences := make([]uint64, 0, len(entries))
+	sequenceIndicesSeen := make(map[uint64]struct{}, len(entries))
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -605,7 +658,30 @@ func (store *OperationHistoryStore) rebuildUsageLocked(ctx context.Context) erro
 		} else if found && index.Identity.Generation >= stored.Record.Identity.Generation {
 			return ErrOperationHistoryCorrupt
 		}
-		usage.UsedBytes += operationHistoryPendingRecordCharge(fileInfo.Size())
+		serializedRecord, err := json.Marshal(stored.Record)
+		if err != nil {
+			return ErrOperationHistoryCorrupt
+		}
+		sequenceIndex, found, err := store.readPendingSequenceIndex(stored.Sequence)
+		if err != nil {
+			return err
+		}
+		if found {
+			if sequenceIndex.RecordID != id || sequenceIndex.RecordSHA != stored.RecordSHA256 || sequenceIndex.SerializedBytes != int64(len(serializedRecord)) || !sequenceIndex.AppendedAt.Equal(stored.AppendedAt) {
+				return ErrOperationHistoryCorrupt
+			}
+		} else {
+			sequenceIndex, err = newOperationHistoryPendingSequenceIndex(stored.Sequence, id, stored.RecordSHA256, int64(len(serializedRecord)), stored.AppendedAt)
+			if err != nil || writePrivateJSONAtomic(store.pendingSequencePath(stored.Sequence), sequenceIndex) != nil {
+				return ErrOperationHistoryUnavailable
+			}
+		}
+		sequenceInfo, err := os.Lstat(store.pendingSequencePath(stored.Sequence))
+		if err != nil || !sequenceInfo.Mode().IsRegular() || sequenceInfo.Mode()&os.ModeSymlink != 0 || sequenceInfo.Mode().Perm() != 0o600 {
+			return ErrOperationHistoryCorrupt
+		}
+		sequenceIndicesSeen[stored.Sequence] = struct{}{}
+		usage.UsedBytes += operationHistoryPendingRecordCharge(fileInfo.Size()) + fileCharge(sequenceInfo.Size())
 		usage.RecordCount++
 		pendingSequences = append(pendingSequences, stored.Sequence)
 	}
@@ -614,6 +690,44 @@ func (store *OperationHistoryStore) rebuildUsageLocked(ctx context.Context) erro
 		if sequence != checkpoint.Sequence+uint64(index)+1 {
 			return ErrOperationHistoryCorrupt
 		}
+	}
+	sequenceEntries, err := os.ReadDir(filepath.Join(store.root, "pending-sequence"))
+	if err != nil || len(sequenceEntries) != len(sequenceIndicesSeen) {
+		return ErrOperationHistoryCorrupt
+	}
+	for _, entry := range sequenceEntries {
+		sequence, parseErr := strconv.ParseUint(strings.TrimSuffix(entry.Name(), ".json"), 10, 64)
+		if entry.IsDir() || parseErr != nil || entry.Name() != fmt.Sprintf("%020d.json", sequence) {
+			return ErrOperationHistoryCorrupt
+		}
+		if _, found := sequenceIndicesSeen[sequence]; !found {
+			return ErrOperationHistoryCorrupt
+		}
+	}
+	descriptor, descriptorFound, descriptorErr := store.readPendingBatchDescriptor()
+	if descriptorErr != nil {
+		return descriptorErr
+	}
+	if descriptorFound {
+		if len(pendingSequences) == 0 || descriptor.Records[0].Sequence != checkpoint.Sequence+1 || descriptor.Records[len(descriptor.Records)-1].Sequence > checkpoint.Sequence+uint64(len(pendingSequences)) {
+			return ErrOperationHistoryCorrupt
+		}
+		var descriptorBytes int64
+		for _, ref := range descriptor.Records {
+			index, found, err := store.readPendingSequenceIndex(ref.Sequence)
+			if err != nil || !found || index.RecordID != ref.RecordID || index.RecordSHA != ref.RecordSHA || !index.AppendedAt.Equal(ref.AppendedAt) {
+				return ErrOperationHistoryCorrupt
+			}
+			descriptorBytes += index.SerializedBytes + 1
+			if descriptorBytes > MaxOperationHistoryBatchBytes {
+				return ErrOperationHistoryCorrupt
+			}
+		}
+		info, err := os.Lstat(store.pendingBatchDescriptorPath())
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 {
+			return ErrOperationHistoryCorrupt
+		}
+		usage.UsedBytes += fileCharge(info.Size())
 	}
 	usage.AcceptedRecordCount = int64(checkpoint.Sequence) + usage.RecordCount
 	usage.NextSequence = uint64(usage.AcceptedRecordCount) + 1
@@ -762,6 +876,12 @@ func (store *OperationHistoryStore) reservationPath(id string) string {
 func (store *OperationHistoryStore) operationIndexPath(key string) string {
 	return filepath.Join(store.root, "operation-index", key+".json")
 }
+func (store *OperationHistoryStore) pendingSequencePath(sequence uint64) string {
+	return filepath.Join(store.root, "pending-sequence", fmt.Sprintf("%020d.json", sequence))
+}
+func (store *OperationHistoryStore) pendingBatchDescriptorPath() string {
+	return filepath.Join(store.root, "pending-batch.json")
+}
 func (store *OperationHistoryStore) checkpointPath() string {
 	return filepath.Join(store.root, "checkpoint.json")
 }
@@ -771,6 +891,37 @@ func (store *OperationHistoryStore) publicationTransactionPath() string {
 
 func operationHistoryIdentityID(identity OperationHistoryIdentity) (string, error) {
 	return operationHistoryIdentityKey(identity)
+}
+
+func newOperationHistoryPendingSequenceIndex(sequence uint64, recordID, recordSHA string, serializedBytes int64, appendedAt time.Time) (operationHistoryPendingSequenceIndex, error) {
+	index := operationHistoryPendingSequenceIndex{SchemaVersion: OperationHistoryStoreSchemaVersion, Sequence: sequence, RecordID: recordID, RecordSHA: recordSHA, SerializedBytes: serializedBytes, AppendedAt: appendedAt}
+	index.IndexSHA256 = operationHistoryPendingSequenceIndexDigest(index)
+	if !validOperationHistoryPendingSequenceIndex(index, sequence) {
+		return operationHistoryPendingSequenceIndex{}, ErrOperationHistoryUnavailable
+	}
+	return index, nil
+}
+
+func validOperationHistoryPendingSequenceIndex(index operationHistoryPendingSequenceIndex, sequence uint64) bool {
+	return index.SchemaVersion == OperationHistoryStoreSchemaVersion && index.Sequence == sequence && sequence > 0 && validHistoryRecordID(index.RecordID) && sha256Pattern.MatchString(index.RecordSHA) && index.SerializedBytes > 0 && index.SerializedBytes <= MaxOperationHistoryBatchBytes && utcNormalized(index.AppendedAt) && sha256Pattern.MatchString(index.IndexSHA256) && operationHistoryPendingSequenceIndexDigest(index) == index.IndexSHA256
+}
+
+func operationHistoryPendingSequenceIndexDigest(index operationHistoryPendingSequenceIndex) string {
+	encoded, _ := json.Marshal(operationHistoryPendingSequenceIndexPayload{SchemaVersion: index.SchemaVersion, Sequence: index.Sequence, RecordID: index.RecordID, RecordSHA: index.RecordSHA, SerializedBytes: index.SerializedBytes, AppendedAt: index.AppendedAt})
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
+}
+
+func (store *OperationHistoryStore) readPendingSequenceIndex(sequence uint64) (operationHistoryPendingSequenceIndex, bool, error) {
+	var index operationHistoryPendingSequenceIndex
+	data, err := readPrivateFile(store.pendingSequencePath(sequence), 16*1024)
+	if errors.Is(err, os.ErrNotExist) {
+		return index, false, nil
+	}
+	if err != nil || decodeOperationHistoryJSON(data, &index) != nil || !validOperationHistoryPendingSequenceIndex(index, sequence) {
+		return operationHistoryPendingSequenceIndex{}, false, ErrOperationHistoryCorrupt
+	}
+	return index, true, nil
 }
 
 func newOperationHistoryReservationToken() (string, error) {

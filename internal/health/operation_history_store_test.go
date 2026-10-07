@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,7 +15,9 @@ import (
 	"time"
 )
 
-type fixtureOperationHistoryValidator struct{}
+type fixtureOperationHistoryValidator struct {
+	calls *int
+}
 
 type fixtureOperationHistoryPublisher struct {
 	readback OperationHistoryPublicationReadback
@@ -27,13 +30,17 @@ func (publisher *fixtureOperationHistoryPublisher) PublishAndReadback(_ context.
 	return publisher.readback, publisher.err
 }
 
-func (fixtureOperationHistoryValidator) ValidateStoredOperationHistoryRecord(_ context.Context, candidate OperationHistoryRecord) (OperationHistoryRecord, error) {
+func (validator fixtureOperationHistoryValidator) ValidateStoredOperationHistoryRecord(_ context.Context, candidate OperationHistoryRecord) (OperationHistoryRecord, error) {
+	if validator.calls != nil {
+		*validator.calls = *validator.calls + 1
+	}
 	if candidate.ReceiptSchemaURI != "https://schemas.datapan.dev/datapan.health-operation-receipt.v1.schema.json" || candidate.ReceiptSchemaVersion != "datapan.health-operation-receipt.v1" || validateOperationHistoryRecordFields(candidate) != nil {
 		return OperationHistoryRecord{}, ErrOperationHistoryCorrupt
 	}
 	var receipt struct {
 		SchemaVersion string `json:"schema_version"`
 		State         string `json:"state"`
+		Padding       string `json:"padding,omitempty"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(string(candidate.ReceiptBytes)))
 	decoder.DisallowUnknownFields()
@@ -48,8 +55,20 @@ func (fixtureOperationHistoryValidator) ValidateStoredOperationHistoryRecord(_ c
 }
 
 func fixtureOperationHistoryRecord(t *testing.T, identity OperationHistoryIdentity, state string) OperationHistoryRecord {
+	return fixtureOperationHistoryRecordWithSize(t, identity, state, 0)
+}
+
+func fixtureOperationHistoryRecordWithSize(t *testing.T, identity OperationHistoryIdentity, state string, receiptBytes int) OperationHistoryRecord {
 	t.Helper()
-	receipt := []byte(`{"schema_version":"fixture.v1","state":"` + state + `"}` + "\n")
+	receipt := []byte(`{"schema_version":"fixture.v1","state":"` + state + `"}`)
+	if receiptBytes > 0 {
+		padding := receiptBytes - len(receipt) - 1
+		if padding < 0 || receiptBytes > MaxOperationHistoryReceiptBytes {
+			t.Fatalf("invalid fixture receipt target size %d", receiptBytes)
+		}
+		receipt = append(receipt, strings.Repeat(" ", padding)...)
+	}
+	receipt = append(receipt, '\n')
 	digest := sha256.Sum256(receipt)
 	record, err := newValidatedOperationHistoryRecord(OperationHistoryRecord{
 		SchemaVersion:        OperationHistoryRecordSchemaVersion,
@@ -145,10 +164,16 @@ func TestOperationHistoryStoreReserveAppendRestartAndIdempotency(t *testing.T) {
 	if err != nil || usage.RecordCount != 1 || usage.ReservationCount != 0 || usage.UsedBytes <= 0 || usage.ReservedBytes != 0 {
 		t.Fatalf("appended usage: %#v err=%v", usage, err)
 	}
+	if err := removePrivateFile(store.pendingSequencePath(1)); err != nil {
+		t.Fatalf("remove derived sequence index to model interrupted append: %v", err)
+	}
 
 	store, err = OpenOperationHistoryStore(root, MaxOperationHistoryReservedBytes*3+operationHistoryPublicationHeadroom, fixtureOperationHistoryValidator{})
 	if err != nil {
 		t.Fatalf("reopen store: %v", err)
+	}
+	if _, found, err := store.readPendingSequenceIndex(1); err != nil || !found {
+		t.Fatalf("recovery did not rebuild missing sequence index: found=%v err=%v", found, err)
 	}
 	duplicate, err := store.AppendValidated(context.Background(), token, record)
 	if err != nil || duplicate.RecordID != ref.RecordID || duplicate.SHA256 != ref.SHA256 || !duplicate.AppendedAt.Equal(ref.AppendedAt) {
@@ -505,13 +530,106 @@ func TestOperationHistoryPublishPathRequiresExactReadbackAndRetainsFailedBatch(t
 	if err != nil || usage.RecordCount != 1 || usage.VerifiedPublicationCount != 0 || publisher.calls != 1 {
 		t.Fatalf("failed publication must retain local record: usage=%#v calls=%d err=%v", usage, publisher.calls, err)
 	}
+	nextIdentity := identity
+	nextIdentity.AttemptID = "00000000-0000-4000-8000-000000000032"
+	nextIdentity.Generation++
+	nextRecord := fixtureOperationHistoryRecord(t, nextIdentity, "unhealthy")
+	nextToken, err := store.Reserve(context.Background(), nextIdentity)
+	if err != nil {
+		t.Fatalf("reserve after failed publication: %v", err)
+	}
+	if _, err := store.AppendValidated(context.Background(), nextToken, nextRecord); err != nil {
+		t.Fatalf("append after failed publication: %v", err)
+	}
+	store, err = OpenOperationHistoryStore(root, MaxOperationHistoryReservedBytes*4+operationHistoryPublicationHeadroom, fixtureOperationHistoryValidator{})
+	if err != nil {
+		t.Fatalf("reopen frozen retry batch: %v", err)
+	}
+	frozen, err := store.PendingOperationHistoryBatch(context.Background())
+	if err != nil || !sameOperationHistoryBatch(batch, frozen) || len(frozen.Records) != 1 {
+		t.Fatalf("new appends changed frozen retry batch: batch=%#v frozen=%#v err=%v", batch, frozen, err)
+	}
 	readback.RecordSetSHA256 = batch.RecordSetSHA
 	publisher = &fixtureOperationHistoryPublisher{readback: readback}
 	if published, err := store.PublishPendingOperationHistoryBatch(context.Background(), publisher); err != nil || !published {
 		t.Fatalf("exact readback should advance checkpoint: published=%v err=%v", published, err)
 	}
 	usage, err = store.Usage(context.Background())
-	if err != nil || usage.RecordCount != 0 || usage.VerifiedPublicationCount != 1 || publisher.calls != 1 {
+	if err != nil || usage.RecordCount != 1 || usage.VerifiedPublicationCount != 1 || publisher.calls != 1 {
 		t.Fatalf("verified publication usage: %#v calls=%d err=%v", usage, publisher.calls, err)
+	}
+	remaining, err := store.PendingOperationHistoryBatch(context.Background())
+	if err != nil || len(remaining.Records) != 1 || remaining.Records[0].RecordID != operationHistoryIdentityIDMust(nextIdentity) {
+		t.Fatalf("next batch did not advance to the later append: %#v err=%v", remaining, err)
+	}
+}
+
+func TestOperationHistoryPendingBatchLoadsOnlyFirst256BodiesFromMaximumStore(t *testing.T) {
+	validationCalls := 0
+	store, err := OpenOperationHistoryStore(t.TempDir(), maxOperationHistoryStoreBytes, fixtureOperationHistoryValidator{calls: &validationCalls})
+	if err != nil {
+		t.Fatalf("open maximum store: %v", err)
+	}
+	for generation := 1; generation <= MaxOperationHistoryBatchRecords+44; generation++ {
+		identity := fixtureOperationHistoryIdentity(fmt.Sprintf("%08x-0000-4000-8000-%012x", generation, generation))
+		identity.Generation = uint64(generation)
+		record := fixtureOperationHistoryRecord(t, identity, "healthy")
+		token, err := store.Reserve(context.Background(), identity)
+		if err != nil {
+			t.Fatalf("reserve generation %d: %v", generation, err)
+		}
+		if _, err := store.AppendValidated(context.Background(), token, record); err != nil {
+			t.Fatalf("append generation %d: %v", generation, err)
+		}
+	}
+	before := validationCalls
+	batch, err := store.PendingOperationHistoryBatch(context.Background())
+	if err != nil || len(batch.Records) != MaxOperationHistoryBatchRecords {
+		t.Fatalf("bounded pending batch records=%d err=%v", len(batch.Records), err)
+	}
+	if validationCalls-before != MaxOperationHistoryBatchRecords {
+		t.Fatalf("pending selection validated %d bodies for a %d-record batch", validationCalls-before, len(batch.Records))
+	}
+	if batch.Records[0].Sequence != 1 || batch.Records[len(batch.Records)-1].Sequence != MaxOperationHistoryBatchRecords {
+		t.Fatalf("pending batch did not select the first contiguous prefix: first=%d last=%d", batch.Records[0].Sequence, batch.Records[len(batch.Records)-1].Sequence)
+	}
+}
+
+func TestOperationHistoryPendingBatchStopsAtEightMiBBeforeLoadingLaterBodies(t *testing.T) {
+	validationCalls := 0
+	store, err := OpenOperationHistoryStore(t.TempDir(), maxOperationHistoryStoreBytes, fixtureOperationHistoryValidator{calls: &validationCalls})
+	if err != nil {
+		t.Fatalf("open maximum store: %v", err)
+	}
+	for generation := 1; generation <= 110; generation++ {
+		identity := fixtureOperationHistoryIdentity(fmt.Sprintf("%08x-0000-4000-8000-%012x", generation, generation))
+		identity.Generation = uint64(generation)
+		record := fixtureOperationHistoryRecordWithSize(t, identity, "healthy", MaxOperationHistoryReceiptBytes)
+		token, err := store.Reserve(context.Background(), identity)
+		if err != nil {
+			t.Fatalf("reserve generation %d: %v", generation, err)
+		}
+		if _, err := store.AppendValidated(context.Background(), token, record); err != nil {
+			t.Fatalf("append generation %d: %v", generation, err)
+		}
+	}
+	before := validationCalls
+	batch, err := store.PendingOperationHistoryBatch(context.Background())
+	if err != nil || len(batch.Records) == 0 || len(batch.Records) >= 110 {
+		t.Fatalf("8 MiB cap did not bound pending batch: records=%d err=%v", len(batch.Records), err)
+	}
+	if validationCalls-before != len(batch.Records) {
+		t.Fatalf("pending selection validated %d bodies for a %d-record batch", validationCalls-before, len(batch.Records))
+	}
+	var total int
+	for _, item := range batch.Records {
+		encoded, err := json.Marshal(item.Record)
+		if err != nil {
+			t.Fatalf("marshal selected record: %v", err)
+		}
+		total += len(encoded) + 1
+	}
+	if total > MaxOperationHistoryBatchBytes {
+		t.Fatalf("pending batch exceeded 8 MiB: %d bytes", total)
 	}
 }
