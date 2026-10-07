@@ -497,7 +497,7 @@ func operationReadModelAttemptFromState(state operationAttemptState) (OperationR
 		SourceID: state.SourceID, OperationID: state.OperationID, AttemptState: latest.State, ObservationAttemptState: "none",
 		LatestPlanBinding: latest.Binding,
 		ReceiptValidated:  latest.ReceiptValidated, RequestStarted: cloneBool(latest.RequestStarted),
-		EverRequestStarted: state.EverRequestStarted, GatusDeliveryState: "not_ready", UpdatedAt: latest.StartedAt,
+		EverRequestStarted: operationAttemptStateEverStartedForPlan(state, latest.Binding), GatusDeliveryState: "not_ready", UpdatedAt: latest.StartedAt,
 	}
 	projection.UpdatedAt = laterOperationAttemptTime(projection.UpdatedAt, latest.FinishedAt)
 	for index := len(state.Attempts) - 1; index >= 0; index-- {
@@ -530,6 +530,21 @@ func operationReadModelAttemptFromState(state operationAttemptState) (OperationR
 		break
 	}
 	return projection, validOperationReadModelAttempt(projection)
+}
+
+func operationAttemptStateEverStartedForPlan(state operationAttemptState, latestBinding OperationAttemptBinding) bool {
+	for _, attempt := range state.Attempts {
+		if attempt.RequestStarted != nil && *attempt.RequestStarted && sameOperationAttemptPlanBinding(attempt.Binding, latestBinding) {
+			return true
+		}
+	}
+	return false
+}
+
+func sameOperationAttemptPlanBinding(left, right OperationAttemptBinding) bool {
+	return left.SourceID == right.SourceID && left.OperationID == right.OperationID &&
+		left.RegistryRevision == right.RegistryRevision && left.ReleaseManifestSHA == right.ReleaseManifestSHA &&
+		left.IndexSHA == right.IndexSHA && left.ShardSHA == right.ShardSHA && left.ObservationPeriod == right.ObservationPeriod
 }
 
 func laterOperationAttemptTime(current time.Time, candidates ...time.Time) time.Time {

@@ -293,7 +293,7 @@ func TestOperationAttemptSnapshotKeepsPlanLineageAcrossRevisionChangeAndDelayedG
 		t.Fatalf("read plan B projection: %#v %v", pageB, err)
 	}
 	rowB := pageB.Operations[0]
-	if rowB.AttemptState != "claimed" || rowB.ObservationAttemptState != "none" || rowB.ResultState != "" || rowB.ProviderObservedAt != nil || rowB.HealthReceivedAt != nil || rowB.GatusDeliveryState != "not_ready" {
+	if rowB.AttemptState != "claimed" || rowB.Attempted || rowB.ObservationAttemptState != "none" || rowB.ResultState != "" || rowB.ProviderObservedAt != nil || rowB.HealthReceivedAt != nil || rowB.GatusDeliveryState != "not_ready" || pageB.IdentityCounts.Attempted != 0 {
 		t.Fatalf("plan A receipt/readback was relabeled as plan B evidence: %#v", rowB)
 	}
 
@@ -303,6 +303,35 @@ func TestOperationAttemptSnapshotKeepsPlanLineageAcrossRevisionChangeAndDelayedG
 	pageA, err := modelA.PageOperations(OperationPageQuery{Query: "synthetic-rest-list", Limit: 10}, readbackAt.Add(time.Second))
 	if err != nil || len(pageA.Operations) != 1 || pageA.Operations[0].ObservationAttemptState != "none" || pageA.Operations[0].ProviderObservedAt != nil {
 		t.Fatalf("old plan model exposed a newer plan result or stale claim: %#v %v", pageA, err)
+	}
+
+	// The store's sticky request-start history remains visible when the latest
+	// claim is under the same pinned plan, even if that provider response was
+	// lost. It must not leak across the plan change tested above.
+	lostReceiptStore, err := OpenOperationAttemptStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lostClaim, err := lostReceiptStore.BeginAttempt(bindingA, strings.Repeat("d", 64), started, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lostReceiptStore.RecordRequestStartedWithoutObservation(lostClaim, strings.Repeat("e", 64), started.Add(time.Second)); err != nil {
+		t.Fatalf("record validated request without response: %v", err)
+	}
+	if _, err := lostReceiptStore.BeginAttempt(bindingA, strings.Repeat("f", 64), started.Add(5*time.Minute), time.Minute); err != nil {
+		t.Fatalf("start another observation under same plan: %v", err)
+	}
+	lostSnapshots, err := lostReceiptStore.SnapshotReadModelAttempts()
+	if err != nil || len(lostSnapshots) != 1 || !lostSnapshots[0].EverRequestStarted {
+		t.Fatalf("same-plan request-start history was lost: %#v %v", lostSnapshots, err)
+	}
+	if err := modelA.RefreshAttempts(lostSnapshots, started.Add(5*time.Minute+time.Second)); err != nil {
+		t.Fatalf("refresh same-plan sticky history: %v", err)
+	}
+	lostPage, err := modelA.PageOperations(OperationPageQuery{Query: "synthetic-rest-list", Limit: 10}, started.Add(5*time.Minute+time.Second))
+	if err != nil || len(lostPage.Operations) != 1 || !lostPage.Operations[0].Attempted || lostPage.IdentityCounts.Attempted != 1 {
+		t.Fatalf("same-plan request-start history was not counted: %#v %v", lostPage, err)
 	}
 }
 
