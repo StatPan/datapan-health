@@ -12,17 +12,19 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
 
 const (
-	OperationAttemptStoreSchemaVersion = "datapan.health-operation-attempt-store.v2"
-	maxOperationAttemptStateBytes      = 32 * 1024
-	maxOperationAttemptHistory         = 24
-	maxOperationAttemptStoreOperations = 16_000
-	maxOperationAttemptLease           = 10 * time.Minute
-	maxOperationAttemptStoreBytes      = int64(512 * 1024 * 1024)
+	OperationAttemptStoreSchemaVersion   = "datapan.health-operation-attempt-store.v2"
+	maxOperationAttemptStateBytes        = 32 * 1024
+	maxOperationAttemptHistory           = 24
+	maxOperationAttemptStoreOperations   = 16_000
+	maxOperationAttemptLease             = 10 * time.Minute
+	maxOperationAttemptStoreBytes        = int64(512 * 1024 * 1024)
+	operationAttemptIdentityBatchMaximum = 256
 )
 
 var (
@@ -117,7 +119,21 @@ type operationAttemptState struct {
 // operation. A shared flock coordinates processes on one filesystem with
 // working flock semantics; this alone is not a cross-host guarantee.
 type OperationAttemptStore struct {
-	root string
+	root       string
+	stampsMu   sync.Mutex
+	readStamps map[string]operationAttemptFileStamp
+}
+
+type OperationAttemptIdentity struct {
+	SourceID    string
+	OperationID string
+}
+
+type operationAttemptFileStamp struct {
+	exists     bool
+	modifiedNS int64
+	size       int64
+	inode      uint64
 }
 
 type OperationAttemptStorageBudget struct {
@@ -157,7 +173,89 @@ func OpenOperationAttemptStore(root string) (*OperationAttemptStore, error) {
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || os.Chmod(abs, 0o700) != nil {
 		return nil, ErrOperationAttemptUnavailable
 	}
-	return &OperationAttemptStore{root: abs}, nil
+	return &OperationAttemptStore{root: abs, readStamps: make(map[string]operationAttemptFileStamp)}, nil
+}
+
+// SnapshotReadModelAttemptsForIdentities reads only the deterministic state
+// files for one bounded Registry identity batch. File stamps let the separate
+// public process skip unchanged files without walking the whole store or
+// taking the writer flock. A later atomic rename changes the inode/stamp and
+// is picked up on the next pass.
+func (store *OperationAttemptStore) SnapshotReadModelAttemptsForIdentities(identities []OperationAttemptIdentity) ([]OperationReadModelAttempt, error) {
+	if store == nil || len(identities) > operationAttemptIdentityBatchMaximum {
+		return nil, ErrOperationAttemptUnavailable
+	}
+	store.stampsMu.Lock()
+	defer store.stampsMu.Unlock()
+	if store.readStamps == nil {
+		store.readStamps = make(map[string]operationAttemptFileStamp)
+	}
+	snapshots := make([]OperationReadModelAttempt, 0, len(identities))
+	seen := make(map[string]struct{}, len(identities))
+	for _, identity := range identities {
+		if !operationSourceIDPattern.MatchString(identity.SourceID) || identity.OperationID == "" || len(identity.OperationID) > 256 {
+			return nil, ErrOperationAttemptUnavailable
+		}
+		key := operationReadModelIdentityKey(identity.SourceID, identity.OperationID)
+		if _, duplicate := seen[key]; duplicate {
+			return nil, ErrOperationAttemptUnavailable
+		}
+		seen[key] = struct{}{}
+		path := store.statePath(identity.SourceID, identity.OperationID)
+		stamp, exists, err := operationAttemptFileStampAt(path)
+		if err != nil {
+			return nil, ErrOperationAttemptUnavailable
+		}
+		previous, known := store.readStamps[path]
+		if known && previous == stamp {
+			continue
+		}
+		if !exists {
+			if known && previous.exists {
+				return nil, ErrOperationAttemptUnavailable
+			}
+			store.readStamps[path] = stamp
+			continue
+		}
+		state, found, err := store.readState(identity.SourceID, identity.OperationID)
+		if err != nil || !found {
+			return nil, ErrOperationAttemptUnavailable
+		}
+		after, stillExists, err := operationAttemptFileStampAt(path)
+		if err != nil || !stillExists || after != stamp {
+			// A writer replaced this one file while we read it. Do not advance the
+			// cache stamp; the next bounded pass will read the settled version.
+			continue
+		}
+		projection, ok := operationReadModelAttemptFromState(state)
+		if !ok || projection.SourceID != identity.SourceID || projection.OperationID != identity.OperationID {
+			return nil, ErrOperationAttemptUnavailable
+		}
+		store.readStamps[path] = stamp
+		snapshots = append(snapshots, projection)
+	}
+	sort.Slice(snapshots, func(i, j int) bool {
+		if snapshots[i].SourceID != snapshots[j].SourceID {
+			return snapshots[i].SourceID < snapshots[j].SourceID
+		}
+		return snapshots[i].OperationID < snapshots[j].OperationID
+	})
+	return snapshots, nil
+}
+
+func operationAttemptFileStampAt(path string) (operationAttemptFileStamp, bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return operationAttemptFileStamp{}, false, nil
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() < 1 || info.Size() > maxOperationAttemptStateBytes {
+		return operationAttemptFileStamp{}, false, ErrOperationAttemptUnavailable
+	}
+	stamp := operationAttemptFileStamp{exists: true, modifiedNS: info.ModTime().UnixNano(), size: info.Size()}
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		stamp.inode = stat.Ino
+	}
+	return stamp, true, nil
 }
 
 func (store *OperationAttemptStore) BeginAttempt(binding OperationAttemptBinding, attemptID string, now time.Time, lease time.Duration) (OperationAttemptClaim, error) {

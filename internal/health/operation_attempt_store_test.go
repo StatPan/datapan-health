@@ -176,6 +176,50 @@ func TestOperationAttemptSnapshotSeparatesClaimReceiptObservationAndReadback(t *
 	}
 }
 
+func TestOperationAttemptIdentityBatchSnapshotTracksExternalAtomicReplacement(t *testing.T) {
+	root := t.TempDir()
+	reader, err := OpenOperationAttemptStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer, err := OpenOperationAttemptStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := OperationAttemptIdentity{SourceID: "synthetic_test", OperationID: "synthetic-rest-list"}
+	if attempts, err := reader.SnapshotReadModelAttemptsForIdentities([]OperationAttemptIdentity{identity}); err != nil || len(attempts) != 0 {
+		t.Fatalf("initial missing state was not cached safely: %#v %v", attempts, err)
+	}
+	now := time.Date(2026, 10, 7, 5, 0, 0, 0, time.UTC)
+	binding := testOperationAttemptBinding()
+	claim, err := writer.BeginAttempt(binding, strings.Repeat("7", 64), now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts, err := reader.SnapshotReadModelAttemptsForIdentities([]OperationAttemptIdentity{identity})
+	if err != nil || len(attempts) != 1 || attempts[0].AttemptState != "claimed" {
+		t.Fatalf("reader missed state created by separate store instance: %#v %v", attempts, err)
+	}
+	if attempts, err := reader.SnapshotReadModelAttemptsForIdentities([]OperationAttemptIdentity{identity}); err != nil || len(attempts) != 0 {
+		t.Fatalf("unchanged state was reread rather than stamp-skipped: %#v %v", attempts, err)
+	}
+	result := OperationObservationResult{State: "healthy", Category: "healthy", ObservedAt: now.Add(time.Second), ReceiptSHA: strings.Repeat("8", 64), LatencyMS: 100}
+	if err := writer.CompleteAttempt(claim, result, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	attempts, err = reader.SnapshotReadModelAttemptsForIdentities([]OperationAttemptIdentity{identity})
+	if err != nil || len(attempts) != 1 || attempts[0].AttemptState != "observed" || attempts[0].ResultState != "healthy" {
+		t.Fatalf("reader missed the writer's atomic file replacement: %#v %v", attempts, err)
+	}
+	tooMany := make([]OperationAttemptIdentity, operationAttemptIdentityBatchMaximum+1)
+	for index := range tooMany {
+		tooMany[index] = OperationAttemptIdentity{SourceID: "synthetic_test", OperationID: fmt.Sprintf("operation-%d", index)}
+	}
+	if _, err := reader.SnapshotReadModelAttemptsForIdentities(tooMany); !errors.Is(err, ErrOperationAttemptUnavailable) {
+		t.Fatalf("over-capacity identity batch was accepted: %v", err)
+	}
+}
+
 func TestOperationReadModelRefreshFailureKeepsLastAtomicSnapshotAndPagesAvoidDisk(t *testing.T) {
 	root := t.TempDir()
 	store, err := OpenOperationAttemptStore(filepath.Join(root, "attempts"))
@@ -221,7 +265,7 @@ func TestOperationAttemptSnapshotKeepsPlanLineageAcrossRevisionChangeAndDelayedG
 	if err != nil {
 		t.Fatal(err)
 	}
-	modelA, err := NewOperationReadModel(planA, testRegistryAPIMetadataPin(0, 0), nil, nil, time.Date(2026, 10, 7, 7, 0, 0, 0, time.UTC))
+	modelA, err := newOperationReadModel(planA, testRegistryAPIMetadataPin(0, 0), nil, nil, time.Date(2026, 10, 7, 7, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +275,7 @@ func TestOperationAttemptSnapshotKeepsPlanLineageAcrossRevisionChangeAndDelayedG
 	if err != nil {
 		t.Fatal(err)
 	}
-	modelB, err := NewOperationReadModel(planB, testRegistryAPIMetadataPin(0, 0), nil, nil, time.Date(2026, 10, 7, 7, 0, 0, 0, time.UTC))
+	modelB, err := newOperationReadModel(planB, testRegistryAPIMetadataPin(0, 0), nil, nil, time.Date(2026, 10, 7, 7, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -470,7 +514,7 @@ func testOperationReadModelForStore(t *testing.T, now time.Time) *OperationReadM
 	if err != nil {
 		t.Fatal(err)
 	}
-	model, err := NewOperationReadModel(plan, testRegistryAPIMetadataPin(0, 0), nil, nil, now)
+	model, err := newOperationReadModel(plan, testRegistryAPIMetadataPin(0, 0), nil, nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}

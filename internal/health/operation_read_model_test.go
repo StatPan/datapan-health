@@ -18,13 +18,13 @@ func TestOperationReadModelBuildsPinnedPageAndSeparatesProviderAndHealthTimes(t 
 	}
 	now := time.Date(2026, 10, 7, 2, 0, 0, 0, time.UTC)
 	requestStarted := true
-	model, err := NewOperationReadModel(plan, testRegistryAPIMetadataPin(0, 0), nil, nil, now)
+	model, err := newOperationReadModel(plan, testRegistryAPIMetadataPin(0, 0), nil, nil, now)
 	if err != nil {
 		t.Fatalf("construct pinned read model: %v", err)
 	}
 	planBinding := testOperationReadModelAttemptBinding(t, model, "synthetic_test", "synthetic-rest-list")
 	observationBinding := planBinding
-	model, err = NewOperationReadModel(plan, testRegistryAPIMetadataPin(0, 0), nil, []OperationReadModelAttempt{{
+	model, err = newOperationReadModel(plan, testRegistryAPIMetadataPin(0, 0), nil, []OperationReadModelAttempt{{
 		SourceID: "synthetic_test", OperationID: "synthetic-rest-list", AttemptState: "observed", ObservationAttemptState: "observed", ReceiptValidated: true, RequestStarted: &requestStarted, EverRequestStarted: true,
 		LatestPlanBinding: planBinding, ObservationPlanBinding: &observationBinding,
 		ResultState: "healthy", ResultCategory: "healthy", ProviderObservedAt: now.Add(-10 * time.Minute), HealthReceivedAt: now.Add(-9 * time.Minute),
@@ -132,7 +132,7 @@ func testOperationReadModelForAPIProgress(t *testing.T, now time.Time) *Operatio
 		{SourceID: "data_go_kr", RegistryOperationID: operationID1, APIID: stringPointer("api-1"), Provider: "data.go.kr", AdapterID: "data-go-kr", Protocol: "REST", Title: "한글 제목", TitleState: "present", OperationName: "함수 1", OperationNameState: "present", Organization: "기관", OrganizationState: "present", Purpose: "한글 목적", PurposeState: "present", RequestPlanState: "complete", RuntimeBindingState: "bound", AdmissionState: "admitted", ObservationPeriodSeconds: int64Pointer(300), AttemptState: "none", ObservationAttemptState: "none", ObservationState: "unobserved", GatusDeliveryState: "not_ready"},
 		{SourceID: "data_go_kr", RegistryOperationID: operationID2, APIID: stringPointer("api-1"), Provider: "data.go.kr", AdapterID: "data-go-kr", Protocol: "REST", Title: "다른 제목", TitleState: "present", OperationName: "함수 2", OperationNameState: "present", Organization: "기관", OrganizationState: "present", Purpose: "다른 목적", PurposeState: "present", RequestPlanState: "complete", RuntimeBindingState: "unbound", AdmissionState: "not_admitted", ObservationPeriodSeconds: nil, AttemptState: "none", ObservationAttemptState: "none", ObservationState: "unobserved", MissingReason: "runtime_unbound", GatusDeliveryState: "not_ready"},
 		{SourceID: "data_go_kr", RegistryOperationID: operationID3, APIID: stringPointer("api-2"), Provider: "data.go.kr", AdapterID: "data-go-kr", Protocol: "SOAP", Title: "두 번째", TitleState: "present", OperationName: "함수 3", OperationNameState: "present", Organization: "기관", OrganizationState: "present", Purpose: "다른 목적", PurposeState: "present", RequestPlanState: "complete", RuntimeBindingState: "bound", AdmissionState: "admitted", ObservationPeriodSeconds: int64Pointer(300), AttemptState: "observed", ObservationAttemptState: "observed", RequestStarted: &pass, Attempted: true, ObservationState: "current_fail", ResultState: "unhealthy", ResultCategory: "provider_failure", ProviderObservedAt: timePointer(now.Add(-30 * time.Second)), HealthReceivedAt: timePointer(now.Add(-20 * time.Second)), GatusDeliveryState: "not_ready"},
-		{SourceID: "ecos", RegistryOperationID: "ecos-statistic-search-102y004", Provider: "ECOS", AdapterID: "ecos", Protocol: "REST", OperationNameState: "missing", TitleState: "missing", OrganizationState: "missing", PurposeState: "missing", RequestPlanState: "incomplete", RuntimeBindingState: "unbound", AdmissionState: "not_admitted", ObservationState: "unobserved", MissingReason: "inventory_unknown", AttemptState: "none", ObservationAttemptState: "none", GatusDeliveryState: "not_ready"},
+		{SourceID: "ecos", RegistryOperationID: "ecos-statistic-search-102y004", Provider: "ECOS", AdapterID: "ecos", Protocol: "REST", OperationNameState: "missing", TitleState: "missing", OrganizationState: "missing", PurposeState: "missing", RequestPlanState: "incomplete", RuntimeBindingState: "unbound", AdmissionState: "not_admitted", InventoryUnknown: true, ObservationPeriodSeconds: int64Pointer(300), ObservationState: "unobserved", MissingReason: "inventory_unknown", AttemptState: "none", ObservationAttemptState: "none", GatusDeliveryState: "not_ready"},
 	}
 	model := &OperationReadModel{registryRevision: strings.Repeat("a", 40), manifestSHA: strings.Repeat("b", 64), indexSHA: strings.Repeat("c", 64), planSchemaSHA: strings.Repeat("d", 64), pageSchemaSHA: strings.Repeat("e", 64), metadataPin: testRegistryAPIMetadataPin(2, 3), generatedAt: now, inventoryUnknownScopes: 1, rows: rows}
 	model.reindex()
@@ -169,6 +169,37 @@ func TestOperationReadModelProjectionDoesNotExposeProviderTargetsOrRows(t *testi
 		if strings.Contains(string(raw), forbidden) {
 			t.Fatalf("public projection contains forbidden field/value marker %q", forbidden)
 		}
+	}
+}
+
+func TestOperationReadModelKeepsUnknownInventoryScopeAfterObservation(t *testing.T) {
+	now := time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC)
+	model := testOperationReadModelForAPIProgress(t, now)
+	operationID := "ecos-statistic-search-102y004"
+	binding := testOperationReadModelAttemptBinding(t, model, "ecos", operationID)
+	started := true
+	if err := model.ApplyAttempt(OperationReadModelAttempt{
+		SourceID: "ecos", OperationID: operationID, LatestPlanBinding: binding, ObservationPlanBinding: &binding,
+		AttemptState: "observed", ObservationAttemptState: "observed", ReceiptValidated: true,
+		RequestStarted: &started, EverRequestStarted: true, ResultState: "healthy", ResultCategory: "healthy",
+		ProviderObservedAt: now.Add(-2 * time.Minute), HealthReceivedAt: now.Add(-time.Minute),
+		GatusDeliveryState: "not_ready", UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("apply partial-scope observation: %v", err)
+	}
+	page, err := model.PageOperations(OperationPageQuery{Limit: 50}, now)
+	if err != nil {
+		t.Fatalf("read observed partial scope: %v", err)
+	}
+	var partial *OperationReadModelRow
+	for index := range page.Operations {
+		if page.Operations[index].SourceID == "ecos" && page.Operations[index].RegistryOperationID == operationID {
+			partial = &page.Operations[index]
+			break
+		}
+	}
+	if partial == nil || !partial.InventoryUnknown || partial.MissingReason != "" || page.IdentityCounts.InventoryUnknownScopes != 1 || page.IdentityCounts.InventoryUnknownOperations != 1 {
+		t.Fatalf("observation erased immutable inventory-unknown scope state: row=%#v counts=%#v", partial, page.IdentityCounts)
 	}
 }
 

@@ -10,7 +10,7 @@ import (
 )
 
 func TestHealthRegistryOperationsPageV2Schema(t *testing.T) {
-	const expectedSchemaSHA256 = "3c7cb725094cf2d143c6eddce0818e87731d4c69fce14ee8aef419f552688516"
+	const expectedSchemaSHA256 = "6d3b6b09d2d0bce78ffbd708fb15bed503afd37a51fc6405a297a670e5732c9f"
 	if got := schemas.HealthRegistryOperationsPageV2SchemaSHA256(); got != expectedSchemaSHA256 {
 		t.Fatalf("pinned page schema digest = %s, want %s", got, expectedSchemaSHA256)
 	}
@@ -24,7 +24,7 @@ func TestHealthRegistryOperationsPageV2Schema(t *testing.T) {
 		Operations: []health.OperationReadModelRow{{
 			SourceID: "data_go_kr", RegistryOperationID: "operation-1", Provider: "data.go.kr", AdapterID: "data-go-kr", Protocol: "REST",
 			APIID: schemaStringPointer("api-1"), OperationNameState: "missing", TitleState: "missing", OrganizationState: "missing", PurposeState: "missing",
-			RequestPlanState: "incomplete", RuntimeBindingState: "unbound", AdmissionState: "not_admitted", MissingReason: "request_plan_incomplete",
+			RequestPlanState: "incomplete", RuntimeBindingState: "unbound", AdmissionState: "not_admitted", InventoryUnknown: false, MissingReason: "request_plan_incomplete",
 			AttemptState: "none", ObservationAttemptState: "none", ObservationState: "unobserved", GatusDeliveryState: "not_ready",
 		}},
 	}
@@ -39,14 +39,22 @@ func TestHealthRegistryOperationsPageV2Schema(t *testing.T) {
 	if err := json.Unmarshal(raw, &object); err != nil {
 		t.Fatal(err)
 	}
+	operations := object["operations"].([]any)
+	operation := operations[0].(map[string]any)
+	delete(operation, "inventory_unknown")
+	raw, _ = json.Marshal(object)
+	if err := schemas.ValidateHealthRegistryOperationsPageV2(raw); err == nil {
+		t.Fatal("schema accepted an operation row without immutable inventory scope state")
+	}
+	operation["inventory_unknown"] = false
 	object["unmodeled_endpoint"] = "omitted"
 	raw, _ = json.Marshal(object)
 	if err := schemas.ValidateHealthRegistryOperationsPageV2(raw); err == nil {
 		t.Fatal("schema accepted an unmodeled endpoint field")
 	}
 	delete(object, "unmodeled_endpoint")
-	operations := object["operations"].([]any)
-	operation := operations[0].(map[string]any)
+	operations = object["operations"].([]any)
+	operation = operations[0].(map[string]any)
 	operation["observation_state"] = "current_pass"
 	operation["result_state"] = "unhealthy"
 	operation["result_category"] = "healthy"
