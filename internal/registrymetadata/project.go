@@ -25,6 +25,7 @@ const (
 	MaxRecordBytes        = 16 * 1024 * 1024
 	MaxSourceAPIs         = 20000
 	MaxSourceOperations   = 50000
+	MaxJSONDepth          = 128
 	MaxArtifactBytes      = 32 * 1024 * 1024
 	MaxTextBytes          = 8192
 	MaxTitleBytes         = 1024
@@ -858,7 +859,7 @@ func countOperationValues(record []byte) (int, error) {
 			continue
 		}
 		if err := skipJSONValue(decoder); err != nil {
-			return 0, errors.New("registry source record is invalid")
+			return 0, fmt.Errorf("registry source record is invalid: %w", err)
 		}
 	}
 	closing, err := decoder.Token()
@@ -869,6 +870,13 @@ func countOperationValues(record []byte) (int, error) {
 }
 
 func skipJSONValue(decoder *json.Decoder) error {
+	return skipJSONValueAtDepth(decoder, 0)
+}
+
+func skipJSONValueAtDepth(decoder *json.Decoder, depth int) error {
+	if depth > MaxJSONDepth {
+		return errors.New("registry source JSON nesting exceeds budget")
+	}
 	token, err := decoder.Token()
 	if err != nil {
 		return err
@@ -883,7 +891,7 @@ func skipJSONValue(decoder *json.Decoder) error {
 			if _, err := decoder.Token(); err != nil {
 				return err
 			}
-			if err := skipJSONValue(decoder); err != nil {
+			if err := skipJSONValueAtDepth(decoder, depth+1); err != nil {
 				return err
 			}
 		}
@@ -893,7 +901,7 @@ func skipJSONValue(decoder *json.Decoder) error {
 		}
 	case '[':
 		for decoder.More() {
-			if err := skipJSONValue(decoder); err != nil {
+			if err := skipJSONValueAtDepth(decoder, depth+1); err != nil {
 				return err
 			}
 		}

@@ -169,9 +169,10 @@ go run ./cmd/health-registry-metadata \
 
 The command makes no network or provider calls. It streams the top-level source
 array, verifies source and catalog hashes, and bounds input at 160 MiB, each
-record at 16 MiB, all operation values (including LINK) at 50,000, and the
-artifact at 32 MiB. Operation arrays are counted before typed decoding; duplicate
-case-insensitive `operations` fields fail closed. Prose projection removes
+record at 16 MiB, JSON nesting at 128, all operation values (including LINK)
+at 50,000, and the artifact at 32 MiB. Operation arrays are counted before
+typed decoding; duplicate case-insensitive `operations` fields fail closed.
+Prose projection removes
 credential assignments and authorization tokens along with URLs, paths, and
 structured examples. It writes the pinned metadata artifact and a receipt
 containing the generated timestamp, source/catalog and artifact hashes, and
