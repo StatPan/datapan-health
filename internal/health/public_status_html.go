@@ -891,7 +891,12 @@ func attachPublicPartialScopes(page *publicHTMLPage, source PublicRegistryOperat
 		nameAttribution, guideTitle, serviceStatusLabel := "", "", ""
 		apiTitle := publicPartialScopeField(operation.Title, operation.TitleState, "API 이름", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes)
 		purpose, purposeAction := publicPartialScopePurpose(operation)
-		if displayEntry, found := display.entry(expected.sourceID, expected.operationID); found {
+		var displayEntry operatorOperationDisplayEntry
+		foundDisplayEntry := false
+		if display != nil {
+			displayEntry, foundDisplayEntry = display.entry(expected.sourceID, expected.operationID)
+		}
+		if foundDisplayEntry {
 			name = displayEntry.OperatorLabelKO
 			nameAttribution = "운영자 표기 · 등록 ID 해석"
 			if displayEntry.OfficialAPITitle.State == "documented" {
