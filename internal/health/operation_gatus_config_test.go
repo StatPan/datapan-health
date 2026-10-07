@@ -88,6 +88,74 @@ func TestOperationGatusArtifactsUseExactIdentityAndSuppressLegacyOverlap(t *test
 	}
 }
 
+func TestObservationOnlyGatusEndpointKeepsReceiverWithoutHeartbeatOrOutageAlert(t *testing.T) {
+	planRoot, binding, sourceSHA, operationIDs := writeGatusPlanFixtureWithObservationOnly(t, true)
+	plan, err := LoadPinnedOperationObservationPlan(planRoot, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, canaries := gatusTestMetadata(sourceSHA, operationIDs)
+	activationBytes, err := json.Marshal(OperationGatusActivation{
+		SchemaVersion:    OperationGatusActivationSchemaVersion,
+		RegistryRevision: plan.RegistryRevision(), IndexSHA256: plan.IndexSHA256(),
+		Operations: []OperationGatusActivationEntry{{SourceID: "data_go_kr", OperationID: operationIDs[0]}, {SourceID: "data_go_kr", OperationID: operationIDs[1]}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	activation, activationSHA, err := DecodeOperationGatusActivation(activationBytes, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := []byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\nexternal-endpoints:\n  - name: placeholder\n")
+	artifacts, err := GenerateOperationGatusArtifacts(base, strings.Repeat("e", 64), canaries, metadata, &plan, &activation, activationSHA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mapping OperationGatusIdentityMapping
+	if err := json.Unmarshal(artifacts.Mapping, &mapping); err != nil {
+		t.Fatal(err)
+	}
+	byID := make(map[string]OperationGatusIdentity, len(mapping.Operations))
+	for _, item := range mapping.Operations {
+		byID[item.RegistryOperationID] = item
+	}
+	observationOnly := byID[operationIDs[0]]
+	typed := byID[operationIDs[1]]
+	if observationOnly.ResponseAssertionKind != "observation_only" || !observationOnly.Active || !observationOnly.PlanActive || observationOnly.LegacyActive || typed.ResponseAssertionKind != "soap_fault_free" {
+		t.Fatalf("response assertion modes were not bound to exact target identities: observation=%#v typed=%#v", observationOnly, typed)
+	}
+	section := string(artifacts.Config[strings.Index(string(artifacts.Config), "external-endpoints:\n"):])
+	observationStart := strings.Index(section, "  - name: legacy-one\n")
+	if observationStart < 0 {
+		t.Fatal("observation-only receiver key/history was not retained")
+	}
+	observationEnd := strings.Index(section[observationStart+1:], "\n  - name:")
+	if observationEnd < 0 {
+		t.Fatal("typed external receiver was not emitted after the observation-only target")
+	}
+	observationSection := section[observationStart : observationStart+1+observationEnd]
+	if strings.Contains(observationSection, "heartbeat:") || strings.Contains(observationSection, "alerts:") || !strings.Contains(observationSection, "token:") {
+		t.Fatalf("observation-only target has a fabricated heartbeat/alert or lost its receiver: %s", observationSection)
+	}
+	typedStart := strings.Index(section, "  - name: registry-")
+	if typedStart < 0 || !strings.Contains(section[typedStart:], "heartbeat:") || !strings.Contains(section[typedStart:], "alerts:") {
+		t.Fatalf("typed assertion target lost its heartbeat or delivery alerts: %s", section[typedStart:])
+	}
+	if _, err := exactActivePlanTargets(plan, mapping); err != nil {
+		t.Fatalf("verified mode-bound map did not resolve active targets: %v", err)
+	}
+	for i := range mapping.Operations {
+		if mapping.Operations[i].RegistryOperationID == operationIDs[0] {
+			mapping.Operations[i].ResponseAssertionKind = "http_status"
+			break
+		}
+	}
+	if _, err := exactActivePlanTargets(plan, mapping); err == nil {
+		t.Fatal("runtime accepted an assertion mode changed independently of the immutable plan")
+	}
+}
+
 func TestOperationGatusInactivePlanKeepsLegacyTargetAndMapsStableKeys(t *testing.T) {
 	planRoot, binding, sourceSHA, operationIDs := writeGatusPlanFixture(t)
 	plan, err := LoadPinnedOperationObservationPlan(planRoot, binding)
@@ -278,6 +346,10 @@ func hashOperationIDs(operationIDs []string) string {
 }
 
 func writeGatusPlanFixture(t *testing.T) (string, OperationObservationPlanBinding, string, []string) {
+	return writeGatusPlanFixtureWithObservationOnly(t, false)
+}
+
+func writeGatusPlanFixtureWithObservationOnly(t *testing.T, observationOnly bool) (string, OperationObservationPlanBinding, string, []string) {
 	t.Helper()
 	root, binding, shardPath := writeSyntheticOperationObservationPlan(t, false)
 	const oldSourcePath = "fixtures/operation-observation-plan/source.json"
@@ -315,6 +387,13 @@ func writeGatusPlanFixture(t *testing.T) (string, OperationObservationPlanBindin
 		}
 		requestContract := record["request_plan"].(map[string]any)["request_contract"].(map[string]any)
 		requestContract["transport"].(map[string]any)["authority"] = "operation_document"
+		if observationOnly && index == 0 {
+			assertion := requestContract["response_assertion"].(map[string]any)
+			assertion["kind"] = "observation_only"
+			assertion["empty_result_semantics"] = "not_applicable"
+			assertion["assertion_ref"] = "synthetic-observation-only"
+			delete(assertion, "expected_status_codes")
+		}
 		if index == 1 {
 			parameters := requestContract["parameters"].([]any)
 			parameters[0].(map[string]any)["qualified_name"] = map[string]any{"namespace": "urn:synthetic:request", "local_name": "RecordID"}

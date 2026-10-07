@@ -148,7 +148,7 @@ func verifyOperationGatusRuntimeArtifacts(paths OperationPlanRuntimePaths, canar
 		Plan: plan, Metadata: metadata, Canaries: canaries, Artifacts: artifacts,
 		IdentityMapping: mapping, ActiveTargets: targets,
 		SuppressedLegacy: append([]string(nil), artifacts.LegacySuppressedHealthIDs...),
-		verified: true,
+		verified:         true,
 	}
 	runtime.verificationSeal = operationPlanRuntimeSeal(runtime)
 	if runtime.verificationSeal == "" {
@@ -158,14 +158,14 @@ func verifyOperationGatusRuntimeArtifacts(paths OperationPlanRuntimePaths, canar
 }
 
 type operationPlanRuntimeSealWire struct {
-	RegistryRevision       string                     `json:"registry_revision"`
-	ReleaseManifestSHA256 string                     `json:"release_manifest_sha256"`
-	IndexSHA256            string                     `json:"index_sha256"`
-	ConfigSHA256           string                     `json:"config_sha256"`
-	MappingSHA256          string                     `json:"mapping_sha256"`
-	RuntimePinSHA256       string                     `json:"runtime_pin_sha256"`
-	Targets                []OperationPlanWorkerTarget `json:"targets"`
-	SuppressedLegacy       []string                   `json:"suppressed_legacy"`
+	RegistryRevision      string                      `json:"registry_revision"`
+	ReleaseManifestSHA256 string                      `json:"release_manifest_sha256"`
+	IndexSHA256           string                      `json:"index_sha256"`
+	ConfigSHA256          string                      `json:"config_sha256"`
+	MappingSHA256         string                      `json:"mapping_sha256"`
+	RuntimePinSHA256      string                      `json:"runtime_pin_sha256"`
+	Targets               []OperationPlanWorkerTarget `json:"targets"`
+	SuppressedLegacy      []string                    `json:"suppressed_legacy"`
 }
 
 func operationPlanRuntimeSeal(runtime *VerifiedOperationPlanRuntime) string {
@@ -252,7 +252,7 @@ func exactActivePlanTargets(plan PinnedOperationObservationPlan, mapping Operati
 		for _, record := range records {
 			key := operationReadModelIdentityKey(record.SourceID, record.OperationID)
 			item, found := byIdentity[key]
-			if !found || item.PlanAdmissionState != record.AdmissionStatus || item.ObservationPeriodSecond != int64(record.ObservationPeriod/time.Second) {
+			if !found || item.PlanAdmissionState != record.AdmissionStatus || item.ResponseAssertionKind != record.ResponseAssertionKind || item.ObservationPeriodSecond != int64(record.ObservationPeriod/time.Second) {
 				return nil, errOperationPlanRuntimeUnavailable
 			}
 			if !item.PlanActive {

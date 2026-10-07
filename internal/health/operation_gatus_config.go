@@ -49,6 +49,7 @@ type OperationGatusIdentity struct {
 	SourceID                string `json:"source_id"`
 	RegistryOperationID     string `json:"registry_operation_id"`
 	GatusEndpointKey        string `json:"gatus_endpoint_key"`
+	ResponseAssertionKind   string `json:"response_assertion_kind"`
 	PlanAdmissionState      string `json:"plan_admission_state"`
 	PlanActive              bool   `json:"plan_active"`
 	LegacyActive            bool   `json:"legacy_active"`
@@ -115,10 +116,11 @@ type OperationGatusArtifacts struct {
 }
 
 type operationGatusEndpoint struct {
-	key       string
-	group     string
-	name      string
-	heartbeat time.Duration
+	key             string
+	group           string
+	name            string
+	heartbeat       time.Duration
+	observationOnly bool
 }
 
 // DecodeOperationGatusActivation validates a small exact-ID activation file.
@@ -200,7 +202,7 @@ func GenerateOperationGatusArtifacts(baseConfig []byte, canaryConfigSHA256 strin
 		}
 		entries[identityKey] = OperationGatusIdentity{
 			SourceID: "data_go_kr", RegistryOperationID: link.RegistryOperationID,
-			GatusEndpointKey: canary.GatusEndpointKey, PlanAdmissionState: "unknown",
+			GatusEndpointKey: canary.GatusEndpointKey, ResponseAssertionKind: "legacy_canary", PlanAdmissionState: "unknown",
 			LegacyActive: true, LegacyHealthOperationID: canary.OperationID, Active: true,
 		}
 		legacyByIdentity[identityKey] = canary
@@ -263,7 +265,7 @@ func GenerateOperationGatusArtifacts(baseConfig []byte, canaryConfigSHA256 strin
 					seenActive[identityKey] = struct{}{}
 					activatedPlan++
 				}
-				entry := OperationGatusIdentity{SourceID: record.SourceID, RegistryOperationID: record.OperationID, GatusEndpointKey: stableOperationGatusEndpointKey(record.SourceID, record.OperationID), PlanAdmissionState: record.AdmissionStatus, PlanActive: selected, Active: selected}
+				entry := OperationGatusIdentity{SourceID: record.SourceID, RegistryOperationID: record.OperationID, GatusEndpointKey: stableOperationGatusEndpointKey(record.SourceID, record.OperationID), ResponseAssertionKind: record.ResponseAssertionKind, PlanAdmissionState: record.AdmissionStatus, PlanActive: selected, Active: selected}
 				if record.ObservationPeriod > 0 {
 					entry.ObservationPeriodSecond = int64(record.ObservationPeriod / time.Second)
 				}
@@ -278,7 +280,7 @@ func GenerateOperationGatusArtifacts(baseConfig []byte, canaryConfigSHA256 strin
 						if !ok {
 							return OperationGatusArtifacts{}, errOperationGatusConfiguration
 						}
-						endpoints[legacy.GatusEndpointKey] = operationGatusEndpoint{key: legacy.GatusEndpointKey, group: group, name: name, heartbeat: 2 * record.ObservationPeriod}
+						endpoints[legacy.GatusEndpointKey] = operationGatusEndpoint{key: legacy.GatusEndpointKey, group: group, name: name, heartbeat: operationGatusHeartbeat(record), observationOnly: record.ResponseAssertionKind == "observation_only"}
 					}
 				}
 				if !registerOperationGatusKey(identityByGatusKey, entry.GatusEndpointKey, identityKey) {
@@ -289,7 +291,7 @@ func GenerateOperationGatusArtifacts(baseConfig []byte, canaryConfigSHA256 strin
 					if !ok {
 						return OperationGatusArtifacts{}, errOperationGatusConfiguration
 					}
-					endpoints[entry.GatusEndpointKey] = operationGatusEndpoint{key: entry.GatusEndpointKey, group: group, name: name, heartbeat: 2 * record.ObservationPeriod}
+					endpoints[entry.GatusEndpointKey] = operationGatusEndpoint{key: entry.GatusEndpointKey, group: group, name: name, heartbeat: operationGatusHeartbeat(record), observationOnly: record.ResponseAssertionKind == "observation_only"}
 				}
 				entries[identityKey] = entry
 			}
@@ -429,16 +431,33 @@ func renderOperationGatusConfig(base []byte, endpoints []operationGatusEndpoint)
 	output.WriteString(text[:position])
 	output.WriteString(marker)
 	for _, endpoint := range endpoints {
-		if _, _, ok := splitOperationGatusEndpointKey(endpoint.key); !ok || endpoint.name == "" || endpoint.group == "" || endpoint.heartbeat < time.Second || endpoint.heartbeat > 2*365*24*time.Hour {
+		if _, _, ok := splitOperationGatusEndpointKey(endpoint.key); !ok || endpoint.name == "" || endpoint.group == "" {
 			return nil, errOperationGatusConfiguration
 		}
-		fmt.Fprintf(&output, "  - name: %s\n    group: %s\n    token: \"${GATUS_TOKEN}\"\n    heartbeat:\n      interval: %s\n    alerts:\n      - type: custom\n        description: public API observation delivery incident\n        failure-threshold: 2\n        success-threshold: 2\n        send-on-resolved: true\n", endpoint.name, endpoint.group, endpoint.heartbeat.String())
+		fmt.Fprintf(&output, "  - name: %s\n    group: %s\n    token: \"${GATUS_TOKEN}\"\n", endpoint.name, endpoint.group)
+		if endpoint.observationOnly {
+			if endpoint.heartbeat != 0 {
+				return nil, errOperationGatusConfiguration
+			}
+			continue
+		}
+		if endpoint.heartbeat < time.Second || endpoint.heartbeat > 2*365*24*time.Hour {
+			return nil, errOperationGatusConfiguration
+		}
+		fmt.Fprintf(&output, "    heartbeat:\n      interval: %s\n    alerts:\n      - type: custom\n        description: public API observation delivery incident\n        failure-threshold: 2\n        success-threshold: 2\n        send-on-resolved: true\n", endpoint.heartbeat.String())
 	}
 	rendered := []byte(output.String())
 	if len(rendered) > maxOperationGatusConfigBytes {
 		return nil, errOperationGatusConfiguration
 	}
 	return rendered, nil
+}
+
+func operationGatusHeartbeat(record OperationObservationPlanRecord) time.Duration {
+	if record.ResponseAssertionKind == "observation_only" {
+		return 0
+	}
+	return 2 * record.ObservationPeriod
 }
 
 func digestOperationGatusBytes(raw []byte) string {
