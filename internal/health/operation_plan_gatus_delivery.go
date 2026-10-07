@@ -105,12 +105,17 @@ func (delivery *OperationPlanGatusDelivery) Readback(ctx context.Context, key st
 		response, err := delivery.get(ctx, endpoint)
 		if err == nil {
 			observedAt, success, duration, parseErr := decodeOperationGatusStatus(response, key)
-			if parseErr == nil && !observedAt.Before(acknowledgedAt.Add(-2*time.Second)) && success == wantSuccess && duration == wantDuration {
+			readbackAt := time.Now().UTC()
+			// Gatus timestamps the native result before the external POST response
+			// reaches Health. The timestamp above identifies the result being
+			// matched; readbackAt records when this GET verified it and is the time
+			// persisted by OperationAttemptStore.RecordGatusReadback.
+			if parseErr == nil && !observedAt.Before(acknowledgedAt.Add(-2*time.Second)) && !observedAt.After(acknowledgedAt.Add(2*time.Second)) && !observedAt.After(readbackAt) && success == wantSuccess && duration == wantDuration {
 				state := "unhealthy"
 				if success {
 					state = "healthy"
 				}
-				return observedAt, state, nil
+				return readbackAt, state, nil
 			}
 			if observedAt.After(latestAt) {
 				latestAt = observedAt

@@ -6,12 +6,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 func TestOperationPlanGatusDeliveryUsesBoundedPerKeyPushAndReadback(t *testing.T) {
 	key := stableOperationGatusEndpointKey("data_go_kr", strings.Repeat("a", 64))
+	var acknowledgedAt time.Time
+	var acknowledgedAtMu sync.Mutex
 	result := OperationObservationResult{
 		State: "healthy", Category: "healthy", ObservedAt: time.Now().UTC().Add(-time.Second),
 		ReceivedAt: time.Now().UTC(), ReceiptSHA: strings.Repeat("b", 64), LatencyMS: 123,
@@ -33,7 +36,12 @@ func TestOperationPlanGatusDeliveryUsesBoundedPerKeyPushAndReadback(t *testing.T
 			if r.URL.Path != "/api/v1/endpoints/"+key+"/statuses" {
 				t.Errorf("operation readback did not use the exact per-key status path")
 			}
-			fmt.Fprintf(w, `{"key":%q,"results":[{"success":true,"duration":123000000,"timestamp":%q,"errors":[]}]}`, key, time.Now().UTC().Format(time.RFC3339Nano))
+			// Gatus records the native result before the POST response reaches
+			// Health. Its result timestamp can therefore precede the HTTP ACK.
+			acknowledgedAtMu.Lock()
+			resultAt := acknowledgedAt.Add(-100 * time.Millisecond)
+			acknowledgedAtMu.Unlock()
+			fmt.Fprintf(w, `{"key":%q,"results":[{"success":true,"duration":123000000,"timestamp":%q,"errors":[]}]}`, key, resultAt.Format(time.RFC3339Nano))
 		default:
 			t.Errorf("unexpected Gatus method %s", r.Method)
 			http.NotFound(w, r)
@@ -44,15 +52,48 @@ func TestOperationPlanGatusDeliveryUsesBoundedPerKeyPushAndReadback(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	store, err := OpenOperationAttemptStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	startedAt := result.ObservedAt.Add(-time.Second)
+	binding := OperationAttemptBinding{
+		SourceID: "data_go_kr", OperationID: strings.Repeat("a", 64), RegistryRevision: strings.Repeat("1", 40),
+		ReleaseManifestSHA: strings.Repeat("2", 64), IndexSHA: strings.Repeat("3", 64), ShardSHA: strings.Repeat("4", 64),
+		GatusKey: key, ObservationPeriod: time.Minute,
+	}
+	claim, err := store.BeginAttempt(binding, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", startedAt, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteAttempt(claim, result, result.ReceivedAt); err != nil {
+		t.Fatal(err)
+	}
+	deliveryClaim, err := store.ClaimDelivery(binding.SourceID, binding.OperationID, claim.AttemptID, claim.Generation, result.ReceivedAt.Add(time.Millisecond), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	acknowledgedAt, err := delivery.Push(ctx, key, result)
-	if err != nil || acknowledgedAt.IsZero() {
-		t.Fatalf("bounded external result was not acknowledged: at=%v err=%v", acknowledgedAt, err)
+	ackTime, err := delivery.Push(ctx, key, result)
+	if err != nil || ackTime.IsZero() {
+		t.Fatalf("bounded external result was not acknowledged: at=%v err=%v", ackTime, err)
 	}
-	readbackAt, state, err := delivery.Readback(ctx, key, result, acknowledgedAt)
+	acknowledgedAtMu.Lock()
+	acknowledgedAt = ackTime
+	acknowledgedAtMu.Unlock()
+	readbackAt, state, err := delivery.Readback(ctx, key, result, ackTime)
 	if err != nil || readbackAt.IsZero() || state != "healthy" || postCalls != 1 || getCalls != 1 {
 		t.Fatalf("per-key readback did not verify the pushed identity/state: at=%v state=%s post=%d get=%d err=%v", readbackAt, state, postCalls, getCalls, err)
+	}
+	if readbackAt.Before(ackTime) {
+		t.Fatalf("GET completion was confused with the older native result timestamp: ack=%v readback=%v", ackTime, readbackAt)
+	}
+	if err := store.AcknowledgeDelivery(deliveryClaim, ackTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordGatusReadback(binding.SourceID, binding.OperationID, claim.AttemptID, claim.Generation, readbackAt, state); err != nil {
+		t.Fatalf("verified GET completion must satisfy the durable ACK ordering: %v", err)
 	}
 }
 
@@ -66,6 +107,7 @@ func TestOperationPlanGatusReadbackRejectsWrongKeyDurationAndOversizedBody(t *te
 	}{
 		{name: "wrong identity", body: fmt.Sprintf(`{"key":%q,"results":[{"success":true,"duration":1,"timestamp":%q}]}`, otherKey, at.Format(time.RFC3339Nano))},
 		{name: "wrong duration", body: fmt.Sprintf(`{"key":%q,"results":[{"success":true,"duration":1,"timestamp":%q}]}`, key, at.Format(time.RFC3339Nano))},
+		{name: "future result timestamp", body: fmt.Sprintf(`{"key":%q,"results":[{"success":true,"duration":123000000,"timestamp":%q}]}`, key, at.Add(time.Hour).Format(time.RFC3339Nano))},
 		{name: "too many results", body: fmt.Sprintf(`{"key":%q,"results":[%s]}`, key, strings.TrimSuffix(strings.Repeat(fmt.Sprintf(`{"success":true,"duration":1,"timestamp":%q},`, at.Format(time.RFC3339Nano)), maxOperationGatusHistoryRows+1), ","))},
 	}
 	for _, test := range cases {
