@@ -299,17 +299,97 @@ func (store *OperationHistoryStore) AcknowledgeOperationHistoryBatch(ctx context
 			store.recordCapacityBlockLocked(usage, batch.BatchID)
 			return ErrOperationHistoryCapacity
 		}
+		checkpointBytesBefore, err := operationHistoryPrivateFileSize(store.checkpointPath())
+		if err != nil {
+			return err
+		}
 		if err := writePrivateBytesAtomic(store.publicationTransactionPath(), encoded); err != nil {
 			return ErrOperationHistoryUnavailable
 		}
 		if err := store.applyPublicationTransactionLocked(ctx, transaction); err != nil {
 			return err
 		}
+		if err := store.applyOperationHistoryPublicationUsageDeltaLocked(ctx, usage, batch, transaction, checkpointBytesBefore); err != nil {
+			return err
+		}
 		if err := removePrivateFile(store.publicationTransactionPath()); err != nil {
 			return ErrOperationHistoryUnavailable
 		}
-		return store.rebuildUsageLocked(ctx)
+		return nil
 	})
+}
+
+func (store *OperationHistoryStore) applyOperationHistoryPublicationUsageDeltaLocked(ctx context.Context, usage operationHistoryUsagePayload, batch OperationHistoryBatch, transaction operationHistoryPublicationTransaction, checkpointBytesBefore int64) error {
+	if len(batch.Records) == 0 || int64(len(batch.Records)) > usage.RecordCount || usage.VerifiedPublicationCount+int64(len(batch.Records)) > usage.AcceptedRecordCount {
+		return ErrOperationHistoryCorrupt
+	}
+	var usedBytesDelta int64
+	for _, item := range batch.Records {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		storedBytes, err := json.Marshal(operationHistoryStoredRecord{SchemaVersion: OperationHistoryStoreSchemaVersion, Record: item.Record, RecordSHA256: item.RecordSHA, Sequence: item.Sequence, AppendedAt: item.AppendedAt})
+		if err != nil {
+			return ErrOperationHistoryCorrupt
+		}
+		usedBytesDelta -= operationHistoryPendingRecordCharge(int64(len(storedBytes)))
+		recordBytes, err := json.Marshal(item.Record)
+		if err != nil {
+			return ErrOperationHistoryCorrupt
+		}
+		sequenceIndex, err := newOperationHistoryPendingSequenceIndex(item.Sequence, item.RecordID, item.RecordSHA, int64(len(recordBytes)), item.AppendedAt)
+		if err != nil {
+			return ErrOperationHistoryCorrupt
+		}
+		sequenceBytes, err := json.Marshal(sequenceIndex)
+		if err != nil {
+			return ErrOperationHistoryCorrupt
+		}
+		usedBytesDelta -= fileCharge(int64(len(sequenceBytes)))
+	}
+	descriptorBytes, err := json.Marshal(newOperationHistoryPendingBatchDescriptor(batch))
+	if err != nil {
+		return ErrOperationHistoryCorrupt
+	}
+	usedBytesDelta -= fileCharge(int64(len(descriptorBytes)))
+	newOperationKeys := int64(0)
+	for _, change := range transaction.IndexChanges {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if change.Previous != nil {
+			previousBytes, err := json.Marshal(*change.Previous)
+			if err != nil {
+				return ErrOperationHistoryCorrupt
+			}
+			usedBytesDelta -= fileCharge(int64(len(previousBytes)))
+		} else {
+			newOperationKeys++
+		}
+		infoBytes, err := operationHistoryPrivateFileSize(store.operationIndexPath(change.Key))
+		if err != nil || infoBytes == 0 {
+			return ErrOperationHistoryCorrupt
+		}
+		usedBytesDelta += fileCharge(infoBytes)
+	}
+	checkpointBytesAfter, err := operationHistoryPrivateFileSize(store.checkpointPath())
+	if err != nil || checkpointBytesAfter == 0 {
+		return ErrOperationHistoryCorrupt
+	}
+	usedBytesDelta += fileCharge(checkpointBytesAfter)
+	if checkpointBytesBefore > 0 {
+		usedBytesDelta -= fileCharge(checkpointBytesBefore)
+	}
+	updated := usage
+	updated.RecordCount -= int64(len(batch.Records))
+	updated.VerifiedPublicationCount += int64(len(batch.Records))
+	updated.OperationKeyCount += newOperationKeys
+	updated.UsedBytes += usedBytesDelta
+	checkpoint, err := store.readCheckpoint()
+	if err != nil || checkpoint.Sequence != uint64(updated.VerifiedPublicationCount) || checkpoint.OperationKeyCount != updated.OperationKeyCount || updated.AcceptedRecordCount-updated.RecordCount != updated.VerifiedPublicationCount || updated.NextSequence != uint64(updated.AcceptedRecordCount)+1 || updated.UsedBytes < 0 || updated.UsedBytes+updated.ReservedBytes > store.maxBytes {
+		return ErrOperationHistoryCorrupt
+	}
+	return store.writeUsage(updated)
 }
 
 func (store *OperationHistoryStore) applyPublicationTransactionLocked(ctx context.Context, transaction operationHistoryPublicationTransaction) error {

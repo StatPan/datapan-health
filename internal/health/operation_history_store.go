@@ -594,8 +594,8 @@ func (store *OperationHistoryStore) rebuildUsageLocked(ctx context.Context) erro
 	} else if !errors.Is(checkpointErr, os.ErrNotExist) {
 		return ErrOperationHistoryCorrupt
 	}
-	indexEntries, err := os.ReadDir(filepath.Join(store.root, "operation-index"))
-	if err != nil || len(indexEntries) > maxOperationHistoryOperationKeys {
+	indexEntries, err := readBoundedOperationHistoryDir(filepath.Join(store.root, "operation-index"), maxOperationHistoryOperationKeys)
+	if err != nil {
 		return ErrOperationHistoryCorrupt
 	}
 	var operationIndexSet [sha256.Size]byte
@@ -628,8 +628,8 @@ func (store *OperationHistoryStore) rebuildUsageLocked(ctx context.Context) erro
 	} else if usage.OperationKeyCount != checkpoint.OperationKeyCount || hex.EncodeToString(operationIndexSet[:]) != checkpoint.OperationIndexSetSHA {
 		return ErrOperationHistoryCorrupt
 	}
-	entries, err := os.ReadDir(filepath.Join(store.root, "records"))
-	if err != nil || len(entries) > maxOperationHistoryPendingRecords {
+	entries, err := readBoundedOperationHistoryDir(filepath.Join(store.root, "records"), maxOperationHistoryPendingRecords)
+	if err != nil {
 		return ErrOperationHistoryCorrupt
 	}
 	pendingSequences := make([]uint64, 0, len(entries))
@@ -691,7 +691,7 @@ func (store *OperationHistoryStore) rebuildUsageLocked(ctx context.Context) erro
 			return ErrOperationHistoryCorrupt
 		}
 	}
-	sequenceEntries, err := os.ReadDir(filepath.Join(store.root, "pending-sequence"))
+	sequenceEntries, err := readBoundedOperationHistoryDir(filepath.Join(store.root, "pending-sequence"), maxOperationHistoryPendingRecords+1)
 	if err != nil || len(sequenceEntries) != len(sequenceIndicesSeen) {
 		return ErrOperationHistoryCorrupt
 	}
@@ -731,8 +731,8 @@ func (store *OperationHistoryStore) rebuildUsageLocked(ctx context.Context) erro
 	}
 	usage.AcceptedRecordCount = int64(checkpoint.Sequence) + usage.RecordCount
 	usage.NextSequence = uint64(usage.AcceptedRecordCount) + 1
-	reservations, err := os.ReadDir(filepath.Join(store.root, "reservations"))
-	if err != nil || len(reservations) > maxOperationHistoryReservations+maxOperationHistoryPendingRecords {
+	reservations, err := readBoundedOperationHistoryDir(filepath.Join(store.root, "reservations"), maxOperationHistoryReservations+maxOperationHistoryPendingRecords)
+	if err != nil {
 		return ErrOperationHistoryCorrupt
 	}
 	for _, entry := range reservations {
@@ -1094,18 +1094,81 @@ func syncDirectory(path string) error {
 	return directory.Sync()
 }
 
+func readBoundedOperationHistoryDir(path string, maximum int) ([]os.DirEntry, error) {
+	if maximum < 0 {
+		return nil, ErrOperationHistoryCorrupt
+	}
+	directory, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer directory.Close()
+	entries, err := directory.ReadDir(maximum + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	if len(entries) > maximum {
+		return nil, ErrOperationHistoryCapacity
+	}
+	return entries, nil
+}
+
+func operationHistoryPrivateFileSize(path string) (int64, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 {
+		return 0, ErrOperationHistoryCorrupt
+	}
+	return info.Size(), nil
+}
+
 func cleanupOperationHistoryPartials(root string) error {
-	for _, directory := range []string{root, filepath.Join(root, "records"), filepath.Join(root, "reservations"), filepath.Join(root, "operation-index")} {
-		entries, err := os.ReadDir(directory)
+	directories := []struct {
+		path    string
+		maximum int
+	}{
+		{path: root, maximum: 64},
+		{path: filepath.Join(root, "records"), maximum: maxOperationHistoryPendingRecords + 1},
+		{path: filepath.Join(root, "reservations"), maximum: maxOperationHistoryReservations + maxOperationHistoryPendingRecords + 1},
+		{path: filepath.Join(root, "operation-index"), maximum: maxOperationHistoryOperationKeys + 1},
+		{path: filepath.Join(root, "pending-sequence"), maximum: maxOperationHistoryPendingRecords + 1},
+	}
+	for _, item := range directories {
+		directory, err := os.Open(item.path)
 		if err != nil {
 			return ErrOperationHistoryUnavailable
 		}
-		removed := false
-		for _, entry := range entries {
-			if !strings.HasPrefix(entry.Name(), ".operation-history-partial-") {
-				continue
+		seen := 0
+		partials := make([]string, 0, 1)
+		for {
+			entries, readErr := directory.ReadDir(128)
+			if readErr != nil && !errors.Is(readErr, io.EOF) {
+				_ = directory.Close()
+				return ErrOperationHistoryUnavailable
 			}
-			path := filepath.Join(directory, entry.Name())
+			seen += len(entries)
+			if seen > item.maximum {
+				_ = directory.Close()
+				return ErrOperationHistoryCapacity
+			}
+			for _, entry := range entries {
+				if !strings.HasPrefix(entry.Name(), ".operation-history-partial-") {
+					continue
+				}
+				partials = append(partials, filepath.Join(item.path, entry.Name()))
+			}
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			if len(entries) == 0 {
+				_ = directory.Close()
+				return ErrOperationHistoryUnavailable
+			}
+		}
+		_ = directory.Close()
+		for _, path := range partials {
 			info, err := os.Lstat(path)
 			if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 {
 				return ErrOperationHistoryCorrupt
@@ -1113,10 +1176,9 @@ func cleanupOperationHistoryPartials(root string) error {
 			if err := os.Remove(path); err != nil {
 				return ErrOperationHistoryUnavailable
 			}
-			removed = true
 		}
-		if removed {
-			if err := syncDirectory(directory); err != nil {
+		if len(partials) > 0 {
+			if err := syncDirectory(item.path); err != nil {
 				return ErrOperationHistoryUnavailable
 			}
 		}

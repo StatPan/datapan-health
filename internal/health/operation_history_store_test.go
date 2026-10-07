@@ -595,6 +595,63 @@ func TestOperationHistoryPendingBatchLoadsOnlyFirst256BodiesFromMaximumStore(t *
 	}
 }
 
+func TestOperationHistoryAcknowledgeDoesNotRevalidateRemainingBacklog(t *testing.T) {
+	root := t.TempDir()
+	validationCalls := 0
+	store, err := OpenOperationHistoryStore(root, maxOperationHistoryStoreBytes, fixtureOperationHistoryValidator{calls: &validationCalls})
+	if err != nil {
+		t.Fatalf("open maximum store: %v", err)
+	}
+	for generation := 1; generation <= MaxOperationHistoryBatchRecords+44; generation++ {
+		identity := fixtureOperationHistoryIdentity(fmt.Sprintf("%08x-0000-4000-8000-%012x", generation, generation))
+		identity.Generation = uint64(generation)
+		record := fixtureOperationHistoryRecord(t, identity, "healthy")
+		token, err := store.Reserve(context.Background(), identity)
+		if err != nil {
+			t.Fatalf("reserve generation %d: %v", generation, err)
+		}
+		if _, err := store.AppendValidated(context.Background(), token, record); err != nil {
+			t.Fatalf("append generation %d: %v", generation, err)
+		}
+	}
+	batch, err := store.PendingOperationHistoryBatch(context.Background())
+	if err != nil || len(batch.Records) != MaxOperationHistoryBatchRecords {
+		t.Fatalf("pending batch records=%d err=%v", len(batch.Records), err)
+	}
+	batch.ManifestSHA256 = strings.Repeat("a", 64)
+	batch.RecordsSHA256 = strings.Repeat("b", 64)
+	confirmation, err := newVerifiedOperationHistoryPublicationConfirmation(batch, OperationHistoryPublicationReadback{
+		DatasetRepo:     "StatPan/datapan-health-operation-history",
+		Revision:        strings.Repeat("f", 40),
+		ManifestSHA256:  batch.ManifestSHA256,
+		RecordsSHA256:   batch.RecordsSHA256,
+		RecordSetSHA256: batch.RecordSetSHA,
+		VerifiedAt:      time.Date(2026, 10, 7, 1, 2, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("seal verified publication: %v", err)
+	}
+	validationCalls = 0
+	if err := store.AcknowledgeOperationHistoryBatch(context.Background(), batch, confirmation); err != nil {
+		t.Fatalf("acknowledge verified publication: %v", err)
+	}
+	if validationCalls != 2*MaxOperationHistoryBatchRecords {
+		t.Fatalf("acknowledgement validated %d records; want only batch load and transaction verification for %d records", validationCalls, MaxOperationHistoryBatchRecords)
+	}
+	usage, err := store.Usage(context.Background())
+	if err != nil || usage.RecordCount != 44 || usage.VerifiedPublicationCount != MaxOperationHistoryBatchRecords || usage.AcceptedRecordCount != MaxOperationHistoryBatchRecords+44 {
+		t.Fatalf("bounded acknowledgement usage: %#v err=%v", usage, err)
+	}
+	reopened, err := OpenOperationHistoryStore(root, maxOperationHistoryStoreBytes, fixtureOperationHistoryValidator{})
+	if err != nil {
+		t.Fatalf("reopen acknowledged archive: %v", err)
+	}
+	rebuiltUsage, err := reopened.Usage(context.Background())
+	if err != nil || rebuiltUsage.UsedBytes != usage.UsedBytes || rebuiltUsage.RecordCount != usage.RecordCount || rebuiltUsage.VerifiedPublicationCount != usage.VerifiedPublicationCount {
+		t.Fatalf("incremental usage differs from recovery rebuild: incremental=%#v rebuilt=%#v err=%v", usage, rebuiltUsage, err)
+	}
+}
+
 func TestOperationHistoryPendingBatchStopsAtEightMiBBeforeLoadingLaterBodies(t *testing.T) {
 	validationCalls := 0
 	store, err := OpenOperationHistoryStore(t.TempDir(), maxOperationHistoryStoreBytes, fixtureOperationHistoryValidator{calls: &validationCalls})
