@@ -319,8 +319,18 @@ func TestOperationAttemptSnapshotKeepsPlanLineageAcrossRevisionChangeAndDelayedG
 	if err := lostReceiptStore.RecordRequestStartedWithoutObservation(lostClaim, strings.Repeat("e", 64), started.Add(time.Second)); err != nil {
 		t.Fatalf("record validated request without response: %v", err)
 	}
-	if _, err := lostReceiptStore.BeginAttempt(bindingA, strings.Repeat("f", 64), started.Add(5*time.Minute), time.Minute); err != nil {
-		t.Fatalf("start another observation under same plan: %v", err)
+	currentStart := started
+	for index := 0; index < maxOperationAttemptHistory+16; index++ {
+		attemptStart := currentStart.Add(5 * time.Minute)
+		claim, err := lostReceiptStore.BeginAttempt(bindingA, fmt.Sprintf("%064x", index+1), attemptStart, time.Minute)
+		if err != nil {
+			info, _ := os.Stat(lostReceiptStore.statePath(bindingA.SourceID, bindingA.OperationID))
+			t.Fatalf("start repeated observation %d under same plan (stored_bytes=%d): %v", index, info.Size(), err)
+		}
+		if err := lostReceiptStore.RecordBlockedAttempt(claim, fmt.Sprintf("%064x", index+2), "credential_unavailable", attemptStart.Add(time.Second)); err != nil {
+			t.Fatalf("persist no-request outcome %d: %v", index, err)
+		}
+		currentStart = attemptStart
 	}
 	lostSnapshots, err := lostReceiptStore.SnapshotReadModelAttempts()
 	if err != nil || len(lostSnapshots) != 1 || !lostSnapshots[0].EverRequestStarted {

@@ -17,9 +17,9 @@ import (
 )
 
 const (
-	OperationAttemptStoreSchemaVersion = "datapan.health-operation-attempt-store.v1"
+	OperationAttemptStoreSchemaVersion = "datapan.health-operation-attempt-store.v2"
 	maxOperationAttemptStateBytes      = 32 * 1024
-	maxOperationAttemptHistory         = 32
+	maxOperationAttemptHistory         = 24
 	maxOperationAttemptStoreOperations = 16_000
 	maxOperationAttemptLease           = 10 * time.Minute
 	maxOperationAttemptStoreBytes      = int64(512 * 1024 * 1024)
@@ -103,12 +103,14 @@ type OperationStoredAttempt struct {
 }
 
 type operationAttemptState struct {
-	SchemaVersion      string                   `json:"schema_version"`
-	OperationID        string                   `json:"operation_id"`
-	SourceID           string                   `json:"source_id"`
-	Generation         uint64                   `json:"generation"`
-	EverRequestStarted bool                     `json:"ever_request_started"`
-	Attempts           []OperationStoredAttempt `json:"attempts"`
+	SchemaVersion                 string                   `json:"schema_version"`
+	OperationID                   string                   `json:"operation_id"`
+	SourceID                      string                   `json:"source_id"`
+	Generation                    uint64                   `json:"generation"`
+	EverRequestStarted            bool                     `json:"ever_request_started"`
+	CurrentPlanSHA256             string                   `json:"current_plan_sha256"`
+	CurrentPlanEverRequestStarted bool                     `json:"current_plan_ever_request_started"`
+	Attempts                      []OperationStoredAttempt `json:"attempts"`
 }
 
 // OperationAttemptStore stores one bounded, atomically replaced state file per
@@ -204,6 +206,11 @@ func (store *OperationAttemptStore) BeginAttempt(binding OperationAttemptBinding
 			}
 			state.Attempts = append([]OperationStoredAttempt(nil), state.Attempts[len(state.Attempts)-maxOperationAttemptHistory+1:]...)
 		}
+		bindingSHA := operationAttemptPlanBindingSHA256(binding)
+		if state.CurrentPlanSHA256 != bindingSHA {
+			state.CurrentPlanSHA256 = bindingSHA
+			state.CurrentPlanEverRequestStarted = false
+		}
 		state.Generation++
 		stored := OperationStoredAttempt{Binding: binding, AttemptID: attemptID, Generation: state.Generation, StartedAt: now, LeaseExpiresAt: now.Add(lease), State: "claimed", DeliveryState: "not_ready"}
 		state.Attempts = append(state.Attempts, stored)
@@ -249,6 +256,9 @@ func (store *OperationAttemptStore) CompleteAttempt(claim OperationAttemptClaim,
 		attempt.Result = &copy
 		attempt.DeliveryState = "not_ready"
 		state.EverRequestStarted = true
+		if state.CurrentPlanSHA256 == operationAttemptPlanBindingSHA256(attempt.Binding) {
+			state.CurrentPlanEverRequestStarted = true
+		}
 		return nil
 	})
 }
@@ -273,6 +283,9 @@ func (store *OperationAttemptStore) RecordRequestStartedWithoutObservation(claim
 		attempt.FinishedAt = now
 		attempt.ReceiptSHA256 = receiptSHA
 		state.EverRequestStarted = true
+		if state.CurrentPlanSHA256 == operationAttemptPlanBindingSHA256(attempt.Binding) {
+			state.CurrentPlanEverRequestStarted = true
+		}
 		return nil
 	})
 }
@@ -497,7 +510,8 @@ func operationReadModelAttemptFromState(state operationAttemptState) (OperationR
 		SourceID: state.SourceID, OperationID: state.OperationID, AttemptState: latest.State, ObservationAttemptState: "none",
 		LatestPlanBinding: latest.Binding,
 		ReceiptValidated:  latest.ReceiptValidated, RequestStarted: cloneBool(latest.RequestStarted),
-		EverRequestStarted: operationAttemptStateEverStartedForPlan(state, latest.Binding), GatusDeliveryState: "not_ready", UpdatedAt: latest.StartedAt,
+		EverRequestStarted: state.CurrentPlanSHA256 == operationAttemptPlanBindingSHA256(latest.Binding) && state.CurrentPlanEverRequestStarted,
+		GatusDeliveryState: "not_ready", UpdatedAt: latest.StartedAt,
 	}
 	projection.UpdatedAt = laterOperationAttemptTime(projection.UpdatedAt, latest.FinishedAt)
 	for index := len(state.Attempts) - 1; index >= 0; index-- {
@@ -532,19 +546,20 @@ func operationReadModelAttemptFromState(state operationAttemptState) (OperationR
 	return projection, validOperationReadModelAttempt(projection)
 }
 
-func operationAttemptStateEverStartedForPlan(state operationAttemptState, latestBinding OperationAttemptBinding) bool {
-	for _, attempt := range state.Attempts {
-		if attempt.RequestStarted != nil && *attempt.RequestStarted && sameOperationAttemptPlanBinding(attempt.Binding, latestBinding) {
-			return true
-		}
-	}
-	return false
-}
-
-func sameOperationAttemptPlanBinding(left, right OperationAttemptBinding) bool {
-	return left.SourceID == right.SourceID && left.OperationID == right.OperationID &&
-		left.RegistryRevision == right.RegistryRevision && left.ReleaseManifestSHA == right.ReleaseManifestSHA &&
-		left.IndexSHA == right.IndexSHA && left.ShardSHA == right.ShardSHA && left.ObservationPeriod == right.ObservationPeriod
+func operationAttemptPlanBindingSHA256(binding OperationAttemptBinding) string {
+	identity := struct {
+		SchemaVersion      string        `json:"schema_version"`
+		SourceID           string        `json:"source_id"`
+		OperationID        string        `json:"operation_id"`
+		RegistryRevision   string        `json:"registry_revision"`
+		ReleaseManifestSHA string        `json:"release_manifest_sha256"`
+		IndexSHA           string        `json:"index_sha256"`
+		ShardSHA           string        `json:"shard_sha256"`
+		ObservationPeriod  time.Duration `json:"observation_period_ns"`
+	}{"datapan.health-operation-plan-binding.v1", binding.SourceID, binding.OperationID, binding.RegistryRevision, binding.ReleaseManifestSHA, binding.IndexSHA, binding.ShardSHA, binding.ObservationPeriod}
+	raw, _ := json.Marshal(identity)
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
 
 func laterOperationAttemptTime(current time.Time, candidates ...time.Time) time.Time {
@@ -701,6 +716,13 @@ func validOperationAttemptState(state operationAttemptState, sourceID, operation
 	if state.SchemaVersion != OperationAttemptStoreSchemaVersion || state.SourceID != sourceID || state.OperationID != operationID || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 || state.Generation == 0 || len(state.Attempts) == 0 || len(state.Attempts) > maxOperationAttemptHistory {
 		return false
 	}
+	latest := state.Attempts[len(state.Attempts)-1]
+	if !sha256Pattern.MatchString(state.CurrentPlanSHA256) || state.CurrentPlanSHA256 != operationAttemptPlanBindingSHA256(latest.Binding) || state.CurrentPlanEverRequestStarted && !state.EverRequestStarted {
+		return false
+	}
+	if latest.RequestStarted != nil && *latest.RequestStarted && !state.CurrentPlanEverRequestStarted {
+		return false
+	}
 	var previousGeneration uint64
 	for _, attempt := range state.Attempts {
 		if !validOperationAttemptBinding(attempt.Binding) || attempt.Binding.SourceID != sourceID || attempt.Binding.OperationID != operationID || !quotaAttemptIDPattern.MatchString(attempt.AttemptID) || attempt.Generation <= previousGeneration || attempt.Generation > state.Generation || attempt.StartedAt.IsZero() || attempt.LeaseExpiresAt.Before(attempt.StartedAt) || attempt.LeaseExpiresAt.Sub(attempt.StartedAt) > maxOperationAttemptLease || !validOperationAttemptStateName(attempt.State) || !validOperationDeliveryState(attempt.DeliveryState) || attempt.DeliveryAttempts < 0 || attempt.DeliveryAttempts > 1_000_000 {
@@ -754,7 +776,7 @@ func validOperationAttemptState(state operationAttemptState, sourceID, operation
 			return false
 		}
 	}
-	return state.Attempts[len(state.Attempts)-1].Generation <= state.Generation
+	return latest.Generation <= state.Generation
 }
 
 func validOperationAttemptStateName(value string) bool {
