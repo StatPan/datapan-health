@@ -123,6 +123,35 @@ func TestPublicRegistryOperationsRouteFailsClosedAndPreservesV1(t *testing.T) {
 	}
 }
 
+func TestPublicRegistryOperationsMapsInvalidOpaqueCursorToBadRequest(t *testing.T) {
+	metadata := testRegistryAPIMetadata(t)
+	for _, test := range []struct {
+		name      string
+		sourceErr error
+		want      int
+	}{
+		{name: "invalid cursor", sourceErr: ErrOperationReadModelQuery, want: http.StatusBadRequest},
+		{name: "unavailable read model", sourceErr: ErrOperationReadModelUnavailable, want: http.StatusServiceUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			operations := staticPublicRegistryOperations{err: test.sourceErr}
+			handler, err := NewPublicStatusHandlerWithRegistryOperations(
+				staticPublicSource{document: testPublicDocument(t)},
+				[]string{"https://datapan.statpan.com"}, metadata, nil, operations,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodGet, "/datapan/v2/operations?cursor=YWJj", nil)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != test.want || strings.Contains(recorder.Body.String(), "YWJj") {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
 func TestPublicRegistryOperationsRouteUsesBoundedModelAndSameCORS(t *testing.T) {
 	root, binding, _ := writeSyntheticOperationObservationPlan(t, false)
 	plan, err := LoadPinnedOperationObservationPlan(root, binding)

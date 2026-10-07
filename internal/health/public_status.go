@@ -802,7 +802,11 @@ func (h *PublicStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if err != nil {
-		writePublicError(w, http.StatusServiceUnavailable)
+		if operationPageRoute && errors.Is(err, ErrOperationReadModelQuery) {
+			writePublicError(w, http.StatusBadRequest)
+		} else {
+			writePublicError(w, http.StatusServiceUnavailable)
+		}
 		return
 	}
 	data = append(data, '\n')
