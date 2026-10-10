@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -41,27 +42,36 @@ func (f HealthSelfReadinessSourceFunc) Snapshot(ctx context.Context) (HealthSelf
 }
 
 type schedulerReadinessDocument struct {
-	SchemaVersion      string           `json:"schema_version"`
-	Ready              bool             `json:"ready"`
-	State              string           `json:"state"`
-	Reason             string           `json:"reason"`
-	LastLoop           *time.Time       `json:"last_loop,omitempty"`
-	StateFailures      uint64           `json:"state_failures"`
-	Canaries           []CanaryProgress `json:"canaries"`
-	PublicReadback     string           `json:"public_readback"`
-	DeploymentIdentity string           `json:"deployment_identity"`
+	SchemaVersion      string                            `json:"schema_version"`
+	Ready              bool                              `json:"ready"`
+	State              string                            `json:"state"`
+	Reason             string                            `json:"reason"`
+	LastLoop           *time.Time                        `json:"last_loop,omitempty"`
+	StateFailures      uint64                            `json:"state_failures"`
+	Canaries           []CanaryProgress                  `json:"canaries"`
+	OperationPlan      *OperationPlanReadinessProjection `json:"operation_plan,omitempty"`
+	PublicReadback     string                            `json:"public_readback"`
+	DeploymentIdentity string                            `json:"deployment_identity"`
 }
 
 type SchedulerHealthSelfReadinessSource struct {
-	endpoint string
-	client   *http.Client
-	canaries map[string]Canary
-	now      func() time.Time
+	endpoint      string
+	client        *http.Client
+	canaries      map[string]Canary
+	operationPlan *OperationPlanReadinessBinding
+	now           func() time.Time
 }
 
 func NewSchedulerHealthSelfReadinessSource(rawURL string, canaries CanaryConfig, timeout time.Duration) (*SchedulerHealthSelfReadinessSource, error) {
+	return NewSchedulerHealthSelfReadinessSourceWithOperationPlanBinding(rawURL, canaries, timeout, nil)
+}
+
+func NewSchedulerHealthSelfReadinessSourceWithOperationPlanBinding(rawURL string, canaries CanaryConfig, timeout time.Duration, binding *OperationPlanReadinessBinding) (*SchedulerHealthSelfReadinessSource, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.Path != "/status" || parsed.RawPath != "" || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.RawFragment != "" || !validSchedulerReadinessHost(parsed) || len(canaries.Canaries) == 0 || len(canaries.Canaries) > 100 || timeout <= 0 || timeout > 5*time.Second {
+		return nil, errors.New("invalid Health self-readiness source")
+	}
+	if binding != nil && validateOperationPlanReadinessBinding(binding, canaries) != nil {
 		return nil, errors.New("invalid Health self-readiness source")
 	}
 	canaryMap := make(map[string]Canary, len(canaries.Canaries))
@@ -74,7 +84,7 @@ func NewSchedulerHealthSelfReadinessSource(rawURL string, canaries CanaryConfig,
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	client := &http.Client{Timeout: timeout, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return &SchedulerHealthSelfReadinessSource{endpoint: parsed.String(), client: client, canaries: canaryMap, now: time.Now}, nil
+	return &SchedulerHealthSelfReadinessSource{endpoint: parsed.String(), client: client, canaries: canaryMap, operationPlan: binding, now: time.Now}, nil
 }
 
 func validSchedulerReadinessHost(parsed *url.URL) bool {
@@ -117,12 +127,31 @@ func (s *SchedulerHealthSelfReadinessSource) Snapshot(ctx context.Context) (Heal
 	var validUntil *time.Time
 	if report.Ready {
 		validUntil = readinessValidUntil(report, s.canaries)
+		if report.OperationPlan != nil && report.OperationPlan.EvidenceValidUntil != nil && (validUntil == nil || report.OperationPlan.EvidenceValidUntil.Before(*validUntil)) {
+			value := report.OperationPlan.EvidenceValidUntil.UTC()
+			validUntil = &value
+		}
 	}
 	return HealthSelfReadiness{Ready: report.Ready, State: report.State, Reason: report.Reason, LastLoop: lastLoop, ValidUntil: validUntil}, nil
 }
 
 func (s *SchedulerHealthSelfReadinessSource) validReport(report schedulerReadinessDocument, statusCode int) bool {
-	if report.SchemaVersion != "datapan.health-self-readiness.v1" || len(report.Canaries) != len(s.canaries) || report.PublicReadback != "not_checked" || report.DeploymentIdentity != "not_checked" || !validSchedulerReadinessReason(report.Reason) || (report.Ready && (report.State != "ready" || report.Reason != "pipeline_current" || statusCode != http.StatusOK || report.LastLoop == nil)) || (!report.Ready && (report.State == "ready" || statusCode != http.StatusServiceUnavailable)) {
+	now := s.now().UTC()
+	if report.SchemaVersion != "datapan.health-self-readiness.v1" || report.PublicReadback != "not_checked" || report.DeploymentIdentity != "not_checked" || !validSchedulerReadinessReason(report.Reason) || (report.Ready && (report.State != "ready" || report.Reason != "pipeline_current" || statusCode != http.StatusOK || report.LastLoop == nil)) || (!report.Ready && (report.State == "ready" || statusCode != http.StatusServiceUnavailable)) {
+		return false
+	}
+	expectedLegacy := len(s.canaries)
+	if s.operationPlan == nil {
+		if report.OperationPlan != nil {
+			return false
+		}
+	} else {
+		if !validOperationPlanReadinessProjection(report.OperationPlan, s.operationPlan, now) || report.Ready && !report.OperationPlan.Ready {
+			return false
+		}
+		expectedLegacy -= len(s.operationPlan.suppressed)
+	}
+	if expectedLegacy < 0 || len(report.Canaries) != expectedLegacy {
 		return false
 	}
 	if !report.Ready && ((report.State == "startup" && report.Reason != "awaiting_first_delivery" && report.Reason != "awaiting_first_loop") || (report.State == "degraded" && (report.Reason == "pipeline_current" || report.Reason == "delivered" || report.Reason == "awaiting_first_delivery" || report.Reason == "awaiting_first_loop"))) {
@@ -130,10 +159,9 @@ func (s *SchedulerHealthSelfReadinessSource) validReport(report schedulerReadine
 	}
 	seen := make(map[string]bool, len(report.Canaries))
 	allReady := true
-	now := s.now().UTC()
 	for _, canary := range report.Canaries {
 		configured, configuredOK := s.canaries[canary.OperationID]
-		if !configuredOK || seen[canary.OperationID] || canary.State == "" || !validSchedulerReadinessReason(canary.Reason) || !validCanaryProgressTimes(canary, now) {
+		if !configuredOK || s.isSuppressedCanary(canary.OperationID) || seen[canary.OperationID] || canary.State == "" || !validSchedulerReadinessReason(canary.Reason) || !validCanaryProgressTimes(canary, now) {
 			return false
 		}
 		seen[canary.OperationID] = true
@@ -158,7 +186,7 @@ func (s *SchedulerHealthSelfReadinessSource) validReport(report schedulerReadine
 			allReady = false
 		}
 	}
-	if len(seen) != len(s.canaries) || (report.Ready && !allReady) {
+	if len(seen) != expectedLegacy || (report.Ready && !allReady) {
 		return false
 	}
 	if report.LastLoop != nil && report.LastLoop.After(now.Add(receiptClockSkew)) {
@@ -168,6 +196,49 @@ func (s *SchedulerHealthSelfReadinessSource) validReport(report schedulerReadine
 		return false
 	}
 	return true
+}
+
+func (s *SchedulerHealthSelfReadinessSource) isSuppressedCanary(operationID string) bool {
+	if s.operationPlan == nil {
+		return false
+	}
+	index := sort.SearchStrings(s.operationPlan.suppressed, operationID)
+	return index < len(s.operationPlan.suppressed) && s.operationPlan.suppressed[index] == operationID
+}
+
+func validOperationPlanReadinessProjection(projection *OperationPlanReadinessProjection, binding *OperationPlanReadinessBinding, now time.Time) bool {
+	if projection == nil || binding == nil || projection.SchemaVersion != "datapan.health-operation-plan-readiness.v1" ||
+		projection.RegistryRevision != binding.registryRevision || projection.ReleaseManifestSHA256 != binding.releaseManifestSHA256 ||
+		projection.IndexSHA256 != binding.indexSHA256 || projection.ActivationSHA256 != binding.activationSHA256 ||
+		projection.CanaryConfigSHA256 != binding.canaryConfigSHA256 || projection.IdentityMappingSHA256 != binding.identityMappingSHA256 ||
+		projection.RuntimePinSHA256 != binding.runtimePinSHA256 ||
+		projection.KnownOperations != binding.knownOperations || projection.AdmittedOperations != binding.admitted ||
+		!equalOperationPlanIdentityLists(projection.SuppressedLegacyCanaries, binding.suppressed) ||
+		projection.EvidenceCheckedOperations < 0 || projection.EvidenceCheckedOperations > binding.admitted ||
+		projection.EvidenceCurrentOperations < 0 || projection.EvidenceCurrentOperations > projection.EvidenceCheckedOperations ||
+		projection.EvidenceMissingOperations < 0 || projection.EvidenceMissingOperations > binding.admitted {
+		return false
+	}
+	if binding.admitted == 0 && projection.Ready {
+		return false
+	}
+	for _, value := range []*time.Time{projection.LastPassAt, projection.EvidenceSweepAt} {
+		if value != nil && (value.IsZero() || value.After(now.Add(receiptClockSkew))) {
+			return false
+		}
+	}
+	if projection.EvidenceValidUntil != nil && projection.EvidenceValidUntil.IsZero() {
+		return false
+	}
+	if !projection.Ready {
+		return true
+	}
+	return projection.CapacityFeasible && projection.EvidenceCheckedOperations == binding.admitted &&
+		projection.EvidenceCurrentOperations == binding.admitted && projection.EvidenceMissingOperations == 0 &&
+		projection.LastPassAt != nil && !now.Before(*projection.LastPassAt) && now.Sub(*projection.LastPassAt) <= 3*time.Second &&
+		projection.EvidenceSweepAt != nil && !projection.EvidenceSweepAt.After(projection.LastPassAt.Add(receiptClockSkew)) &&
+		projection.EvidenceValidUntil != nil && now.Before(*projection.EvidenceValidUntil) &&
+		!projection.EvidenceValidUntil.Before(*projection.EvidenceSweepAt)
 }
 
 func validSchedulerReadinessReason(reason string) bool {

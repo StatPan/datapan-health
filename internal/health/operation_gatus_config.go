@@ -163,7 +163,7 @@ func DecodeOperationGatusActivation(raw []byte, plan PinnedOperationObservationP
 // endpoints in Gatus: all generated entries are native external endpoints
 // that accept Health's single-result deliveries.
 func GenerateOperationGatusArtifacts(baseConfig []byte, canaryConfigSHA256 string, canaries CanaryConfig, metadata VerifiedRegistryAPIMetadata, plan *PinnedOperationObservationPlan, activation *OperationGatusActivation, activationSHA256 string) (OperationGatusArtifacts, error) {
-	if len(baseConfig) == 0 || len(baseConfig) > maxOperationGatusConfigBytes || !sha256Pattern.MatchString(canaryConfigSHA256) || !verifiedGatusMetadata(metadata, canaries) {
+	if len(baseConfig) == 0 || len(baseConfig) > maxOperationGatusConfigBytes || !gatusBaseHasExecutionTarget(baseConfig) || !sha256Pattern.MatchString(canaryConfigSHA256) || !verifiedGatusMetadata(metadata, canaries) {
 		return OperationGatusArtifacts{}, errOperationGatusConfiguration
 	}
 	baseSHA := digestOperationGatusBytes(baseConfig)
@@ -360,6 +360,33 @@ func GenerateOperationGatusArtifacts(baseConfig []byte, canaryConfigSHA256 strin
 	}
 	pinBytes = append(pinBytes, '\n')
 	return OperationGatusArtifacts{Config: generatedConfig, Mapping: mapBytes, RuntimePin: pinBytes, ConfigSHA256: configSHA, MappingSHA256: mappingSHA, RuntimePinSHA256: digestOperationGatusBytes(pinBytes), LegacySuppressedHealthIDs: mapDoc.LegacySuppressedHealthIDs}, nil
+}
+
+func gatusBaseHasExecutionTarget(baseConfig []byte) bool {
+	// Pinned Gatus rejects a configuration that contains only external
+	// receiver declarations. They accept Health deliveries but are not checks.
+	section := ""
+	for _, line := range strings.Split(string(baseConfig), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if line[0] != ' ' && line[0] != '\t' {
+			key, _, ok := strings.Cut(trimmed, ":")
+			section = ""
+			if ok && (key == "endpoints" || key == "suites") {
+				section = key
+			}
+			continue
+		}
+		if section == "endpoints" && strings.HasPrefix(trimmed, "- ") {
+			return true
+		}
+		if section == "suites" && (strings.HasPrefix(trimmed, "- ") || strings.HasSuffix(trimmed, ":")) {
+			return true
+		}
+	}
+	return false
 }
 
 func registerOperationGatusKey(identityByKey map[string]string, gatusKey, identityKey string) bool {

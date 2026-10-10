@@ -39,7 +39,13 @@ type OperationPlanSchedulerStatus struct {
 	Ready                           bool      `json:"ready"`
 	Reason                          string    `json:"reason,omitempty"`
 	RegistryRevision                string    `json:"registry_revision,omitempty"`
+	ReleaseManifestSHA256           string    `json:"release_manifest_sha256,omitempty"`
 	IndexSHA256                     string    `json:"index_sha256,omitempty"`
+	ActivationSHA256                string    `json:"activation_sha256,omitempty"`
+	CanaryConfigSHA256              string    `json:"canary_config_sha256,omitempty"`
+	IdentityMappingSHA256           string    `json:"identity_mapping_sha256,omitempty"`
+	RuntimePinSHA256                string    `json:"runtime_pin_sha256,omitempty"`
+	SuppressedLegacyCanaries        []string  `json:"suppressed_legacy_canaries,omitempty"`
 	KnownOperations                 int       `json:"known_operations"`
 	AdmittedOperations              int       `json:"admitted_operations"`
 	ActiveWork                      int       `json:"active_work"`
@@ -142,10 +148,13 @@ type OperationPlanScheduler struct {
 }
 
 func NewOperationPlanScheduler(config OperationPlanSchedulerConfig) (*OperationPlanScheduler, error) {
-	if config.Worker == nil || !validVerifiedOperationPlanRuntime(config.Worker.runtime) || config.MaxConcurrent < 1 || config.MaxConcurrent > operationPlanSchedulerMaximumConcurrency || config.MaxStartsPerPass < 1 || config.MaxStartsPerPass > config.MaxConcurrent || config.MaxDeliveriesPerPass < 1 || config.MaxDeliveriesPerPass > config.MaxConcurrent || config.CandidateScanPerPass < 1 || config.CandidateScanPerPass > operationPlanSchedulerMaximumScanBudget || config.DeliveryLease < time.Second || config.DeliveryLease > maxOperationAttemptLease {
+	if config.Worker == nil || !config.Worker.validRuntimeSnapshot() || config.MaxConcurrent < 1 || config.MaxConcurrent > operationPlanSchedulerMaximumConcurrency || config.MaxStartsPerPass < 1 || config.MaxStartsPerPass > config.MaxConcurrent || config.MaxDeliveriesPerPass < 1 || config.MaxDeliveriesPerPass > config.MaxConcurrent || config.CandidateScanPerPass < 1 || config.CandidateScanPerPass > operationPlanSchedulerMaximumScanBudget || config.DeliveryLease < time.Second || config.DeliveryLease > maxOperationAttemptLease {
 		return nil, errOperationPlanSchedulerUnavailable
 	}
-	targets := append([]OperationPlanWorkerTarget(nil), config.Worker.runtime.ActiveTargets...)
+	targets := make([]OperationPlanWorkerTarget, 0, len(config.Worker.targets))
+	for _, target := range config.Worker.targets {
+		targets = append(targets, cloneOperationPlanWorkerTarget(target))
+	}
 	sort.Slice(targets, func(i, j int) bool {
 		if targets[i].Record.SourceID != targets[j].Record.SourceID {
 			return targets[i].Record.SourceID < targets[j].Record.SourceID
@@ -596,14 +605,21 @@ func (scheduler *OperationPlanScheduler) latchIdentityErrorLocked(identityKey, r
 
 func (scheduler *OperationPlanScheduler) Status(at time.Time) OperationPlanSchedulerStatus {
 	status := OperationPlanSchedulerStatus{SchemaVersion: "datapan.health-operation-plan-scheduler-status.v1", State: "unavailable"}
-	if scheduler == nil || !validVerifiedOperationPlanRuntime(scheduler.worker.runtime) {
+	if scheduler == nil || scheduler.worker == nil || !scheduler.worker.validRuntimeSnapshot() {
 		status.Reason = "plan_runtime_unavailable"
 		return status
 	}
-	status.RegistryRevision = scheduler.worker.runtime.Plan.RegistryRevision()
-	status.IndexSHA256 = scheduler.worker.runtime.Plan.IndexSHA256()
-	status.KnownOperations = scheduler.worker.runtime.Plan.Counts().KnownOperations
-	status.AdmittedOperations = len(scheduler.targets)
+	identity := scheduler.worker.runtimeIdentity
+	status.RegistryRevision = identity.registryRevision
+	status.ReleaseManifestSHA256 = identity.releaseManifestSHA256
+	status.IndexSHA256 = identity.indexSHA256
+	status.ActivationSHA256 = identity.activationSHA256
+	status.CanaryConfigSHA256 = identity.canaryConfigSHA256
+	status.IdentityMappingSHA256 = identity.identityMappingSHA256
+	status.RuntimePinSHA256 = identity.runtimePinSHA256
+	status.SuppressedLegacyCanaries = append([]string(nil), identity.suppressedLegacy...)
+	status.KnownOperations = identity.knownOperations
+	status.AdmittedOperations = identity.admittedOperations
 	status.MaxConcurrent = scheduler.maxConcurrent
 	status.MaxStartsPerSecond = scheduler.maxStarts
 	status.CandidateScanPerSecond = scheduler.scanBudget

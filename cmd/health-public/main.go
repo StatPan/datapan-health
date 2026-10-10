@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -87,7 +88,11 @@ func main() {
 	if err != nil {
 		fatalAt(startupStagePublicStatusCache)
 	}
-	readinessSource, err := health.NewSchedulerHealthSelfReadinessSource(*selfReadinessURL, canaries, time.Second)
+	operationPlanBinding, err := operationPlanSelfReadinessBinding(*canaryPath, *registryMetadataPath, *registryMetadataPinPath, *operationPlanRoot, *operationPlanPinPath)
+	if err != nil {
+		fatalAt(startupStageSelfReadiness)
+	}
+	readinessSource, err := health.NewSchedulerHealthSelfReadinessSourceWithOperationPlanBinding(*selfReadinessURL, canaries, time.Second, operationPlanBinding)
 	if err != nil {
 		fatalAt(startupStageSelfReadiness)
 	}
@@ -230,4 +235,77 @@ func operationReadModelConfiguration(planRoot, planPinPath, attemptStorePath str
 		return false, true
 	}
 	return true, configuredCount == len(values)
+}
+
+func operationPlanSelfReadinessBinding(canaryPath, metadataPath, metadataPinPath, planRoot, planPinPath string) (*health.OperationPlanReadinessBinding, error) {
+	activationPath := strings.TrimSpace(os.Getenv("HEALTH_OPERATION_GATUS_ACTIVATION"))
+	activationSHA := strings.TrimSpace(os.Getenv("HEALTH_OPERATION_GATUS_ACTIVATION_SHA256"))
+	if activationPath == "" && activationSHA == "" {
+		return nil, nil
+	}
+	if activationPath == "" || activationSHA == "" {
+		return nil, fmt.Errorf("operation-plan activation pin is incomplete")
+	}
+	absolute := func(value string) (string, error) {
+		if strings.TrimSpace(value) == "" {
+			return "", fmt.Errorf("operation-plan runtime path is empty")
+		}
+		return filepath.Abs(value)
+	}
+	planRoot, err := absolute(planRoot)
+	if err != nil {
+		return nil, err
+	}
+	planPinPath, err = absolute(planPinPath)
+	if err != nil {
+		return nil, err
+	}
+	canaryPath, err = absolute(canaryPath)
+	if err != nil {
+		return nil, err
+	}
+	metadataPath, err = absolute(metadataPath)
+	if err != nil {
+		return nil, err
+	}
+	metadataPinPath, err = absolute(metadataPinPath)
+	if err != nil {
+		return nil, err
+	}
+	baseGatusPath, err := absolute(env("HEALTH_GATUS_BASE_CONFIG", "config/gatus.yaml"))
+	if err != nil {
+		return nil, err
+	}
+	generatedConfigPath, err := absolute(os.Getenv("HEALTH_GATUS_GENERATED_CONFIG"))
+	if err != nil {
+		return nil, err
+	}
+	identityMappingPath, err := absolute(os.Getenv("HEALTH_GATUS_IDENTITY_MAPPING"))
+	if err != nil {
+		return nil, err
+	}
+	runtimePinPath, err := absolute(os.Getenv("HEALTH_GATUS_RUNTIME_PIN"))
+	if err != nil {
+		return nil, err
+	}
+	activationPath, err = absolute(activationPath)
+	if err != nil {
+		return nil, err
+	}
+	paths := health.OperationPlanRuntimePaths{
+		PlanRoot: planRoot, PlanPinPath: planPinPath, CanaryConfigPath: canaryPath,
+		RegistryMetadataPath: metadataPath, RegistryMetadataPin: metadataPinPath,
+		BaseGatusConfigPath: baseGatusPath, GeneratedConfigPath: generatedConfigPath,
+		IdentityMappingPath: identityMappingPath, RuntimePinPath: runtimePinPath,
+		ActivationPath: activationPath, ActivationSHA256: activationSHA,
+	}
+	verified, err := health.LoadVerifiedOperationPlanRuntime(paths)
+	if err != nil {
+		return nil, fmt.Errorf("verified operation-plan runtime is unavailable")
+	}
+	binding, err := health.NewOperationPlanReadinessBinding(verified)
+	if err != nil {
+		return nil, fmt.Errorf("verified operation-plan readiness binding is unavailable")
+	}
+	return binding, nil
 }

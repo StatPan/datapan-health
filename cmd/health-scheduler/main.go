@@ -285,6 +285,7 @@ func canonicalSchedulerReadiness(readiness func(time.Time) health.SchedulerReadi
 	if operationPlanStatus != nil {
 		status := operationPlanStatus(now)
 		plan = &status
+		report.OperationPlan = health.OperationPlanReadinessProjectionFromStatus(status)
 		if status.State != "disabled" && !status.Ready {
 			report.Ready = false
 			report.State = "degraded"

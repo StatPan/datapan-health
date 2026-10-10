@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -14,7 +15,7 @@ import (
 )
 
 func TestOperationPlanSchedulerRunsOneBoundedLocalAttemptThenIndependentDelivery(t *testing.T) {
-	worker, attempts, history, gatus, target := newOperationPlanSchedulerTestWorker(t)
+	worker, attempts, history, gatus, target, _ := newOperationPlanSchedulerTestWorker(t)
 	scheduler, err := NewOperationPlanScheduler(OperationPlanSchedulerConfig{
 		Worker: worker, MaxConcurrent: 1, MaxStartsPerPass: 1, MaxDeliveriesPerPass: 1,
 		CandidateScanPerPass: 2, DeliveryLease: time.Minute,
@@ -58,6 +59,82 @@ func TestOperationPlanSchedulerRunsOneBoundedLocalAttemptThenIndependentDelivery
 	scheduler.recordFailure(time.Now().UTC(), "delivery_unavailable")
 	if status := scheduler.Status(time.Now().UTC().Add(40 * time.Second)); status.Ready || status.LastErrorReason != "delivery_unavailable" {
 		t.Fatalf("unresolved pipeline error expired into false readiness: %#v", status)
+	}
+}
+
+func TestOperationPlanWorkerOwnsAnImmutableVerifiedRuntimeSnapshot(t *testing.T) {
+	worker, attempts, _, _, target, inputRuntime := newOperationPlanSchedulerTestWorker(t)
+	inputRuntime.ActiveTargets[0].Record.OperationID += "-mutated"
+	inputRuntime.ActiveTargets[0].Record.QuotaPolicies[0].ScopeSHA256 = strings.Repeat("a", 64)
+	inputRuntime.Plan.state.root = filepath.Join(t.TempDir(), "missing-plan-root")
+	inputRuntime.Plan.state.manifest = nil
+	inputRuntime.IdentityMapping.Operations[0].RegistryOperationID += "-mutated"
+	inputRuntime.Artifacts.Mapping[0] ^= 1
+	inputRuntime.Canaries.Canaries[0].OperationID += "-mutated"
+	inputRuntime.SuppressedLegacy = append(inputRuntime.SuppressedLegacy, "dpr-op-99999999")
+	if validVerifiedOperationPlanRuntime(inputRuntime) {
+		t.Fatal("constructor input tampering was not detected by the full seal")
+	}
+	if !worker.validRuntimeSnapshot() {
+		t.Fatal("post-construction mutation of caller-owned runtime changed the worker snapshot")
+	}
+
+	scheduler, err := NewOperationPlanScheduler(OperationPlanSchedulerConfig{
+		Worker: worker, MaxConcurrent: 1, MaxStartsPerPass: 1, MaxDeliveriesPerPass: 1,
+		CandidateScanPerPass: 2, DeliveryLease: time.Minute,
+	})
+	if err != nil {
+		t.Fatal("caller-owned runtime mutation changed scheduler construction:", err)
+	}
+	now := time.Now().UTC()
+	if err := scheduler.ProcessDue(context.Background(), now); err != nil {
+		t.Fatal("snapshot plan could not execute after caller mutation:", err)
+	}
+	scheduler.Wait()
+	latest, found, err := attempts.Latest(target.Record.SourceID, target.Record.OperationID)
+	if err != nil || !found || latest.State != "observed" || latest.Binding.OperationID != target.Record.OperationID {
+		t.Fatalf("scheduler followed caller-mutated runtime instead of its verified snapshot: latest=%#v found=%t err=%v", latest, found, err)
+	}
+}
+
+func BenchmarkOperationPlanSchedulerStatusPopulation(b *testing.B) {
+	for _, population := range []int{1, 12666} {
+		b.Run(fmt.Sprintf("admitted=%d", population), func(b *testing.B) {
+			scheduler := operationPlanStatusBenchmarkScheduler(population)
+			now := time.Now().UTC()
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_ = scheduler.Status(now)
+			}
+		})
+	}
+}
+
+func operationPlanStatusBenchmarkScheduler(population int) *OperationPlanScheduler {
+	digest := strings.Repeat("a", 64)
+	plan := PinnedOperationObservationPlan{
+		binding: OperationObservationPlanBinding{ReleaseManifestSHA256: digest, IndexSHA256: digest},
+		state: &operationPlanIndexState{
+			verified: true,
+			index:    operationObservationPlanIndex{RegistryRevision: strings.Repeat("b", 40), Summary: OperationObservationPlanCounts{KnownOperations: population}},
+		},
+	}
+	runtime := &VerifiedOperationPlanRuntime{
+		Plan: plan, verified: true, verificationSeal: digest,
+		IdentityMapping: OperationGatusIdentityMapping{
+			ReleaseManifestSHA256: digest, ActivationSHA256: digest, CanaryConfigSHA256: digest,
+		},
+		Artifacts:     OperationGatusArtifacts{MappingSHA256: digest, RuntimePinSHA256: digest},
+		ActiveTargets: make([]OperationPlanWorkerTarget, population),
+	}
+	worker := &OperationPlanWorker{runtime: runtime}
+	worker.runtimeIdentity = operationPlanWorkerRuntimeIdentityFromRuntime(runtime)
+	worker.runtimeIdentitySeal = operationPlanWorkerRuntimeIdentitySeal(worker.runtimeIdentity)
+	return &OperationPlanScheduler{
+		worker: worker, targets: make([]OperationPlanWorkerTarget, population),
+		maxConcurrent: 32, maxStarts: 32, scanBudget: operationPlanSchedulerMaximumScanBudget,
+		capacity: operationPlanCapacityAssessment{Feasible: true}, active: make(map[string]string),
 	}
 }
 
@@ -110,7 +187,7 @@ func TestOperationPlanDeliveryEvidenceTreatsProviderFailureAndObservationOnlyAsP
 }
 
 func TestOperationPlanReadinessKeepsFreshEvidenceDuringClaimAndRejectsFutureOrStaleProof(t *testing.T) {
-	worker, attempts, _, _, target := newOperationPlanSchedulerTestWorker(t)
+	worker, attempts, _, _, target, _ := newOperationPlanSchedulerTestWorker(t)
 	scheduler, err := NewOperationPlanScheduler(OperationPlanSchedulerConfig{
 		Worker: worker, MaxConcurrent: 1, MaxStartsPerPass: 1, MaxDeliveriesPerPass: 1,
 		CandidateScanPerPass: 2, DeliveryLease: time.Minute,
@@ -212,7 +289,7 @@ func TestOperationPlanReadinessKeepsFreshEvidenceDuringClaimAndRejectsFutureOrSt
 }
 
 func TestOperationPlanSchedulerStoreLockCannotBlockControllerPassOrLaunchProvider(t *testing.T) {
-	worker, attempts, _, _, target := newOperationPlanSchedulerTestWorker(t)
+	worker, attempts, _, _, target, _ := newOperationPlanSchedulerTestWorker(t)
 	called := make(chan struct{}, 1)
 	worker.runner = schedulerCalledReceiptExecutor{called: called}
 	scheduler, err := NewOperationPlanScheduler(OperationPlanSchedulerConfig{
@@ -269,7 +346,7 @@ func TestOperationPlanSchedulerStoreLockCannotBlockControllerPassOrLaunchProvide
 }
 
 func TestOperationPlanSchedulerDoesNotStartProviderWorkWhenCapacityIsInfeasible(t *testing.T) {
-	worker, attempts, history, gatus, target := newOperationPlanSchedulerTestWorker(t)
+	worker, attempts, history, gatus, target, _ := newOperationPlanSchedulerTestWorker(t)
 	scheduler, err := NewOperationPlanScheduler(OperationPlanSchedulerConfig{
 		Worker: worker, MaxConcurrent: 1, MaxStartsPerPass: 1, MaxDeliveriesPerPass: 1,
 		CandidateScanPerPass: 2, DeliveryLease: time.Minute,
@@ -419,7 +496,7 @@ func (client *schedulerSyntheticGatus) Readback(ctx context.Context, key string,
 	return time.Now().UTC(), expected.State, nil
 }
 
-func newOperationPlanSchedulerTestWorker(t *testing.T) (*OperationPlanWorker, *OperationAttemptStore, *OperationHistoryStore, *schedulerSyntheticGatus, OperationPlanWorkerTarget) {
+func newOperationPlanSchedulerTestWorker(t *testing.T) (*OperationPlanWorker, *OperationAttemptStore, *OperationHistoryStore, *schedulerSyntheticGatus, OperationPlanWorkerTarget, *VerifiedOperationPlanRuntime) {
 	t.Helper()
 	planRoot, binding, sourceSHA, operationIDs := writeGatusPlanFixture(t)
 	plan, err := LoadPinnedOperationObservationPlan(planRoot, binding)
@@ -439,7 +516,7 @@ func newOperationPlanSchedulerTestWorker(t *testing.T) (*OperationPlanWorker, *O
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := []byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: placeholder\n")
+	base := []byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: placeholder\n")
 	canaryRaw := []byte("verified synthetic scheduler canary\n")
 	artifacts, err := GenerateOperationGatusArtifacts(base, digestOperationGatusBytes(canaryRaw), canaries, metadata, &plan, &activation, activationSHA)
 	if err != nil {
@@ -502,7 +579,7 @@ func newOperationPlanSchedulerTestWorker(t *testing.T) (*OperationPlanWorker, *O
 	}
 	client := &schedulerSyntheticGatus{}
 	worker.gatus = client
-	return worker, attempts, history, client, target
+	return worker, attempts, history, client, target, runtime
 }
 
 func bindingIndexPath(planRoot string, binding OperationObservationPlanBinding) string {

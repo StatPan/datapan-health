@@ -7,7 +7,9 @@ ten canaries. An activation without its SHA-256 pin, or any invalid artifact,
 leaves `/operation-plan/ready` unavailable and blocks scheduler dispatch until
 the inputs are corrected. Once the complete activation and its Gatus identity
 mapping verify, only exact activated overlaps with legacy canaries are removed
-from legacy dispatch.
+from legacy dispatch. The scheduler's canonical `/status` projection carries
+the exact transferred IDs and the operation-lane evidence expiry; it does not
+invent legacy delivery timestamps for transferred rows.
 
 The scheduler and Gatus must use the same immutable plan binding, activation,
 generated Gatus config, identity map, and runtime pin. Mount these inputs
@@ -29,6 +31,14 @@ responses.
 | `HEALTH_OPERATION_RECEIPT_DIRECTORY` | Private receipt staging directory |
 | `GATUS_URL`, `GATUS_TOKEN` | Gatus receiver and secret used by the independent keyed outbox |
 
+When the plan lane is active, `health-public` must receive the same read-only
+plan, activation, generated Gatus config, identity map, and runtime-pin inputs.
+It independently verifies that bundle, then accepts readiness only when the
+legacy canary rows and the exact activated-overlap IDs form a complete,
+disjoint partition of the pinned canary set. Transferred IDs require the
+plan's current full evidence sweep and expiry. Missing activation inputs leave
+public self-readiness unavailable instead of treating missing rows as healthy.
+
 Worker limits are explicit and bounded. `HEALTH_OPERATION_MAX_CONCURRENT` is
 1–32; `HEALTH_OPERATION_MAX_STARTS_PER_SECOND` and
 `HEALTH_OPERATION_MAX_DELIVERIES_PER_SECOND` cannot exceed that concurrency;
@@ -48,6 +58,12 @@ scheduler the matching generated config, `operation-identity-map.json`,
 pins. Keep the identity map and runtime pin private. Rebuild the scheduler
 image with `VCS_REF` set to its exact 40-character source commit so receipt
 history is sealed to the validating build.
+
+The base Gatus configuration must retain at least one ordinary endpoint or
+suite. Generated `external-endpoints` are receipt receivers and do not satisfy
+that startup requirement; the generator rejects a receiver-only base. Offline
+capacity fixtures use only a loopback Gatus health endpoint and contain no
+provider destinations.
 
 After controlled activation, check `/operation-plan/status` for the pinned
 Registry revision/index, admitted count, capacity assessment, recent controller
@@ -73,18 +89,22 @@ make operation-plan-gatus-integration
 make operation-plan-gatus-capacity
 ```
 
-The first command derives the complete registered operation population from
-the pinned metadata artifact and reconciles bounded scheduler dispatch using
-a test receipt executor, validated receipt history, durable attempts, exact
-generated Gatus-key bookkeeping, and bounded public paging. It does not run
-the released CLI or contact Gatus. The second starts the pinned Gatus
-container on loopback and verifies one synthetic receipt through the
-production Gatus push/readback adapter using the synthetic worker fixture. The
-third loads the complete manifest-derived mixed-source identity mapping into
-the exact pinned Gatus image, records generated config bytes, startup time, and
-container memory, then verifies a bounded spread of per-key receipts and
-readbacks. Its generated configuration has no provider destinations. Existing
-probe-runner tests separately verify the production child arguments,
-executable digest, private receipt path, and receipt validation. These are
-source-QA boundaries; they do not establish deployment or live-provider
-acceptance.
+The first command derives a synthetic scheduler/storage/read-model fixture:
+12,662 identities from the pinned Gov metadata plus four identities from an
+explicit partial-provider fixture. It reconciles bounded scheduler dispatch
+using a test receipt executor, validated receipt history, durable attempts,
+exact generated Gatus-key bookkeeping, and bounded public paging. This fixture
+does not claim to enumerate the entire known Registry population, run the
+released CLI, or contact Gatus. The second starts the pinned Gatus container
+on loopback and verifies one synthetic receipt through the production Gatus
+push/readback adapter using the synthetic worker fixture. The third loads the
+same generated fixture identity mapping into the exact pinned Gatus image,
+records generated config bytes, startup time, and container memory, then
+verifies a bounded spread of per-key receipts and readbacks. Its configuration
+does not contact provider destinations. The opt-in
+`TestOperationPlanActualCLIProviderGatusIntegration` target exercises the
+production child runner against an isolated synthetic provider and local
+pinned Gatus; its smoke and full modes are distinct from these source-QA
+fixtures. Existing probe-runner tests separately verify production child
+arguments, executable digest, private receipt path, and receipt validation.
+These tests do not establish deployment or live-provider acceptance.

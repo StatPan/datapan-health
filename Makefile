@@ -2,7 +2,7 @@ RUNTIME_IMAGE ?= datapan-health-runtime:test
 ARCHIVE_IMAGE ?= datapan-health-archive:test
 TESTED_REVISION ?= $(HEALTH_HEAD)
 
-.PHONY: test quality build images image-smoke release-oci release-governance-smoke release-provenance-smoke runtime-publication-contract smoke visual archive-smoke hf-publish-smoke governance-check security-reporting-check security-reporting-check-test diagnostic-compatibility diagnostic-provenance diagnostic-provenance-check assertion-policy-compatibility correlation-replay diagnosis-snapshot-evidence public-status-doctor manifest-verify schedule-coverage schedule-coverage-doctor operation-plan-full-population operation-plan-gatus-integration operation-plan-gatus-capacity
+.PHONY: test quality build images image-smoke release-oci release-governance-smoke release-provenance-smoke runtime-publication-contract smoke visual archive-smoke hf-publish-smoke governance-check security-reporting-check security-reporting-check-test diagnostic-compatibility diagnostic-provenance diagnostic-provenance-check assertion-policy-compatibility correlation-replay diagnosis-snapshot-evidence public-status-doctor manifest-verify schedule-coverage schedule-coverage-doctor operation-plan-full-population operation-plan-gatus-integration operation-plan-gatus-capacity operation-plan-actual-cli-smoke operation-plan-actual-cli-full
 
 test:
 	go test ./...
@@ -69,8 +69,9 @@ schedule-coverage:
 schedule-coverage-doctor: schedule-coverage
 	go run ./cmd/health-public -doctor -schedule-coverage-state out/schedule-coverage-state.json -schedule-coverage-reference-at 2026-07-23T00:00:00Z > out/schedule-coverage-doctor.json
 
-# Explicit source-QA target: derives its complete identity set from the pinned
-# Registry metadata and runs only local synthetic receipts, never providers.
+# Explicit synthetic source-QA fixture: 12,662 pinned Gov metadata identities
+# plus four explicit partial-provider fixture identities. This is not a claim
+# to enumerate the whole Registry population; it never contacts providers.
 # The 55-minute Go test bound contains a measured 45-minute controller budget;
 # virtual pass timestamps do not establish production scheduling cadence.
 operation-plan-full-population:
@@ -81,10 +82,19 @@ operation-plan-full-population:
 operation-plan-gatus-integration:
 	HEALTH_OPERATION_GATUS_INTEGRATION_TEST=1 go test ./internal/health -run '^TestOperationPlanPinnedGatusSyntheticReceiptIntegration$$' -count=1 -timeout=5m
 
-# Loads the complete manifest-derived identity mapping into pinned Gatus and
+# Loads the same generated fixture identity mapping into pinned Gatus and
 # verifies bounded exact-key push/readback samples without provider URLs.
 operation-plan-gatus-capacity:
 	HEALTH_OPERATION_GATUS_CAPACITY_TEST=1 go test ./internal/health -run '^TestOperationPlanPinnedGatusManifestCapacity$$' -count=1 -timeout=20m -v
+
+# Production child runner against an isolated local synthetic provider and
+# pinned Gatus. Smoke validates protocol fixtures; full runs the bounded
+# manifest-derived source-QA population. Neither mode contacts real providers.
+operation-plan-actual-cli-smoke:
+	HEALTH_OPERATION_ACTUAL_CLI_MODE=smoke go test ./internal/health -run '^TestOperationPlanActualCLIProviderGatusIntegration$$' -count=1 -timeout=15m -v
+
+operation-plan-actual-cli-full:
+	HEALTH_OPERATION_ACTUAL_CLI_MODE=full go test ./internal/health -run '^TestOperationPlanActualCLIProviderGatusIntegration$$' -count=1 -timeout=60m -v
 
 hf-publish-smoke:
 	./scripts/hf-publish-smoke.sh

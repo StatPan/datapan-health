@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -14,8 +15,8 @@ import (
 )
 
 var operationPlanAllowedCLISourceSHAs = map[string]struct{}{
-	"a6414063bb69495b00b752b3a6c35bb0b52e14d5": {}, // merged CLI release source
-	"c1806c8d3b1a8f1cd9674cc73ff57d1ceec38cb2": {}, // reviewed source tree with the same tree hash
+	"89d1164ac8c910e18e50fc1c3a3961977c4d4f2e": {}, // merged CLI source with reviewed observation-only identity binding
+	"752e995c1fc030e139cac90e3796e69884365383": {}, // reviewed source tree with the same tree hash
 }
 
 func operationPlanCLISourceAllowed(sourceSHA string) bool {
@@ -220,7 +221,14 @@ func operationPlanRuntimeStatus(runtime *health.VerifiedOperationPlanRuntime, re
 	}
 	if runtime != nil {
 		status.RegistryRevision = runtime.Plan.RegistryRevision()
+		status.ReleaseManifestSHA256 = runtime.IdentityMapping.ReleaseManifestSHA256
 		status.IndexSHA256 = runtime.Plan.IndexSHA256()
+		status.ActivationSHA256 = runtime.IdentityMapping.ActivationSHA256
+		status.CanaryConfigSHA256 = runtime.IdentityMapping.CanaryConfigSHA256
+		status.IdentityMappingSHA256 = runtime.Artifacts.MappingSHA256
+		status.RuntimePinSHA256 = runtime.Artifacts.RuntimePinSHA256
+		status.SuppressedLegacyCanaries = append([]string(nil), runtime.SuppressedLegacy...)
+		sort.Strings(status.SuppressedLegacyCanaries)
 		status.KnownOperations = runtime.Plan.Counts().KnownOperations
 		status.AdmittedOperations = len(runtime.ActiveTargets)
 	}

@@ -11,6 +11,28 @@ import (
 	"time"
 )
 
+func TestOperationGatusArtifactsRequireAnOrdinaryGatusExecutionTarget(t *testing.T) {
+	planRoot, binding, sourceSHA, operationIDs := writeGatusPlanFixture(t)
+	plan, err := LoadPinnedOperationObservationPlan(planRoot, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, canaries := gatusTestMetadata(sourceSHA, operationIDs)
+	base := []byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: receiver-only\n")
+	if gatusBaseHasExecutionTarget(base) {
+		t.Fatal("external receivers were incorrectly counted as a Gatus execution target")
+	}
+	if _, err := GenerateOperationGatusArtifacts(base, strings.Repeat("e", 64), canaries, metadata, &plan, nil, ""); err == nil {
+		t.Fatal("receiver-only base configuration was accepted even though pinned Gatus requires an endpoint or suite")
+	}
+	if gatusBaseHasExecutionTarget([]byte("endpoints: []\n")) {
+		t.Fatal("an empty standard endpoint list was accepted")
+	}
+	if !gatusBaseHasExecutionTarget([]byte("suites:\n  - name: local-suite\n    endpoints:\n      - name: local-health\n")) {
+		t.Fatal("a configured suite was not recognized as a Gatus execution target")
+	}
+}
+
 func TestOperationGatusArtifactsUseExactIdentityAndSuppressLegacyOverlap(t *testing.T) {
 	planRoot, binding, sourceSHA, operationIDs := writeGatusPlanFixture(t)
 	plan, err := LoadPinnedOperationObservationPlan(planRoot, binding)
@@ -37,7 +59,7 @@ func TestOperationGatusArtifactsUseExactIdentityAndSuppressLegacyOverlap(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := []byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\nexternal-endpoints:\n  - name: old-static-entry\n")
+	base := []byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: old-static-entry\n")
 	canarySHA := strings.Repeat("f", 64)
 	first, err := GenerateOperationGatusArtifacts(base, canarySHA, canaries, metadata, &plan, &activation, activationSHA)
 	if err != nil {
@@ -107,7 +129,7 @@ func TestObservationOnlyGatusEndpointKeepsReceiverWithoutHeartbeatOrOutageAlert(
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := []byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\nexternal-endpoints:\n  - name: placeholder\n")
+	base := []byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: placeholder\n")
 	artifacts, err := GenerateOperationGatusArtifacts(base, strings.Repeat("e", 64), canaries, metadata, &plan, &activation, activationSHA)
 	if err != nil {
 		t.Fatal(err)
@@ -171,7 +193,7 @@ func TestOperationGatusInactivePlanKeepsLegacyTargetAndMapsStableKeys(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := []byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: static\n")
+	base := []byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: static\n")
 	generated, err := GenerateOperationGatusArtifacts(base, strings.Repeat("e", 64), canaries, metadata, &plan, &activation, activationSHA)
 	if err != nil {
 		t.Fatal(err)
@@ -214,7 +236,7 @@ func TestOperationGatusActivationRejectsUnknownOrNoncanonicalTargets(t *testing.
 			t.Fatal(err)
 		}
 		metadata, canaries := gatusTestMetadata(sourceSHA, operationIDs)
-		_, err = GenerateOperationGatusArtifacts([]byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: static\n"), strings.Repeat("e", 64), canaries, metadata, &plan, &loaded, sha)
+		_, err = GenerateOperationGatusArtifacts([]byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: static\n"), strings.Repeat("e", 64), canaries, metadata, &plan, &loaded, sha)
 		if err == nil {
 			t.Fatal("unknown or unadmitted activation target was accepted")
 		}
@@ -240,7 +262,7 @@ func TestOperationGatusActivationDigestCannotBeReusedAfterMutation(t *testing.T)
 	}
 	activation.Operations[0].OperationID = operationIDs[1]
 	metadata, canaries := gatusTestMetadata(sourceSHA, operationIDs)
-	_, err = GenerateOperationGatusArtifacts([]byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: static\n"), strings.Repeat("e", 64), canaries, metadata, &plan, &activation, activationSHA)
+	_, err = GenerateOperationGatusArtifacts([]byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: static\n"), strings.Repeat("e", 64), canaries, metadata, &plan, &activation, activationSHA)
 	if err == nil {
 		t.Fatal("activation payload mutation was accepted under the original byte digest")
 	}
@@ -257,7 +279,7 @@ func TestOperationGatusRejectsDuplicateLegacyAndGeneratedReceiverKeys(t *testing
 			HealthOperationID: second.OperationID, RegistryAPIID: "api-1", RegistryOperationID: operationIDs[1], DatasetID: "api-1",
 			UpstreamOperationSeq: "2", OperationName: "Read", CLIOperationKey: strings.Repeat("a", 64),
 		}
-		_, err := GenerateOperationGatusArtifacts([]byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: static\n"), strings.Repeat("e", 64), canaries, metadata, nil, nil, "")
+		_, err := GenerateOperationGatusArtifacts([]byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: static\n"), strings.Repeat("e", 64), canaries, metadata, nil, nil, "")
 		if err == nil {
 			t.Fatal("two legacy identities were allowed to collapse onto one Gatus receiver key")
 		}
@@ -282,7 +304,7 @@ func TestOperationGatusRejectsDuplicateLegacyAndGeneratedReceiverKeys(t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = GenerateOperationGatusArtifacts([]byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: static\n"), strings.Repeat("e", 64), canaries, metadata, &plan, &activation, activationSHA)
+		_, err = GenerateOperationGatusArtifacts([]byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: static\n"), strings.Repeat("e", 64), canaries, metadata, &plan, &activation, activationSHA)
 		if err == nil {
 			t.Fatal("distinct legacy and Registry identities were allowed to share a Gatus receiver key")
 		}
@@ -306,7 +328,7 @@ func TestStableOperationGatusKeysRemainUniqueAcrossKnownScale(t *testing.T) {
 }
 
 func TestRenderOperationGatusConfigRejectsUnexpectedTopLevelAfterReceiverSection(t *testing.T) {
-	base := []byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: old\nnext-section:\n  key: value\n")
+	base := []byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: old\nnext-section:\n  key: value\n")
 	_, err := renderOperationGatusConfig(base, []operationGatusEndpoint{{key: "group_name", group: "group", name: "name", heartbeat: time.Minute}})
 	if err == nil {
 		t.Fatal("replacement silently discarded a following top-level Gatus section")

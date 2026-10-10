@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/StatPan/datapan-health/internal/runtimebundle"
@@ -50,20 +51,36 @@ type OperationPlanWorkerConfig struct {
 // exact active identities from a loader-sealed runtime and never accepts
 // caller-supplied endpoints, request parameters, or credentials.
 type OperationPlanWorker struct {
-	runtime          *VerifiedOperationPlanRuntime
-	runner           OperationPlanProbeExecutor
-	attempts         *OperationAttemptStore
-	quotas           *OperationQuotaAuthority
-	history          OperationHistoryAppender
-	historyValidator OperationPlanProbeHistoryValidator
-	gatus            OperationPlanGatusClient
-	lock             runtimebundle.Lock
-	arch             string
-	attemptLease     time.Duration
-	quotaLease       time.Duration
-	targets          map[string]OperationPlanWorkerTarget
-	postChildCommit  time.Duration
-	quotaRelease     time.Duration
+	runtime             *VerifiedOperationPlanRuntime
+	runtimeIdentity     operationPlanWorkerRuntimeIdentity
+	runtimeIdentitySeal string
+	runner              OperationPlanProbeExecutor
+	attempts            *OperationAttemptStore
+	quotas              *OperationQuotaAuthority
+	history             OperationHistoryAppender
+	historyValidator    OperationPlanProbeHistoryValidator
+	gatus               OperationPlanGatusClient
+	lock                runtimebundle.Lock
+	arch                string
+	attemptLease        time.Duration
+	quotaLease          time.Duration
+	targets             map[string]OperationPlanWorkerTarget
+	postChildCommit     time.Duration
+	quotaRelease        time.Duration
+}
+
+type operationPlanWorkerRuntimeIdentity struct {
+	verificationSeal      string
+	registryRevision      string
+	releaseManifestSHA256 string
+	indexSHA256           string
+	activationSHA256      string
+	canaryConfigSHA256    string
+	identityMappingSHA256 string
+	runtimePinSHA256      string
+	knownOperations       int
+	admittedOperations    int
+	suppressedLegacy      []string
 }
 
 type OperationPlanWorkerResult struct {
@@ -101,12 +118,34 @@ func newOperationPlanWorker(config OperationPlanWorkerConfig, runnerConfig Opera
 	if err != nil || !sameOperationPlanWorkerTargets(config.Runtime.ActiveTargets, verifiedTargets) {
 		return nil, errOperationPlanWorkerUnavailable
 	}
+	runtimeSnapshot, err := cloneVerifiedOperationPlanRuntime(config.Runtime)
+	if err != nil {
+		return nil, errOperationPlanWorkerUnavailable
+	}
+	verifiedTargets, err = exactActivePlanTargets(runtimeSnapshot.Plan, runtimeSnapshot.IdentityMapping)
+	if err != nil || !sameOperationPlanWorkerTargets(runtimeSnapshot.ActiveTargets, verifiedTargets) {
+		return nil, errOperationPlanWorkerUnavailable
+	}
+	resolverSnapshot := *resolver
+	resolverSnapshot.plan = runtimeSnapshot.Plan
+	resolverSnapshot.lock = cloneOperationPlanRuntimeLock(resolver.lock)
+	resolverSnapshot.templates = make(map[string]OperationPlanProbeExpectation, len(resolver.templates))
+	for key, expected := range resolver.templates {
+		resolverSnapshot.templates[key] = expected
+	}
+	historyValidator := config.HistoryValidator
+	historyValidator.Expectations = &resolverSnapshot
 	worker := &OperationPlanWorker{
-		runtime: config.Runtime, runner: config.Runner, attempts: config.Attempts, quotas: config.Quotas,
-		history: config.History, historyValidator: config.HistoryValidator, gatus: config.Gatus,
-		lock: config.RuntimeLock, arch: config.Architecture, attemptLease: config.AttemptLease,
+		runtime: runtimeSnapshot, runner: config.Runner, attempts: config.Attempts, quotas: config.Quotas,
+		history: config.History, historyValidator: historyValidator, gatus: config.Gatus,
+		lock: cloneOperationPlanRuntimeLock(config.RuntimeLock), arch: config.Architecture, attemptLease: config.AttemptLease,
 		quotaLease: config.QuotaLease, targets: make(map[string]OperationPlanWorkerTarget, len(verifiedTargets)),
 		postChildCommit: operationPlanPostChildCommitTimeout, quotaRelease: operationPlanQuotaReleaseTimeout,
+	}
+	worker.runtimeIdentity = operationPlanWorkerRuntimeIdentityFromRuntime(runtimeSnapshot)
+	worker.runtimeIdentitySeal = operationPlanWorkerRuntimeIdentitySeal(worker.runtimeIdentity)
+	if !worker.validRuntimeSnapshot() {
+		return nil, errOperationPlanWorkerUnavailable
 	}
 	const validationAttemptID = "00000000-0000-4000-8000-000000000000"
 	validationTime := time.Unix(1, 0).UTC()
@@ -118,7 +157,7 @@ func newOperationPlanWorker(config OperationPlanWorkerConfig, runnerConfig Opera
 		if _, duplicate := worker.targets[key]; duplicate {
 			return nil, errOperationPlanWorkerUnavailable
 		}
-		expected, expectedErr := operationPlanProbeExpected(config.Runtime.Plan, target.Record, target.ShardSHA256, validationAttemptID, config.RuntimeLock, config.Architecture, validationTime)
+		expected, expectedErr := operationPlanProbeExpected(runtimeSnapshot.Plan, target.Record, target.ShardSHA256, validationAttemptID, worker.lock, config.Architecture, validationTime)
 		if expectedErr != nil || !validOperationProbeExpectation(expected, runnerConfig) {
 			return nil, errOperationPlanWorkerUnavailable
 		}
@@ -131,7 +170,7 @@ func newOperationPlanWorker(config OperationPlanWorkerConfig, runnerConfig Opera
 // inactive identity performs no attempt, quota reservation, child spawn, or
 // network request.
 func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, operationID string, now time.Time) (OperationPlanWorkerResult, error) {
-	if worker == nil || ctx == nil || ctx.Err() != nil || !validVerifiedOperationPlanRuntime(worker.runtime) || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 || now.IsZero() {
+	if worker == nil || ctx == nil || ctx.Err() != nil || !worker.validRuntimeSnapshot() || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 || now.IsZero() {
 		return OperationPlanWorkerResult{}, errOperationPlanWorkerUnavailable
 	}
 	target, found := worker.targets[operationReadModelIdentityKey(sourceID, operationID)]
@@ -254,6 +293,70 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 		return result, errOperationPlanWorkerUnavailable
 	}
 	return result, nil
+}
+
+func operationPlanWorkerRuntimeIdentityFromRuntime(runtime *VerifiedOperationPlanRuntime) operationPlanWorkerRuntimeIdentity {
+	if runtime == nil {
+		return operationPlanWorkerRuntimeIdentity{}
+	}
+	suppressed := append([]string(nil), runtime.SuppressedLegacy...)
+	sort.Strings(suppressed)
+	return operationPlanWorkerRuntimeIdentity{
+		verificationSeal: runtime.verificationSeal, registryRevision: runtime.Plan.RegistryRevision(),
+		releaseManifestSHA256: runtime.IdentityMapping.ReleaseManifestSHA256, indexSHA256: runtime.Plan.IndexSHA256(),
+		activationSHA256: runtime.IdentityMapping.ActivationSHA256, canaryConfigSHA256: runtime.IdentityMapping.CanaryConfigSHA256,
+		identityMappingSHA256: runtime.Artifacts.MappingSHA256, runtimePinSHA256: runtime.Artifacts.RuntimePinSHA256,
+		knownOperations: runtime.Plan.Counts().KnownOperations, admittedOperations: len(runtime.ActiveTargets),
+		suppressedLegacy: suppressed,
+	}
+}
+
+func operationPlanWorkerRuntimeIdentitySeal(identity operationPlanWorkerRuntimeIdentity) string {
+	if !sha256Pattern.MatchString(identity.verificationSeal) || identity.registryRevision == "" ||
+		!sha256Pattern.MatchString(identity.releaseManifestSHA256) || !sha256Pattern.MatchString(identity.indexSHA256) ||
+		!sha256Pattern.MatchString(identity.activationSHA256) || !sha256Pattern.MatchString(identity.canaryConfigSHA256) ||
+		!sha256Pattern.MatchString(identity.identityMappingSHA256) || !sha256Pattern.MatchString(identity.runtimePinSHA256) ||
+		identity.knownOperations < 0 || identity.knownOperations > maxOperationGatusTargets ||
+		identity.admittedOperations < 0 || identity.admittedOperations > identity.knownOperations ||
+		len(identity.suppressedLegacy) > 100 || !isSortedUniqueOperationPlanIDs(identity.suppressedLegacy) {
+		return ""
+	}
+	raw, err := json.Marshal(identity)
+	if err != nil || len(raw) == 0 {
+		return ""
+	}
+	return digestOperationGatusBytes(raw)
+}
+
+// validRuntimeSnapshot checks only immutable constructor-owned summary fields.
+// The loader and worker constructor already validated the complete target set;
+// no status or worker hot path hashes the fleet again.
+func (worker *OperationPlanWorker) validRuntimeSnapshot() bool {
+	if worker == nil || worker.runtime == nil || !worker.runtime.verified || worker.runtimeIdentitySeal == "" ||
+		operationPlanWorkerRuntimeIdentitySeal(worker.runtimeIdentity) != worker.runtimeIdentitySeal ||
+		worker.runtime.verificationSeal != worker.runtimeIdentity.verificationSeal || worker.runtime.Plan.state == nil || !worker.runtime.Plan.state.verified {
+		return false
+	}
+	runtime := worker.runtime
+	identity := worker.runtimeIdentity
+	if runtime.Plan.RegistryRevision() != identity.registryRevision || runtime.Plan.binding.ReleaseManifestSHA256 != identity.releaseManifestSHA256 ||
+		runtime.Plan.IndexSHA256() != identity.indexSHA256 || runtime.Plan.Counts().KnownOperations != identity.knownOperations ||
+		len(runtime.ActiveTargets) != identity.admittedOperations || runtime.IdentityMapping.ReleaseManifestSHA256 != identity.releaseManifestSHA256 ||
+		runtime.IdentityMapping.ActivationSHA256 != identity.activationSHA256 || runtime.IdentityMapping.CanaryConfigSHA256 != identity.canaryConfigSHA256 ||
+		runtime.Artifacts.MappingSHA256 != identity.identityMappingSHA256 || runtime.Artifacts.RuntimePinSHA256 != identity.runtimePinSHA256 ||
+		!equalOperationPlanIdentityLists(runtime.SuppressedLegacy, identity.suppressedLegacy) {
+		return false
+	}
+	return true
+}
+
+func cloneOperationPlanRuntimeLock(lock runtimebundle.Lock) runtimebundle.Lock {
+	clone := lock
+	clone.CLI.Binaries = make(map[string]runtimebundle.Binary, len(lock.CLI.Binaries))
+	for architecture, binary := range lock.CLI.Binaries {
+		clone.CLI.Binaries[architecture] = binary
+	}
+	return clone
 }
 
 func (worker *OperationPlanWorker) newPostChildCommitContext() (context.Context, context.CancelFunc) {

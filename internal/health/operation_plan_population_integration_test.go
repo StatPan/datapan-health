@@ -69,7 +69,7 @@ func TestOperationPlanManifestDerivedSyntheticPopulation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseConfig := []byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: placeholder\n")
+	baseConfig := []byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: placeholder\n")
 	artifacts, err := GenerateOperationGatusArtifacts(baseConfig, digestOperationGatusBytes(canaryRaw), canaries, metadata, &plan, &activation, activationSHA)
 	if err != nil {
 		t.Fatalf("manifest-sized exact Gatus mapping could not be generated: %v", err)
@@ -279,7 +279,7 @@ func TestOperationPlanPinnedGatusSyntheticReceiptIntegration(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Fatalf("Docker is required for the pinned Gatus integration target: %v", err)
 	}
-	worker, attempts, history, _, target := newOperationPlanSchedulerTestWorker(t)
+	worker, attempts, history, _, target, _ := newOperationPlanSchedulerTestWorker(t)
 	token := "synthetic-local-gatus-token"
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(configPath, worker.runtime.Artifacts.Config, 0o444); err != nil {
@@ -293,7 +293,7 @@ func TestOperationPlanPinnedGatusSyntheticReceiptIntegration(t *testing.T) {
 		defer cleanupCancel()
 		_ = exec.CommandContext(cleanupCtx, "docker", "rm", "--force", containerName).Run()
 	}()
-	start := exec.CommandContext(ctx, "docker", "run", "--detach", "--rm", "--name", containerName,
+	start := exec.CommandContext(ctx, "docker", "run", "--detach", "--name", containerName,
 		"--publish", "127.0.0.1::8080", "--volume", configPath+":/config/config.yaml:ro",
 		"--env", "GATUS_TOKEN="+token, pinnedOperationPlanTestGatusImage)
 	if output, err := start.CombinedOutput(); err != nil {
@@ -406,7 +406,7 @@ func TestOperationPlanPinnedGatusManifestCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseConfig := []byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: placeholder\n")
+	baseConfig := []byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: placeholder\n")
 	artifacts, err := GenerateOperationGatusArtifacts(baseConfig, digestOperationGatusBytes(canaryRaw), canaries, metadata, &plan, &activation, activationSHA)
 	if err != nil {
 		t.Fatalf("pinned Gatus configuration could not represent all verified identities: %v", err)
@@ -416,8 +416,12 @@ func TestOperationPlanPinnedGatusManifestCapacity(t *testing.T) {
 		t.Fatalf("generated Gatus fleet did not reconcile exact source identities: identities=%d mapped=%d known=%d activated=%d endpoints=%d", len(identities), len(mapping.Operations), mapping.KnownPlanOperations, mapping.ActivatedPlanOperations, mapping.ConfiguredExternalEndpoints)
 	}
 	configText := strings.ToLower(string(artifacts.Config))
-	if strings.Contains(configText, "url:") || strings.Contains(configText, "http://") || strings.Contains(configText, "https://") {
-		t.Fatal("synthetic Gatus capacity configuration unexpectedly contains a provider destination")
+	receiverStart := strings.Index(configText, "external-endpoints:\n")
+	if receiverStart < 0 {
+		t.Fatal("synthetic Gatus capacity configuration omitted its external receiver section")
+	}
+	if receiverConfig := configText[receiverStart:]; strings.Contains(receiverConfig, "url:") || strings.Contains(receiverConfig, "http://") || strings.Contains(receiverConfig, "https://") {
+		t.Fatal("synthetic Gatus external receivers unexpectedly contain provider destinations")
 	}
 
 	const spreadSample = 64
@@ -461,7 +465,7 @@ func TestOperationPlanPinnedGatusManifestCapacity(t *testing.T) {
 	}()
 	const token = "synthetic-local-gatus-fleet-token"
 	startupStarted := time.Now()
-	start := exec.CommandContext(ctx, "docker", "run", "--detach", "--rm", "--name", containerName,
+	start := exec.CommandContext(ctx, "docker", "run", "--detach", "--name", containerName, "--memory", "512m", "--cpus", "1", "--pids-limit", "64",
 		"--publish", "127.0.0.1::8080", "--volume", configPath+":/config/config.yaml:ro",
 		"--env", "GATUS_TOKEN="+token, pinnedOperationPlanTestGatusImage)
 	if err := start.Run(); err != nil {
@@ -480,7 +484,23 @@ func TestOperationPlanPinnedGatusManifestCapacity(t *testing.T) {
 	ready := false
 	readyCtx, readyCancel := context.WithTimeout(ctx, 12*time.Minute)
 	defer readyCancel()
+	readinessChecks := 0
 	for !ready && readyCtx.Err() == nil {
+		readinessChecks++
+		if readinessChecks%8 == 1 {
+			state, inspectErr := exec.CommandContext(readyCtx, "docker", "inspect", "--format", "{{.State.Running}} {{.State.ExitCode}}", containerName).Output()
+			if inspectErr != nil {
+				t.Fatal("pinned Gatus exited before its full-population configuration became ready")
+			}
+			fields := strings.Fields(string(state))
+			if len(fields) != 2 || fields[0] != "true" {
+				exitCode := "unknown"
+				if len(fields) == 2 {
+					exitCode = fields[1]
+				}
+				t.Fatalf("pinned Gatus exited while loading the full-population configuration (exit_code=%s diagnostic=%s)", exitCode, pinnedGatusStartupHint(readyCtx, containerName, token))
+			}
+		}
 		request, requestErr := http.NewRequestWithContext(readyCtx, http.MethodGet, baseURL+"/health", nil)
 		if requestErr == nil {
 			response, requestErr := readyClient.Do(request)
@@ -525,6 +545,42 @@ func TestOperationPlanPinnedGatusManifestCapacity(t *testing.T) {
 	}
 	unknownIdentities := unknownOperationCount(identities)
 	t.Logf("pinned Gatus v5.36.0 full-population source QA: identities=%d sources=%d inventory_unknown_identities=%d generated_config_bytes=%d startup_to_health=%s sampled_push_and_exact_readbacks=%d container_memory=%s provider_destinations=0", len(identities), len(populationSources), unknownIdentities, len(artifacts.Config), startupDuration.Round(time.Millisecond), len(sampleIndices), strings.TrimSpace(string(memoryOutput)))
+}
+
+func pinnedGatusStartupHint(ctx context.Context, containerName, token string) string {
+	logs, err := exec.CommandContext(ctx, "docker", "logs", containerName).CombinedOutput()
+	if err != nil {
+		return "unavailable"
+	}
+	var firstLine string
+	for _, line := range strings.Split(string(logs), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		line = strings.ReplaceAll(line, "/config/config.yaml", "[config]")
+		line = strings.ReplaceAll(line, token, "[redacted]")
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "http://") || strings.Contains(lower, "https://") {
+			return "startup_log_url_redacted"
+		}
+		if firstLine == "" {
+			firstLine = line
+		}
+		if len(line) > 200 {
+			line = line[:200]
+		}
+		if strings.Contains(lower, "error") || strings.Contains(lower, "fatal") || strings.Contains(lower, "panic") {
+			return line
+		}
+	}
+	if firstLine == "" {
+		return "no_container_logs"
+	}
+	if len(firstLine) > 200 {
+		firstLine = firstLine[:200]
+	}
+	return firstLine
 }
 
 func loadManifestDerivedPopulationPlan(t *testing.T) (VerifiedRegistryAPIMetadata, CanaryConfig, PinnedOperationObservationPlan, string, []operationPlanPopulationIdentity) {

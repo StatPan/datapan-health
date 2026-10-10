@@ -164,19 +164,36 @@ type operationPlanRuntimeSealWire struct {
 	ConfigSHA256          string                      `json:"config_sha256"`
 	MappingSHA256         string                      `json:"mapping_sha256"`
 	RuntimePinSHA256      string                      `json:"runtime_pin_sha256"`
+	DeclaredConfigSHA256  string                      `json:"declared_config_sha256"`
+	DeclaredMappingSHA256 string                      `json:"declared_mapping_sha256"`
+	DeclaredPinSHA256     string                      `json:"declared_pin_sha256"`
+	MappingObjectSHA256   string                      `json:"mapping_object_sha256"`
+	CanaryConfigSHA256    string                      `json:"canary_config_object_sha256"`
 	Targets               []OperationPlanWorkerTarget `json:"targets"`
 	SuppressedLegacy      []string                    `json:"suppressed_legacy"`
+	ArtifactSuppressed    []string                    `json:"artifact_suppressed"`
 }
 
 func operationPlanRuntimeSeal(runtime *VerifiedOperationPlanRuntime) string {
 	if runtime == nil || !runtime.verified || runtime.Plan.state == nil || !runtime.Plan.state.verified {
 		return ""
 	}
+	mappingRaw, err := json.Marshal(runtime.IdentityMapping)
+	if err != nil {
+		return ""
+	}
+	canaryConfigRaw, err := json.Marshal(runtime.Canaries)
+	if err != nil {
+		return ""
+	}
 	wire := operationPlanRuntimeSealWire{
 		RegistryRevision: runtime.Plan.RegistryRevision(), ReleaseManifestSHA256: runtime.Plan.binding.ReleaseManifestSHA256,
 		IndexSHA256: runtime.Plan.IndexSHA256(), ConfigSHA256: digestOperationGatusBytes(runtime.Artifacts.Config),
 		MappingSHA256: digestOperationGatusBytes(runtime.Artifacts.Mapping), RuntimePinSHA256: digestOperationGatusBytes(runtime.Artifacts.RuntimePin),
-		Targets: runtime.ActiveTargets, SuppressedLegacy: runtime.SuppressedLegacy,
+		DeclaredConfigSHA256: runtime.Artifacts.ConfigSHA256, DeclaredMappingSHA256: runtime.Artifacts.MappingSHA256,
+		DeclaredPinSHA256: runtime.Artifacts.RuntimePinSHA256, MappingObjectSHA256: digestOperationGatusBytes(mappingRaw),
+		CanaryConfigSHA256: digestOperationGatusBytes(canaryConfigRaw), Targets: runtime.ActiveTargets,
+		SuppressedLegacy: runtime.SuppressedLegacy, ArtifactSuppressed: runtime.Artifacts.LegacySuppressedHealthIDs,
 	}
 	raw, err := json.Marshal(wire)
 	if err != nil || len(raw) == 0 || len(raw) > maxOperationGatusRuntimeInputBytes {
@@ -188,6 +205,89 @@ func operationPlanRuntimeSeal(runtime *VerifiedOperationPlanRuntime) string {
 
 func validVerifiedOperationPlanRuntime(runtime *VerifiedOperationPlanRuntime) bool {
 	return runtime != nil && runtime.verified && sha256Pattern.MatchString(runtime.verificationSeal) && operationPlanRuntimeSeal(runtime) == runtime.verificationSeal
+}
+
+func cloneVerifiedOperationPlanRuntime(runtime *VerifiedOperationPlanRuntime) (*VerifiedOperationPlanRuntime, error) {
+	if !validVerifiedOperationPlanRuntime(runtime) {
+		return nil, errOperationPlanRuntimeUnavailable
+	}
+	clone := *runtime
+	var err error
+	clone.Plan, err = clonePinnedOperationObservationPlan(runtime.Plan)
+	if err != nil {
+		return nil, errOperationPlanRuntimeUnavailable
+	}
+	clone.Metadata = cloneVerifiedOperationPlanMetadata(runtime.Metadata)
+	clone.Canaries = cloneCanaryConfig(runtime.Canaries)
+	clone.Artifacts.Config = append([]byte(nil), runtime.Artifacts.Config...)
+	clone.Artifacts.Mapping = append([]byte(nil), runtime.Artifacts.Mapping...)
+	clone.Artifacts.RuntimePin = append([]byte(nil), runtime.Artifacts.RuntimePin...)
+	clone.Artifacts.LegacySuppressedHealthIDs = append([]string(nil), runtime.Artifacts.LegacySuppressedHealthIDs...)
+	clone.IdentityMapping.Operations = append([]OperationGatusIdentity(nil), runtime.IdentityMapping.Operations...)
+	clone.IdentityMapping.LegacySuppressedHealthIDs = append([]string(nil), runtime.IdentityMapping.LegacySuppressedHealthIDs...)
+	clone.ActiveTargets = make([]OperationPlanWorkerTarget, len(runtime.ActiveTargets))
+	for i, target := range runtime.ActiveTargets {
+		clone.ActiveTargets[i] = cloneOperationPlanWorkerTarget(target)
+	}
+	clone.SuppressedLegacy = append([]string(nil), runtime.SuppressedLegacy...)
+	if !validVerifiedOperationPlanRuntime(&clone) {
+		return nil, errOperationPlanRuntimeUnavailable
+	}
+	return &clone, nil
+}
+
+func clonePinnedOperationObservationPlan(plan PinnedOperationObservationPlan) (PinnedOperationObservationPlan, error) {
+	if plan.state == nil || !plan.state.verified {
+		return PinnedOperationObservationPlan{}, errOperationPlanRuntimeUnavailable
+	}
+	state := *plan.state
+	state.index.GenerationInputs = append(json.RawMessage(nil), plan.state.index.GenerationInputs...)
+	state.index.SourceScopes = make([]OperationObservationPlanSourceScope, len(plan.state.index.SourceScopes))
+	for i, scope := range plan.state.index.SourceScopes {
+		scope.SourceArtifacts = append([]operationPlanArtifactRef(nil), scope.SourceArtifacts...)
+		state.index.SourceScopes[i] = scope
+	}
+	state.index.Shards = append([]operationObservationPlanShardRef(nil), plan.state.index.Shards...)
+	state.manifest = make(map[string]RegistryReleaseManifestArtifact, len(plan.state.manifest))
+	for path, artifact := range plan.state.manifest {
+		state.manifest[path] = artifact
+	}
+	state.byScope = make(map[string]OperationObservationPlanSourceScope, len(plan.state.byScope))
+	for sourceID, scope := range plan.state.byScope {
+		scope.SourceArtifacts = append([]operationPlanArtifactRef(nil), scope.SourceArtifacts...)
+		state.byScope[sourceID] = scope
+	}
+	return PinnedOperationObservationPlan{binding: plan.binding, state: &state}, nil
+}
+
+func cloneVerifiedOperationPlanMetadata(metadata VerifiedRegistryAPIMetadata) VerifiedRegistryAPIMetadata {
+	clone := metadata
+	clone.operations = append([]RegistryOperationMetadata(nil), metadata.operations...)
+	clone.canaryLinksByHealthID = make(map[string]RegistryHealthCanaryLink, len(metadata.canaryLinksByHealthID))
+	for healthID, link := range metadata.canaryLinksByHealthID {
+		clone.canaryLinksByHealthID[healthID] = link
+	}
+	return clone
+}
+
+func cloneCanaryConfig(config CanaryConfig) CanaryConfig {
+	clone := config
+	clone.Canaries = append([]Canary(nil), config.Canaries...)
+	clone.catalog.Entries = make([]CatalogEntry, len(config.catalog.Entries))
+	clone.catalog.byID = make(map[string]CatalogEntry, len(config.catalog.byID))
+	for i, entry := range config.catalog.Entries {
+		entry.Execution.SafeParameters = append([]struct {
+			Name string `json:"name"`
+		}(nil), entry.Execution.SafeParameters...)
+		clone.catalog.Entries[i] = entry
+	}
+	for id, entry := range config.catalog.byID {
+		entry.Execution.SafeParameters = append([]struct {
+			Name string `json:"name"`
+		}(nil), entry.Execution.SafeParameters...)
+		clone.catalog.byID[id] = entry
+	}
+	return clone
 }
 
 func validOperationPlanRuntimePaths(paths OperationPlanRuntimePaths) bool {

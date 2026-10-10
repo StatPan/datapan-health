@@ -131,7 +131,7 @@ func TestOperationPlanWorkerArchivesCanceledChildReceiptBeforeGatusReadback(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseConfig := []byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\nexternal-endpoints:\n  - name: placeholder\n")
+	baseConfig := []byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: placeholder\n")
 	canaryRaw := []byte("synthetic canary fixture; no provider data\n")
 	artifacts, err := GenerateOperationGatusArtifacts(baseConfig, digestOperationGatusBytes(canaryRaw), canaries, metadata, &plan, &activation, activationSHA)
 	if err != nil {
