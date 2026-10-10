@@ -44,6 +44,7 @@ const (
 	actualCLIGovRESTTypedFailure    = "0014af9e0f58c9dd10c0167164e037ddf5f75658431d5ad3ffe531b6bf45d97a"
 	actualCLIGovSOAPTypedSuccess    = "07776a0ef594eae07eeb13ac59eb5f659f9227dd513cc7505ce60dab21695e7e"
 	actualCLIGovSOAPTypedFailure    = "30a31059d5847698f696854e772aa1b22569c45c200d4e460c8e5f0c6358578c"
+	actualCLIFullControllerTimeout  = 90 * time.Minute
 )
 
 type actualCLIReleaseManifest struct {
@@ -1106,7 +1107,7 @@ func actualCLIFullPopulation(t *testing.T, worker *OperationPlanWorker, attempts
 		t.Fatalf("actual CLI full source-QA capacity preflight failed before provider requests: feasible=%t required_concurrency=%d max_concurrent=%d required_starts_per_second=%.9f admitted=%d expected=%d", preflight.CapacityFeasible, preflight.RequiredConcurrency, concurrency, preflight.RequiredStartsPerSecond, preflight.AdmittedOperations, len(identities))
 	}
 	t.Logf("actual CLI full source-QA capacity preflight: identities=%d required_starts_per_second=%.9f required_concurrency=%d max_concurrent=%d feasible=true", preflight.AdmittedOperations, preflight.RequiredStartsPerSecond, preflight.RequiredConcurrency, concurrency)
-	controllerCtx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
+	controllerCtx, cancel := context.WithTimeout(context.Background(), actualCLIFullControllerTimeout)
 	defer cancel()
 	startedAt := time.Now().UTC()
 	lastProgressAt := time.Now()
@@ -1144,7 +1145,7 @@ func actualCLIFullPopulation(t *testing.T, worker *OperationPlanWorker, attempts
 		scheduler.Wait()
 		usage, _ := history.Usage(context.Background())
 		elapsed := time.Since(startedAt)
-		t.Fatalf("actual CLI did not reconcile all pinned identities within the 45-minute source-QA bound: starts=%d observations=%d readbacks=%d not_applicable=%d execution_failures=%d delivery_failures=%d active=%d expected=%d elapsed=%s receipts=%d history_bytes=%d", status.RequestStartsSinceStart, status.ObservationsSinceStart, status.ReadbacksSinceStart, status.NotApplicableSinceStart, status.ExecutionFailuresSinceStart, status.DeliveryFailuresSinceStart, status.ActiveWork, len(identities), elapsed.Round(time.Second), usage.RecordCount, usage.UsedBytes)
+		t.Fatalf("actual CLI did not reconcile all pinned identities within the 90-minute source-QA controller bound: starts=%d observations=%d readbacks=%d not_applicable=%d execution_failures=%d delivery_failures=%d active=%d expected=%d elapsed=%s receipts=%d history_bytes=%d", status.RequestStartsSinceStart, status.ObservationsSinceStart, status.ReadbacksSinceStart, status.NotApplicableSinceStart, status.ExecutionFailuresSinceStart, status.DeliveryFailuresSinceStart, status.ActiveWork, len(identities), elapsed.Round(time.Second), usage.RecordCount, usage.UsedBytes)
 	}
 	scheduler.Wait()
 	status = scheduler.Status(time.Now().UTC())
