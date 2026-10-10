@@ -1358,6 +1358,8 @@ func publicOperationAttemptLabel(state string, requestStarted *bool, executionBl
 		switch executionBlockReason {
 		case "quota_capacity":
 			return "검사 요청 전 보류 · 검사 용량 여유 대기"
+		case "quota_window_draining":
+			return "검사 요청 전 보류 · 이전 할당 요청 처리 대기"
 		case "history_capacity":
 			return "검사 요청 전 보류 · 결과 저장 공간 확인 필요"
 		case "child_unavailable":

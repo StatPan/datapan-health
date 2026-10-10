@@ -114,6 +114,134 @@ func (unavailableOperationPlanProbeExecutor) Run(context.Context, OperationPlanP
 	return OperationPlanProbeResult{}, -1, errOperationPlanProbeUnavailable
 }
 
+type countingOperationPlanProbeExecutor struct{ calls int }
+
+func (executor *countingOperationPlanProbeExecutor) Run(context.Context, OperationPlanProbeExpectation, time.Time) (OperationPlanProbeResult, int, error) {
+	executor.calls++
+	return OperationPlanProbeResult{}, -1, errOperationPlanProbeUnavailable
+}
+
+func TestOperationPlanWorkerDefersAndRetriesUnchangedQuotaWindowDrain(t *testing.T) {
+	planRoot, planBinding, sourceSHA, operationIDs := writeGatusPlanFixture(t)
+	plan, err := LoadPinnedOperationObservationPlan(planRoot, planBinding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, canaries := gatusTestMetadata(sourceSHA, operationIDs)
+	activationRaw, err := json.Marshal(OperationGatusActivation{
+		SchemaVersion: OperationGatusActivationSchemaVersion, RegistryRevision: plan.RegistryRevision(),
+		IndexSHA256: plan.IndexSHA256(), Operations: []OperationGatusActivationEntry{{SourceID: "data_go_kr", OperationID: operationIDs[0]}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	activation, activationSHA, err := DecodeOperationGatusActivation(activationRaw, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseConfig := []byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: placeholder\n")
+	canaryRaw := []byte("synthetic canary fixture; no provider data\n")
+	artifacts, err := GenerateOperationGatusArtifacts(baseConfig, digestOperationGatusBytes(canaryRaw), canaries, metadata, &plan, &activation, activationSHA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeRoot := t.TempDir()
+	paths := operationPlanTestRuntimePaths(runtimeRoot)
+	for path, raw := range map[string][]byte{
+		paths.BaseGatusConfigPath: baseConfig, paths.GeneratedConfigPath: artifacts.Config,
+		paths.IdentityMappingPath: artifacts.Mapping, paths.RuntimePinPath: artifacts.RuntimePin,
+	} {
+		if err := os.WriteFile(path, raw, 0o400); err != nil {
+			t.Fatal(err)
+		}
+	}
+	paths.ActivationPath = filepath.Join(runtimeRoot, "activation.json")
+	paths.ActivationSHA256 = activationSHA
+	if err := os.WriteFile(paths.ActivationPath, activationRaw, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := verifyOperationGatusRuntimeArtifacts(paths, canaryRaw, canaries, metadata, plan)
+	if err != nil || len(runtime.ActiveTargets) != 1 {
+		t.Fatalf("synthetic verified runtime did not produce one active target: targets=%d err=%v", len(runtime.ActiveTargets), err)
+	}
+	target := runtime.ActiveTargets[0]
+	resolver, err := NewPinnedOperationPlanProbeExpectationResolver(plan, testOperationPlanRuntimeLock(strings.Repeat("a", 64)), "amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	historyValidator, err := NewOperationPlanProbeHistoryValidator(strings.Repeat("9", 40), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	history, err := OpenOperationHistoryStore(filepath.Join(runtimeRoot, "history"), 16<<20, historyValidator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts, err := OpenOperationAttemptStore(filepath.Join(runtimeRoot, "attempts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	quotas, err := OpenOperationQuotaAuthority(filepath.Join(runtimeRoot, "quotas"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock := testOperationPlanRuntimeLock(strings.Repeat("a", 64))
+	runnerConfig := OperationPlanProbeConfig{CLIVersion: lock.CLI.Release, ExecutableSHA256: lock.CLI.Binaries["amd64"].BinarySHA256}
+	runner := &countingOperationPlanProbeExecutor{}
+	worker, err := newOperationPlanWorker(OperationPlanWorkerConfig{
+		Runtime: runtime, Runner: runner, Attempts: attempts, Quotas: quotas, History: history,
+		HistoryValidator: historyValidator, RuntimeLock: lock, Architecture: "amd64",
+		AttemptLease: time.Minute, QuotaLease: time.Minute,
+	}, runnerConfig)
+	if err != nil {
+		t.Fatalf("construct source-verified local worker: %v", err)
+	}
+
+	policy := target.Record.QuotaPolicies[0]
+	now := time.Now().UTC()
+	seedID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	seedExpiry := now.Add(time.Minute)
+	seedState := operationQuotaState{
+		SchemaVersion: OperationQuotaStateSchemaVersion, ScopeSHA256: policy.ScopeSHA256,
+		PolicySHA256: operationQuotaPolicyDigest(policy), WindowStarted: now.Truncate(policy.Window).Add(-policy.Window),
+		RequestsUsed: 1, LastClaimAt: now.Add(-time.Second), Generation: 1, UpdatedAt: now.Add(-time.Second),
+		Active: map[string]operationQuotaLease{seedID: {Generation: 1, ExpiresAt: seedExpiry}},
+	}
+	if err := writeOperationQuotaState(quotas.statePath(policy.ScopeSHA256), seedState); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := worker.ExecuteOne(context.Background(), target.Record.SourceID, target.Record.OperationID, now)
+	if err != nil || result.AttemptState != "deferred" || result.ExecutionBlockReason != operationAttemptReasonQuotaWindowDrain || result.RequestStarted || runner.calls != 0 {
+		t.Fatalf("same-policy window drain was not a no-dispatch deferred attempt: result=%#v err=%v calls=%d", result, err, runner.calls)
+	}
+	stored, found, err := attempts.Latest(target.Record.SourceID, target.Record.OperationID)
+	if err != nil || !found || stored.State != "deferred" || stored.BlockReason != operationAttemptReasonQuotaWindowDrain || stored.DeferredStage != operationAttemptDeferredStageQuota || stored.DeferredCategory != operationAttemptDeferredCategoryWindow || stored.RequestStarted == nil || *stored.RequestStarted || stored.Result != nil || stored.ReceiptValidated {
+		t.Fatalf("quota window deferral lacks exact persisted no-dispatch evidence: found=%t attempt=%#v err=%v", found, stored, err)
+	}
+	usage, err := history.Usage(context.Background())
+	if err != nil || usage.ReservationCount != 0 || usage.RecordCount != 0 {
+		t.Fatalf("window drain left a history reservation behind: usage=%#v err=%v", usage, err)
+	}
+	unchanged, found, err := readOperationQuotaState(quotas.statePath(policy.ScopeSHA256))
+	if err != nil || !found || unchanged.WindowStarted != seedState.WindowStarted || unchanged.RequestsUsed != seedState.RequestsUsed || unchanged.Generation != seedState.Generation || len(unchanged.Active) != 1 {
+		t.Fatalf("atomic quota window transition changed persisted allowance or claims: state=%#v err=%v", unchanged, err)
+	}
+
+	binding := operationPlanTargetBinding(plan, target)
+	if operationPlanTargetDue(target, stored, binding, stored.FinishedAt.Add(operationAttemptDeferredRetryDelay-time.Nanosecond)) || !operationPlanTargetDue(target, stored, binding, stored.FinishedAt.Add(operationAttemptDeferredRetryDelay)) {
+		t.Fatal("scheduler retry gate did not use the exact 30-second durable defer boundary")
+	}
+	retryAt := stored.FinishedAt.Add(operationAttemptDeferredRetryDelay)
+	if _, err := attempts.BeginAttempt(binding, strings.Repeat("b", 64), retryAt.Add(-time.Nanosecond), time.Minute); !errors.Is(err, ErrOperationAttemptNotDue) {
+		t.Fatalf("attempt store allowed a retry before the shared 30-second boundary: %v", err)
+	}
+	claim, err := attempts.BeginAttempt(binding, strings.Repeat("b", 64), retryAt, time.Minute)
+	if err != nil || claim.Generation <= stored.Generation {
+		t.Fatalf("attempt store rejected the same-binding retry at the shared boundary: claim=%#v err=%v", claim, err)
+	}
+}
+
 func TestOperationPlanWorkerArchivesCanceledChildReceiptBeforeGatusReadback(t *testing.T) {
 	planRoot, planBinding, sourceSHA, operationIDs := writeGatusPlanFixture(t)
 	plan, err := LoadPinnedOperationObservationPlan(planRoot, planBinding)

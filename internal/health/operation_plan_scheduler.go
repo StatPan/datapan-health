@@ -270,7 +270,8 @@ func (scheduler *OperationPlanScheduler) ProcessDue(ctx context.Context, now tim
 				}
 				continue
 			}
-			if found && (!operationPlanTargetDue(target, latest, now) || latest.State == "claimed" && now.Before(latest.LeaseExpiresAt)) {
+			binding := operationPlanTargetBinding(scheduler.worker.runtime.Plan, target)
+			if found && (!operationPlanTargetDue(target, latest, binding, now) || latest.State == "claimed" && now.Before(latest.LeaseExpiresAt)) {
 				continue
 			}
 			key := operationReadModelIdentityKey(target.Record.SourceID, target.Record.OperationID)
@@ -393,13 +394,7 @@ func (scheduler *OperationPlanScheduler) resetEvidenceSweep() {
 }
 
 func (scheduler *OperationPlanScheduler) operationEvidenceForTarget(ctx context.Context, target OperationPlanWorkerTarget, latest, completed OperationStoredAttempt, completedFound bool, now time.Time) (operationPlanReadinessEvidence, error) {
-	plan := scheduler.worker.runtime.Plan
-	expected := OperationAttemptBinding{
-		SourceID: target.Record.SourceID, OperationID: target.Record.OperationID,
-		RegistryRevision: plan.RegistryRevision(), ReleaseManifestSHA: plan.binding.ReleaseManifestSHA256,
-		IndexSHA: plan.IndexSHA256(), ShardSHA: target.ShardSHA256,
-		GatusKey: target.GatusEndpointKey, ObservationPeriod: target.Record.ObservationPeriod,
-	}
+	expected := operationPlanTargetBinding(scheduler.worker.runtime.Plan, target)
 	if latest.StartedAt.IsZero() || latest.StartedAt.After(now) || latest.FinishedAt.After(now) || latest.DeliveryStartedAt.After(now) || latest.DeliveryAckAt.After(now) || latest.GatusReceivedAt.After(now) {
 		return operationPlanReadinessEvidence{}, nil
 	}
@@ -460,15 +455,20 @@ func operationPlanDeliveryEvidenceValid(attempt OperationStoredAttempt) bool {
 	return attempt.DeliveryState == "readback_verified" && !attempt.GatusReceivedAt.IsZero() && !attempt.GatusReceivedAt.Before(attempt.DeliveryAckAt) && attempt.GatusResultState == wantState
 }
 
-func operationPlanTargetDue(target OperationPlanWorkerTarget, latest OperationStoredAttempt, now time.Time) bool {
-	if now.IsZero() || latest.StartedAt.IsZero() || target.Record.ObservationPeriod <= 0 {
+func operationPlanTargetBinding(plan PinnedOperationObservationPlan, target OperationPlanWorkerTarget) OperationAttemptBinding {
+	return OperationAttemptBinding{
+		SourceID: target.Record.SourceID, OperationID: target.Record.OperationID,
+		RegistryRevision: plan.RegistryRevision(), ReleaseManifestSHA: plan.binding.ReleaseManifestSHA256,
+		IndexSHA: plan.IndexSHA256(), ShardSHA: target.ShardSHA256,
+		GatusKey: target.GatusEndpointKey, ObservationPeriod: target.Record.ObservationPeriod,
+	}
+}
+
+func operationPlanTargetDue(target OperationPlanWorkerTarget, latest OperationStoredAttempt, binding OperationAttemptBinding, now time.Time) bool {
+	if target.Record.SourceID != binding.SourceID || target.Record.OperationID != binding.OperationID || target.ShardSHA256 != binding.ShardSHA || target.GatusEndpointKey != binding.GatusKey || target.Record.ObservationPeriod != binding.ObservationPeriod {
 		return false
 	}
-	period := target.Record.ObservationPeriod
-	if latest.Binding.ObservationPeriod > period {
-		period = latest.Binding.ObservationPeriod
-	}
-	return !now.Before(latest.StartedAt.Add(period))
+	return operationAttemptDueForBinding(latest, binding, now)
 }
 
 func (scheduler *OperationPlanScheduler) deliveryScanStart() int {

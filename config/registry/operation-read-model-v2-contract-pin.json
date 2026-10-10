@@ -1,7 +1,7 @@
 {
   "schema_version": "datapan.health-registry-operations-page.v2",
   "schema_uri": "https://schemas.datapan.dev/datapan.health-registry-operations-page.v2.schema.json",
-  "schema_sha256": "3ffb2d60fb7cb849719dec273f42944a03eb96419bb1bf2f2cc2ec31e461389e",
+  "schema_sha256": "c78cf8c72ffd5a9349d9cd156c40e9f228709e887c3f963dd0f3ce18def98c73",
   "route": "/datapan/v2/operations",
   "maximum_page_size": 50,
   "maximum_api_progress_ids": 50,

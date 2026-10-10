@@ -27,14 +27,21 @@ const (
 )
 
 var (
-	ErrOperationQuotaUnavailable = errors.New("operation quota is unavailable")
-	ErrOperationQuotaExhausted   = errors.New("operation quota is exhausted")
-	ErrOperationQuotaFenced      = errors.New("operation quota claim is fenced")
-	ErrOperationQuotaTransition  = errors.New("operation quota policy transition is unsafe")
-	quotaAttemptIDPattern        = regexp.MustCompile(`^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9a-f]{64})$`)
-	quotaScopeKindPattern        = regexp.MustCompile(`^(?:global|provider|credential|api|organization)$`)
-	quotaEvidencePointerPattern  = regexp.MustCompile(`^#(?:/.*)?$`)
+	ErrOperationQuotaUnavailable          = errors.New("operation quota is unavailable")
+	ErrOperationQuotaExhausted            = errors.New("operation quota is exhausted")
+	ErrOperationQuotaFenced               = errors.New("operation quota claim is fenced")
+	ErrOperationQuotaTransition           = errors.New("operation quota policy transition is unsafe")
+	errOperationQuotaWindowDraining error = operationQuotaWindowDrainingError{}
+	quotaAttemptIDPattern                 = regexp.MustCompile(`^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9a-f]{64})$`)
+	quotaScopeKindPattern                 = regexp.MustCompile(`^(?:global|provider|credential|api|organization)$`)
+	quotaEvidencePointerPattern           = regexp.MustCompile(`^#(?:/.*)?$`)
 )
+
+type operationQuotaWindowDrainingError struct{}
+
+func (operationQuotaWindowDrainingError) Error() string { return "operation quota window is draining" }
+
+func (operationQuotaWindowDrainingError) Unwrap() error { return ErrOperationQuotaTransition }
 
 // operationQuotaFailure retains a bounded category and a private cause for
 // errors.Is. Its public error text stays fixed and contains no filesystem or
@@ -389,6 +396,9 @@ func nextOperationQuotaClaim(state operationQuotaState, found bool, policy Opera
 		}
 		if !state.WindowStarted.Equal(windowStart) {
 			if len(operationQuotaActive(state.Active, now)) != 0 {
+				if state.PolicySHA256 == policyHash {
+					return operationQuotaState{}, OperationQuotaClaim{}, errOperationQuotaWindowDraining
+				}
 				return operationQuotaState{}, OperationQuotaClaim{}, ErrOperationQuotaTransition
 			}
 			state.WindowStarted = windowStart

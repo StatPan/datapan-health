@@ -350,6 +350,86 @@ func TestOperationQuotaAuthorityRejectsStaleReleaseAndPolicyMutation(t *testing.
 	}
 }
 
+func TestOperationQuotaWindowDrainSeparatesSamePolicyFromPolicyMutation(t *testing.T) {
+	boundary := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	window := 10 * time.Minute
+	policy := operationQuotaTestPolicy(10, window, 0)
+	authority, err := OpenOperationQuotaAuthority(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldAttemptID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	first, err := authority.Acquire(policy, oldAttemptID, boundary.Add(-time.Second), 2*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, found, err := readOperationQuotaState(authority.statePath(policy.ScopeSHA256))
+	if err != nil || !found {
+		t.Fatalf("read old-window quota state: found=%t err=%v", found, err)
+	}
+
+	_, err = authority.Acquire(policy, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", boundary.Add(time.Second), time.Minute)
+	if !errors.Is(err, errOperationQuotaWindowDraining) || !errors.Is(err, ErrOperationQuotaTransition) {
+		t.Fatalf("same-policy rollover with a live old lease did not report a retryable drain subtype: %v", err)
+	}
+	after, found, readErr := readOperationQuotaState(authority.statePath(policy.ScopeSHA256))
+	if readErr != nil || !found || after.WindowStarted != before.WindowStarted || after.RequestsUsed != before.RequestsUsed || after.Generation != before.Generation || len(after.Active) != len(before.Active) {
+		t.Fatalf("rejected rollover changed durable quota usage or claims: before=%#v after=%#v err=%v", before, after, readErr)
+	}
+
+	mutated := policy
+	mutated.RequestsPerWindow++
+	_, err = authority.Acquire(mutated, "cccccccc-cccc-4ccc-8ccc-cccccccccccc", boundary.Add(2*time.Second), time.Minute)
+	if !errors.Is(err, ErrOperationQuotaTransition) || errors.Is(err, errOperationQuotaWindowDraining) {
+		t.Fatalf("policy mutation acquired the transient same-policy retry marker: %v", err)
+	}
+
+	if err := authority.Release(first, boundary.Add(3*time.Second)); err != nil {
+		t.Fatalf("release old claim after the boundary: %v", err)
+	}
+	rolled, err := authority.Acquire(policy, "dddddddd-dddd-4ddd-8ddd-dddddddddddd", boundary.Add(4*time.Second), time.Minute)
+	if err != nil {
+		t.Fatalf("empty old window did not roll over: %v", err)
+	}
+	state, found, err := readOperationQuotaState(authority.statePath(policy.ScopeSHA256))
+	if err != nil || !found || !state.WindowStarted.Equal(boundary) || state.RequestsUsed != 1 || state.Active[rolled.AttemptID].Generation != rolled.Generation {
+		t.Fatalf("ordinary window rollover did not start with one claimed request: state=%#v err=%v", state, err)
+	}
+}
+
+func TestOperationQuotaWindowDrainIsAtomicAcrossScopes(t *testing.T) {
+	boundary := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	authority, err := OpenOperationQuotaAuthority(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	policies := []OperationQuotaPolicy{
+		operationQuotaPolicyForScope("global", "window-drain-atomic", 4, 100),
+		operationQuotaPolicyForScope("provider", "window-drain-atomic", 4, 100),
+	}
+	for index := range policies {
+		policies[index].Window = 10 * time.Minute
+	}
+	normalized, err := normalizeOperationQuotaPolicies(policies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activePolicy := normalized[len(normalized)-1]
+	if _, err := authority.Acquire(activePolicy, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", boundary.Add(-time.Second), 2*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := authority.AcquireMany(normalized, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", boundary.Add(time.Second), time.Minute); !errors.Is(err, errOperationQuotaWindowDraining) {
+		t.Fatalf("multi-scope acquisition did not identify the active old-window lease: %v", err)
+	}
+	if _, found, err := readOperationQuotaState(authority.statePath(normalized[0].ScopeSHA256)); err != nil || found {
+		t.Fatalf("failed atomic acquisition persisted an earlier scope claim: found=%t err=%v", found, err)
+	}
+	state, found, err := readOperationQuotaState(authority.statePath(activePolicy.ScopeSHA256))
+	if err != nil || !found || state.WindowStarted != boundary.Add(-time.Minute).Truncate(activePolicy.Window) || state.RequestsUsed != 1 || len(state.Active) != 1 {
+		t.Fatalf("failed atomic acquisition changed the blocked scope: state=%#v err=%v", state, err)
+	}
+}
+
 func TestOperationQuotaAuthorityCoordinatesIndependentWorkerProcesses(t *testing.T) {
 	root := t.TempDir()
 	left, err := OpenOperationQuotaAuthority(root)

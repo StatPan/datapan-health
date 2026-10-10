@@ -652,16 +652,56 @@ func TestOperationPlanCapacityReportsWholeFleetInfeasibleAtSafeCaps(t *testing.T
 
 func TestOperationPlanTargetDueUsesSlowerBoundPlanCadenceAndDoesNotReplaySlots(t *testing.T) {
 	started := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
-	target := OperationPlanWorkerTarget{Record: OperationObservationPlanRecord{ObservationPeriod: 10 * time.Minute}}
-	latest := OperationStoredAttempt{StartedAt: started, Binding: OperationAttemptBinding{ObservationPeriod: 5 * time.Minute}}
-	if operationPlanTargetDue(target, latest, started.Add(9*time.Minute+59*time.Second)) {
+	binding := testOperationAttemptBinding()
+	binding.ObservationPeriod = 10 * time.Minute
+	latestBinding := binding
+	latestBinding.ObservationPeriod = 5 * time.Minute
+	target := OperationPlanWorkerTarget{Record: OperationObservationPlanRecord{SourceID: binding.SourceID, OperationID: binding.OperationID, ObservationPeriod: binding.ObservationPeriod}, ShardSHA256: binding.ShardSHA, GatusEndpointKey: binding.GatusKey}
+	latest := OperationStoredAttempt{StartedAt: started, Binding: latestBinding}
+	if operationPlanTargetDue(target, latest, binding, started.Add(9*time.Minute+59*time.Second)) {
 		t.Fatal("operation was rescheduled before the slower immutable period elapsed")
 	}
-	if !operationPlanTargetDue(target, latest, started.Add(10*time.Minute)) {
+	if !operationPlanTargetDue(target, latest, binding, started.Add(10*time.Minute)) {
 		t.Fatal("operation did not become due at its immutable period")
 	}
-	if !operationPlanTargetDue(target, latest, started.Add(24*time.Hour)) {
+	if !operationPlanTargetDue(target, latest, binding, started.Add(24*time.Hour)) {
 		t.Fatal("missed periods were treated as a reason to replay a backlog of calls")
+	}
+}
+
+func TestOperationPlanTargetDueUsesRetryOnlyForExactQuotaWindowDeferral(t *testing.T) {
+	started := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	binding := testOperationAttemptBinding()
+	binding.ObservationPeriod = 4 * time.Hour
+	requestStarted := false
+	latest := OperationStoredAttempt{
+		Binding: binding, StartedAt: started, LeaseExpiresAt: started.Add(30 * time.Second), FinishedAt: started.Add(time.Second), State: "deferred",
+		BlockReason: operationAttemptReasonQuotaWindowDrain, DeferredStage: operationAttemptDeferredStageQuota,
+		DeferredCategory: operationAttemptDeferredCategoryWindow, RequestStarted: &requestStarted,
+		DeliveryState: "not_ready",
+	}
+	target := OperationPlanWorkerTarget{Record: OperationObservationPlanRecord{SourceID: binding.SourceID, OperationID: binding.OperationID, ObservationPeriod: binding.ObservationPeriod}, ShardSHA256: binding.ShardSHA, GatusEndpointKey: binding.GatusKey}
+	if operationPlanTargetDue(target, latest, binding, latest.FinishedAt.Add(operationAttemptDeferredRetryDelay-time.Nanosecond)) {
+		t.Fatal("scheduler retried before the persisted defer cooldown")
+	}
+	if !operationPlanTargetDue(target, latest, binding, latest.FinishedAt.Add(operationAttemptDeferredRetryDelay)) {
+		t.Fatal("scheduler did not retry at the exact bounded no-dispatch deadline")
+	}
+	changedBinding := binding
+	changedBinding.ReleaseManifestSHA = strings.Repeat("f", 64)
+	if operationPlanTargetDue(target, latest, changedBinding, latest.FinishedAt.Add(operationAttemptDeferredRetryDelay)) {
+		t.Fatal("scheduler granted a retry under a different immutable binding")
+	}
+	requestStarted = true
+	latest.RequestStarted = &requestStarted
+	if operationPlanTargetDue(target, latest, binding, latest.FinishedAt.Add(operationAttemptDeferredRetryDelay)) {
+		t.Fatal("scheduler retried after a request may have started")
+	}
+	requestStarted = false
+	latest.RequestStarted = &requestStarted
+	latest.BlockReason = operationAttemptReasonChildUnavailable
+	if operationPlanTargetDue(target, latest, binding, latest.FinishedAt.Add(operationAttemptDeferredRetryDelay)) {
+		t.Fatal("old coarse child_unavailable state received retry authority without typed proof")
 	}
 }
 

@@ -43,6 +43,10 @@ const (
 	operationAttemptReasonQuotaCapacity    = "quota_capacity"
 	operationAttemptReasonHistoryCapacity  = "history_capacity"
 	operationAttemptReasonChildUnavailable = "child_unavailable"
+	operationAttemptReasonQuotaWindowDrain = "quota_window_draining"
+	operationAttemptDeferredStageQuota     = "quota_acquire"
+	operationAttemptDeferredCategoryWindow = "window_draining"
+	operationAttemptDeferredRetryDelay     = 30 * time.Second
 )
 
 // OperationAttemptBinding is the immutable Registry identity chain for one
@@ -105,6 +109,8 @@ type OperationStoredAttempt struct {
 	ReceiptSHA256      string                      `json:"receipt_sha256,omitempty"`
 	RequestStarted     *bool                       `json:"request_started"`
 	BlockReason        string                      `json:"block_reason,omitempty"`
+	DeferredStage      string                      `json:"deferred_stage,omitempty"`
+	DeferredCategory   string                      `json:"deferred_category,omitempty"`
 	Result             *OperationObservationResult `json:"result,omitempty"`
 	DeliveryState      string                      `json:"delivery_state"`
 	DeliveryGeneration uint64                      `json:"delivery_generation"`
@@ -384,12 +390,7 @@ func (store *OperationAttemptStore) BeginAttemptContext(ctx context.Context, bin
 				resultErr = ErrOperationAttemptAmbiguous
 				return nil
 			}
-			period := latest.Binding.ObservationPeriod
-			if binding.ObservationPeriod > period {
-				period = binding.ObservationPeriod
-			}
-			dueAt := latest.StartedAt.Add(period)
-			if now.Before(dueAt) {
+			if !operationAttemptDueForBinding(*latest, binding, now) {
 				return ErrOperationAttemptNotDue
 			}
 		}
@@ -645,11 +646,15 @@ func (store *OperationAttemptStore) recordBlockedAttemptContext(ctx context.Cont
 // durable claim but before invoking the CLI child. It carries no receipt and
 // proves only that this Health worker did not start the child request.
 func (store *OperationAttemptStore) RecordPreDispatchDeferred(claim OperationAttemptClaim, blockReason string, now time.Time) error {
-	return store.recordPreDispatchDeferredContext(context.Background(), claim, blockReason, now)
+	return store.recordPreDispatchDeferredEvidenceContext(context.Background(), claim, blockReason, "", "", now)
 }
 
 func (store *OperationAttemptStore) recordPreDispatchDeferredContext(ctx context.Context, claim OperationAttemptClaim, blockReason string, now time.Time) error {
-	if store == nil || ctx == nil || ctx.Err() != nil || !validOperationAttemptClaim(claim) || !validOperationAttemptDeferredReason(blockReason) || now.IsZero() {
+	return store.recordPreDispatchDeferredEvidenceContext(ctx, claim, blockReason, "", "", now)
+}
+
+func (store *OperationAttemptStore) recordPreDispatchDeferredEvidenceContext(ctx context.Context, claim OperationAttemptClaim, blockReason, deferredStage, deferredCategory string, now time.Time) error {
+	if store == nil || ctx == nil || ctx.Err() != nil || !validOperationAttemptClaim(claim) || !validOperationAttemptDeferredReason(blockReason) || !validOperationAttemptDeferredEvidence(deferredStage, deferredCategory) || now.IsZero() {
 		return ErrOperationAttemptUnavailable
 	}
 	now = now.UTC()
@@ -664,9 +669,56 @@ func (store *OperationAttemptStore) recordPreDispatchDeferredContext(ctx context
 		attempt.ReceiptValidated = false
 		attempt.RequestStarted = &requestStarted
 		attempt.BlockReason = blockReason
+		attempt.DeferredStage = deferredStage
+		attempt.DeferredCategory = deferredCategory
 		attempt.FinishedAt = now
 		return nil
 	})
+}
+
+func operationAttemptDueForBinding(latest OperationStoredAttempt, binding OperationAttemptBinding, now time.Time) bool {
+	if now.IsZero() || latest.StartedAt.IsZero() || !validOperationAttemptBinding(binding) {
+		return false
+	}
+	if operationAttemptHasRetryableQuotaWindowDrain(latest, binding, now) {
+		return !now.Before(latest.FinishedAt.Add(operationAttemptDeferredRetryDelay))
+	}
+	period := latest.Binding.ObservationPeriod
+	if binding.ObservationPeriod > period {
+		period = binding.ObservationPeriod
+	}
+	return period > 0 && !now.Before(latest.StartedAt.Add(period))
+}
+
+func operationAttemptHasRetryableQuotaWindowDrain(latest OperationStoredAttempt, binding OperationAttemptBinding, now time.Time) bool {
+	return now.IsZero() == false && latest.Binding == binding && latest.State == "deferred" &&
+		latest.BlockReason == operationAttemptReasonQuotaWindowDrain &&
+		latest.DeferredStage == operationAttemptDeferredStageQuota &&
+		latest.DeferredCategory == operationAttemptDeferredCategoryWindow &&
+		latest.RequestStarted != nil && !*latest.RequestStarted && !latest.ReceiptValidated &&
+		latest.ReceiptSHA256 == "" && latest.Result == nil && latest.DeliveryState == "not_ready" &&
+		!latest.StartedAt.IsZero() && !latest.FinishedAt.IsZero() && !latest.FinishedAt.Before(latest.StartedAt) &&
+		!latest.LeaseExpiresAt.IsZero() && latest.FinishedAt.Before(latest.LeaseExpiresAt) && !latest.FinishedAt.After(now)
+}
+
+func validOperationAttemptDeferredEvidence(stage, category string) bool {
+	if stage == "" && category == "" {
+		return true // Older callers and stored records have no retry authority.
+	}
+	switch stage {
+	case "expectation", "history_reservation", operationAttemptDeferredStageQuota, "execution_deadline":
+	default:
+		return false
+	}
+	switch category {
+	case "validation", "capacity", "deadline", "lock", "io", "store_unavailable", "canceled", "unavailable", operationAttemptDeferredCategoryWindow, "policy_transition", "infeasible":
+	default:
+		return false
+	}
+	if category == "validation" && stage != "expectation" || category == "infeasible" && stage != "execution_deadline" || (category == operationAttemptDeferredCategoryWindow || category == "policy_transition") && stage != operationAttemptDeferredStageQuota {
+		return false
+	}
+	return true
 }
 
 func (store *OperationAttemptStore) FailAttempt(claim OperationAttemptClaim, now time.Time) error {
@@ -695,7 +747,7 @@ func validOperationAttemptBlockReason(value string) bool {
 }
 
 func validOperationAttemptDeferredReason(value string) bool {
-	return value == operationAttemptReasonQuotaCapacity || value == operationAttemptReasonHistoryCapacity || value == operationAttemptReasonChildUnavailable
+	return value == operationAttemptReasonQuotaCapacity || value == operationAttemptReasonHistoryCapacity || value == operationAttemptReasonChildUnavailable || value == operationAttemptReasonQuotaWindowDrain
 }
 
 // ClaimDelivery durably marks the summary pending before the HTTP request.
@@ -1265,7 +1317,7 @@ func validOperationAttemptState(state operationAttemptState, sourceID, operation
 		}
 		previousGeneration = attempt.Generation
 		if attempt.State == "claimed" {
-			if !attempt.FinishedAt.IsZero() || attempt.DeliveryState != "not_ready" || attempt.ReceiptValidated || attempt.RequestStarted != nil || attempt.Result != nil || attempt.ReceiptSHA256 != "" || attempt.BlockReason != "" {
+			if !attempt.FinishedAt.IsZero() || attempt.DeliveryState != "not_ready" || attempt.ReceiptValidated || attempt.RequestStarted != nil || attempt.Result != nil || attempt.ReceiptSHA256 != "" || attempt.BlockReason != "" || attempt.DeferredStage != "" || attempt.DeferredCategory != "" {
 				return false
 			}
 		} else if attempt.FinishedAt.IsZero() || attempt.FinishedAt.Before(attempt.StartedAt) {
@@ -1273,23 +1325,23 @@ func validOperationAttemptState(state operationAttemptState, sourceID, operation
 		}
 		switch attempt.State {
 		case "observed":
-			if attempt.Result == nil || !validOperationObservationResult(*attempt.Result) || attempt.Result.ReceivedAt.IsZero() || attempt.FinishedAt.Before(attempt.Result.ReceivedAt) || !attempt.ReceiptValidated || attempt.RequestStarted == nil || !*attempt.RequestStarted || attempt.ReceiptSHA256 != attempt.Result.ReceiptSHA || attempt.BlockReason != "" {
+			if attempt.Result == nil || !validOperationObservationResult(*attempt.Result) || attempt.Result.ReceivedAt.IsZero() || attempt.FinishedAt.Before(attempt.Result.ReceivedAt) || !attempt.ReceiptValidated || attempt.RequestStarted == nil || !*attempt.RequestStarted || attempt.ReceiptSHA256 != attempt.Result.ReceiptSHA || attempt.BlockReason != "" || attempt.DeferredStage != "" || attempt.DeferredCategory != "" {
 				return false
 			}
 		case "request_started":
-			if attempt.Result != nil || !attempt.ReceiptValidated || attempt.RequestStarted == nil || !*attempt.RequestStarted || !sha256Pattern.MatchString(attempt.ReceiptSHA256) || attempt.BlockReason != "" {
+			if attempt.Result != nil || !attempt.ReceiptValidated || attempt.RequestStarted == nil || !*attempt.RequestStarted || !sha256Pattern.MatchString(attempt.ReceiptSHA256) || attempt.BlockReason != "" || attempt.DeferredStage != "" || attempt.DeferredCategory != "" {
 				return false
 			}
 		case "failed":
-			if attempt.Result != nil || !attempt.ReceiptValidated || attempt.RequestStarted == nil || *attempt.RequestStarted || !sha256Pattern.MatchString(attempt.ReceiptSHA256) || !validOperationAttemptBlockReason(attempt.BlockReason) {
+			if attempt.Result != nil || !attempt.ReceiptValidated || attempt.RequestStarted == nil || *attempt.RequestStarted || !sha256Pattern.MatchString(attempt.ReceiptSHA256) || !validOperationAttemptBlockReason(attempt.BlockReason) || attempt.DeferredStage != "" || attempt.DeferredCategory != "" {
 				return false
 			}
 		case "deferred":
-			if attempt.Result != nil || attempt.ReceiptValidated || attempt.RequestStarted == nil || *attempt.RequestStarted || attempt.ReceiptSHA256 != "" || !validOperationAttemptDeferredReason(attempt.BlockReason) || attempt.DeliveryState != "not_ready" {
+			if attempt.Result != nil || attempt.ReceiptValidated || attempt.RequestStarted == nil || *attempt.RequestStarted || attempt.ReceiptSHA256 != "" || !validOperationAttemptDeferredReason(attempt.BlockReason) || !validOperationAttemptDeferredEvidence(attempt.DeferredStage, attempt.DeferredCategory) || attempt.DeliveryState != "not_ready" {
 				return false
 			}
 		case "unknown":
-			if attempt.Result != nil || attempt.ReceiptValidated || attempt.RequestStarted != nil || attempt.ReceiptSHA256 != "" || attempt.BlockReason != "" || attempt.DeliveryState != "not_ready" {
+			if attempt.Result != nil || attempt.ReceiptValidated || attempt.RequestStarted != nil || attempt.ReceiptSHA256 != "" || attempt.BlockReason != "" || attempt.DeferredStage != "" || attempt.DeferredCategory != "" || attempt.DeliveryState != "not_ready" {
 				return false
 			}
 		}

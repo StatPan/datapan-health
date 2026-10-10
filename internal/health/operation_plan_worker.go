@@ -268,11 +268,7 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 	if err != nil {
 		return OperationPlanWorkerResult{}, errOperationPlanWorkerUnavailable
 	}
-	binding := OperationAttemptBinding{
-		SourceID: sourceID, OperationID: operationID, RegistryRevision: worker.runtime.Plan.RegistryRevision(),
-		ReleaseManifestSHA: worker.runtime.Plan.binding.ReleaseManifestSHA256, IndexSHA: worker.runtime.Plan.IndexSHA256(),
-		ShardSHA: target.ShardSHA256, GatusKey: target.GatusEndpointKey, ObservationPeriod: target.Record.ObservationPeriod,
-	}
+	binding := operationPlanTargetBinding(worker.runtime.Plan, target)
 	preDispatchCtx, cancelPreDispatch := context.WithTimeout(ctx, operationPlanPreDispatchCleanupTimeout)
 	defer cancelPreDispatch()
 	stage = "attempt_begin"
@@ -289,7 +285,7 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 	stage = "expectation"
 	expected, err := operationPlanProbeExpected(worker.runtime.Plan, target.Record, target.ShardSHA256, claim.AttemptID, worker.lock, worker.arch, claim.StartedAt)
 	if err != nil {
-		return worker.deferBeforeDispatch(claim, result, operationAttemptReasonChildUnavailable, now, nil, OperationHistoryReservation{})
+		return worker.deferBeforeDispatch(claim, result, operationAttemptReasonChildUnavailable, "expectation", "validation", now, nil, OperationHistoryReservation{})
 	}
 	stage = "history_reservation"
 	reservation, err := worker.history.Reserve(preDispatchCtx, identity)
@@ -303,7 +299,7 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 		if errors.Is(err, ErrOperationHistoryCapacity) {
 			reason = operationAttemptReasonHistoryCapacity
 		}
-		return worker.deferBeforeDispatch(claim, result, reason, now, nil, OperationHistoryReservation{})
+		return worker.deferBeforeDispatch(claim, result, reason, "history_reservation", operationPlanDeferredCategory(err), now, nil, OperationHistoryReservation{})
 	}
 	quotaNow := time.Now().UTC()
 	stage = "quota_acquire"
@@ -312,10 +308,13 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 		stage = "quota_acquire_cleanup"
 		cancelErr := cancelOperationHistoryReservation(worker.history, identity, reservation)
 		reason := operationAttemptReasonChildUnavailable
+		deferredCategory := operationPlanDeferredCategory(err)
 		if errors.Is(err, ErrOperationQuotaExhausted) {
 			reason = operationAttemptReasonQuotaCapacity
+		} else if errors.Is(err, errOperationQuotaWindowDraining) {
+			reason = operationAttemptReasonQuotaWindowDrain
 		}
-		deferred, deferErr := worker.deferBeforeDispatch(claim, result, reason, quotaNow, nil, OperationHistoryReservation{})
+		deferred, deferErr := worker.deferBeforeDispatch(claim, result, reason, "quota_acquire", deferredCategory, quotaNow, nil, OperationHistoryReservation{})
 		if cancelErr != nil {
 			return deferred, newOperationPlanWorkerFailure("quota_acquire_cleanup", cancelErr)
 		}
@@ -329,7 +328,7 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 	deadline, deadlineOK := operationPlanProbeExecutionDeadline(deadlineNow, target.Record.RequestTimeout, claim.ExpiresAt, attemptID, quotaClaims)
 	if !deadlineOK {
 		releasedErr := worker.releaseQuotaClaims(quotaClaims)
-		deferred, deferErr := worker.deferBeforeDispatch(claim, result, operationAttemptReasonChildUnavailable, deadlineNow, worker.history, reservation)
+		deferred, deferErr := worker.deferBeforeDispatch(claim, result, operationAttemptReasonChildUnavailable, "execution_deadline", "infeasible", deadlineNow, worker.history, reservation)
 		if deferErr != nil {
 			return deferred, deferErr
 		}
@@ -564,7 +563,21 @@ func (worker *OperationPlanWorker) DeliverOne(ctx context.Context, sourceID, ope
 	return nil
 }
 
-func (worker *OperationPlanWorker) deferBeforeDispatch(claim OperationAttemptClaim, result OperationPlanWorkerResult, reason string, now time.Time, history OperationHistoryAppender, reservation OperationHistoryReservation) (OperationPlanWorkerResult, error) {
+func operationPlanDeferredCategory(cause error) string {
+	if errors.Is(cause, errOperationQuotaWindowDraining) {
+		return operationAttemptDeferredCategoryWindow
+	}
+	if errors.Is(cause, ErrOperationQuotaTransition) {
+		return "policy_transition"
+	}
+	category := operationPlanWorkerFailureCategory(cause)
+	if validOperationPlanWorkerFailureCategory(category) {
+		return category
+	}
+	return "unavailable"
+}
+
+func (worker *OperationPlanWorker) deferBeforeDispatch(claim OperationAttemptClaim, result OperationPlanWorkerResult, reason, deferredStage, deferredCategory string, now time.Time, history OperationHistoryAppender, reservation OperationHistoryReservation) (OperationPlanWorkerResult, error) {
 	if history != nil && reservation.Matches(OperationHistoryIdentity{
 		SourceID: claim.Binding.SourceID, OperationID: claim.Binding.OperationID, AttemptID: claim.AttemptID,
 		Generation: claim.Generation, RegistryRevision: claim.Binding.RegistryRevision,
@@ -581,7 +594,7 @@ func (worker *OperationPlanWorker) deferBeforeDispatch(claim OperationAttemptCla
 	}
 	deferCtx, cancel := context.WithTimeout(context.Background(), operationPlanPreDispatchCleanupTimeout)
 	defer cancel()
-	if err := worker.attempts.recordPreDispatchDeferredContext(deferCtx, claim, reason, now.UTC()); err != nil {
+	if err := worker.attempts.recordPreDispatchDeferredEvidenceContext(deferCtx, claim, reason, deferredStage, deferredCategory, now.UTC()); err != nil {
 		return result, newOperationPlanWorkerFailure("pre_dispatch_cleanup", err)
 	}
 	result.AttemptState = "deferred"

@@ -10,7 +10,7 @@ import (
 )
 
 func TestHealthRegistryOperationsPageV2Schema(t *testing.T) {
-	const expectedSchemaSHA256 = "3ffb2d60fb7cb849719dec273f42944a03eb96419bb1bf2f2cc2ec31e461389e"
+	const expectedSchemaSHA256 = "c78cf8c72ffd5a9349d9cd156c40e9f228709e887c3f963dd0f3ce18def98c73"
 	if got := schemas.HealthRegistryOperationsPageV2SchemaSHA256(); got != expectedSchemaSHA256 {
 		t.Fatalf("pinned page schema digest = %s, want %s", got, expectedSchemaSHA256)
 	}
@@ -132,6 +132,11 @@ func TestHealthRegistryOperationsPageV2Schema(t *testing.T) {
 	raw, _ = json.Marshal(page)
 	if err := schemas.ValidateHealthRegistryOperationsPageV2(raw); err != nil {
 		t.Fatalf("schema rejected a prior observation after a deferred attempt: %s (%v)", raw, err)
+	}
+	page.Operations[0].ExecutionBlockReason = "quota_window_draining"
+	raw, _ = json.Marshal(page)
+	if err := schemas.ValidateHealthRegistryOperationsPageV2(raw); err != nil {
+		t.Fatalf("schema rejected the safe quota-window deferral reason: %s (%v)", raw, err)
 	}
 	page.Operations[0].Attempted = false
 	raw, _ = json.Marshal(page)

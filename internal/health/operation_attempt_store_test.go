@@ -72,6 +72,96 @@ func TestOperationAttemptRequiresStoreIssuedHistoryAppendProof(t *testing.T) {
 	}
 }
 
+func TestOperationAttemptQuotaWindowRetryIsPersistedBoundedAndFenced(t *testing.T) {
+	root := t.TempDir()
+	store, err := OpenOperationAttemptStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := testOperationAttemptBinding()
+	binding.ObservationPeriod = 4 * time.Hour
+	started := time.Date(2026, 10, 7, 8, 30, 0, 0, time.UTC)
+	claim, err := store.BeginAttempt(binding, strings.Repeat("a", 64), started, 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := started.Add(time.Second)
+	if err := store.recordPreDispatchDeferredEvidenceContext(context.Background(), claim, operationAttemptReasonQuotaWindowDrain, operationAttemptDeferredStageQuota, operationAttemptDeferredCategoryWindow, finished); err != nil {
+		t.Fatal(err)
+	}
+	latest, found, err := store.Latest(binding.SourceID, binding.OperationID)
+	if err != nil || !found {
+		t.Fatalf("read durable retry evidence: found=%t err=%v", found, err)
+	}
+	if operationAttemptDueForBinding(latest, binding, finished.Add(operationAttemptDeferredRetryDelay-time.Nanosecond)) || !operationAttemptDueForBinding(latest, binding, finished.Add(operationAttemptDeferredRetryDelay)) {
+		t.Fatal("retry was not withheld until the exact persisted 30-second boundary")
+	}
+	for name, mutate := range map[string]func(*OperationStoredAttempt){
+		"binding changed": func(attempt *OperationStoredAttempt) { attempt.Binding.IndexSHA = strings.Repeat("f", 64) },
+		"request started": func(attempt *OperationStoredAttempt) {
+			startedRequest := true
+			attempt.RequestStarted = &startedRequest
+		},
+		"request status unknown": func(attempt *OperationStoredAttempt) { attempt.RequestStarted = nil },
+		"category changed":       func(attempt *OperationStoredAttempt) { attempt.DeferredCategory = "policy_transition" },
+		"future finish":          func(attempt *OperationStoredAttempt) { attempt.FinishedAt = finished.Add(time.Second) },
+		"finish before start":    func(attempt *OperationStoredAttempt) { attempt.FinishedAt = started.Add(-time.Nanosecond) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := latest
+			mutate(&candidate)
+			if operationAttemptDueForBinding(candidate, binding, finished.Add(operationAttemptDeferredRetryDelay)) {
+				t.Fatal("malformed or differently bound deferred state received retry authority")
+			}
+		})
+	}
+
+	reopened, err := OpenOperationAttemptStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reopened.BeginAttempt(binding, strings.Repeat("b", 64), finished.Add(operationAttemptDeferredRetryDelay-time.Nanosecond), time.Minute); !errors.Is(err, ErrOperationAttemptNotDue) {
+		t.Fatalf("reopened attempt store allowed a pre-boundary retry: %v", err)
+	}
+	otherProcess, err := OpenOperationAttemptStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retryAt := finished.Add(operationAttemptDeferredRetryDelay)
+	start := make(chan struct{})
+	type beginResult struct {
+		claim OperationAttemptClaim
+		err   error
+	}
+	results := make(chan beginResult, 2)
+	for index, instance := range []*OperationAttemptStore{reopened, otherProcess} {
+		attemptID := strings.Repeat([]string{"c", "d"}[index], 64)
+		go func(instance *OperationAttemptStore, attemptID string) {
+			<-start
+			next, beginErr := instance.BeginAttempt(binding, attemptID, retryAt, time.Minute)
+			results <- beginResult{claim: next, err: beginErr}
+		}(instance, attemptID)
+	}
+	close(start)
+	var successes, held int
+	for range 2 {
+		result := <-results
+		if result.err == nil {
+			successes++
+			if result.claim.Generation <= claim.Generation {
+				t.Fatalf("retry generation did not advance beyond the deferred claim: %#v", result.claim)
+			}
+		} else if errors.Is(result.err, ErrOperationAttemptHeld) {
+			held++
+		} else {
+			t.Fatalf("unexpected competing retry error: %v", result.err)
+		}
+	}
+	if successes != 1 || held != 1 {
+		t.Fatalf("persisted retry gate did not fence competing stores: success=%d held=%d", successes, held)
+	}
+}
+
 func operationHistoryIdentityIDForTest(t *testing.T, identity OperationHistoryIdentity) string {
 	t.Helper()
 	value, err := operationHistoryIdentityID(identity)
