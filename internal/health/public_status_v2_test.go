@@ -123,6 +123,35 @@ func TestPublicRegistryOperationsRouteFailsClosedAndPreservesV1(t *testing.T) {
 	}
 }
 
+func TestPublicRegistryOperationsMapsInvalidOpaqueCursorToBadRequest(t *testing.T) {
+	metadata := testRegistryAPIMetadata(t)
+	for _, test := range []struct {
+		name      string
+		sourceErr error
+		want      int
+	}{
+		{name: "invalid cursor", sourceErr: ErrOperationReadModelQuery, want: http.StatusBadRequest},
+		{name: "unavailable read model", sourceErr: ErrOperationReadModelUnavailable, want: http.StatusServiceUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			operations := staticPublicRegistryOperations{err: test.sourceErr}
+			handler, err := NewPublicStatusHandlerWithRegistryOperations(
+				staticPublicSource{document: testPublicDocument(t)},
+				[]string{"https://datapan.statpan.com"}, metadata, nil, operations,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodGet, "/datapan/v2/operations?cursor=YWJj", nil)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != test.want || strings.Contains(recorder.Body.String(), "YWJj") {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
 func TestPublicRegistryOperationsRouteUsesBoundedModelAndSameCORS(t *testing.T) {
 	root, binding, _ := writeSyntheticOperationObservationPlan(t, false)
 	plan, err := LoadPinnedOperationObservationPlan(root, binding)
@@ -277,7 +306,7 @@ func TestPublicHTMLUsesPinnedOperationProgressAndFailsClosedOnMismatch(t *testin
 	source := staticPublicRegistryOperations{page: base, progress: []OperationAPIProgress{progress}, lookup: partialRows}
 	page := publicHTMLPage{Directory: true, APIs: []publicHTMLAPI{{RegistryAPIID: "api-1", APIOperations: 2}}}
 	attachPublicOperationReadModel(&page, metadata, source, []string{"api-1"}, map[string]int{"api-1": 2}, now)
-	attachPublicPartialScopes(&page, source, now)
+	attachPublicPartialScopes(&page, source, nil, now)
 	if page.OperationReadModelUnavailable || !page.OperationPlan.Available || len(page.APIs) != 1 || page.APIs[0].Progress == nil {
 		t.Fatalf("valid pinned operation progress was unavailable: %#v", page)
 	}
@@ -316,7 +345,7 @@ func TestPublicHTMLUsesPinnedOperationProgressAndFailsClosedOnMismatch(t *testin
 	brokenPartial := source
 	brokenPartial.lookup = nil
 	closedPartial := publicHTMLPage{Directory: true, OperationPlan: page.OperationPlan}
-	attachPublicPartialScopes(&closedPartial, brokenPartial, now)
+	attachPublicPartialScopes(&closedPartial, brokenPartial, nil, now)
 	if !closedPartial.PartialScopesUnavailable || len(closedPartial.PartialScopes) != 0 {
 		t.Fatalf("missing partial scope source did not fail closed: %#v", closedPartial)
 	}
@@ -352,13 +381,28 @@ func TestPublicHTMLReadModelOperationStatusAndDiagnosisAreAllowlisted(t *testing
 	if pass.StatusClass != "badge-good" || pass.ObservationLabel != "최근 검사 결과 통과" || pass.Name != "현재 대기소 조회" {
 		t.Fatalf("validated pass was not localized safely: %#v", pass)
 	}
-	longPurpose := strings.Repeat("공공 API 자료 설명입니다. ", 40)
+	if pass.Title != "대기소 정보" || pass.Organization != "기관 A" || pass.DescriptionLabel != "상위 API 설명" || pass.Description != "현재 대기소 정보를 확인합니다" {
+		t.Fatalf("operation detail lost its parent API context or misattributed the API description: %#v", pass)
+	}
+	operationPage := publicHTMLPage{
+		Detail: true, DetailTitle: "대기소 API", DetailOrganization: "기관 A",
+		ReadModelOperationsAvailable: true, Operations: []publicHTMLOperation{pass},
+	}
+	var operationHTML bytes.Buffer
+	if err := publicStatusPages.Execute(&operationHTML, operationPage); err != nil {
+		t.Fatal(err)
+	}
+	renderedOperation := operationHTML.String()
+	if !strings.Contains(renderedOperation, "상위 API 설명:") || !strings.Contains(renderedOperation, "상위 API:") || !strings.Contains(renderedOperation, "기능별 설명:</strong> Registry 원본에서 이 기능만의 설명은 별도로 확인되지 않았습니다.") || !strings.Contains(renderedOperation, "위 설명은 상위 API 전체에 대한 설명입니다.") {
+		t.Fatalf("operation page presented its parent API description as a per-function purpose: %s", renderedOperation)
+	}
+	longPurpose := strings.TrimSpace(strings.Repeat("공공 API 자료 설명입니다. ", 40))
 	if len(longPurpose) <= 512 {
 		t.Fatal("long-purpose fixture did not exceed the former byte cutoff")
 	}
 	longDescription := base
 	longDescription.Purpose = longPurpose
-	if got := publicHTMLReadModelOperation(longDescription, now).Description; got != strings.TrimSpace(longPurpose) {
+	if got := publicHTMLReadModelOperation(longDescription, now).Description; got != longPurpose {
 		t.Fatalf("valid long Korean purpose was dropped or changed: %d bytes", len(got))
 	}
 	credentialGuidance := base
@@ -377,6 +421,56 @@ func TestPublicHTMLReadModelOperationStatusAndDiagnosisAreAllowlisted(t *testing
 	unknown := publicHTMLReadModelOperation(indeterminate, now)
 	if unknown.StatusClass == "badge-good" || unknown.StatusClass == "badge-bad" || unknown.ObservationLabel != "현재 결과로 상태 판정 불가" {
 		t.Fatalf("indeterminate result was mapped to a pass or confirmed provider failure: %#v", unknown)
+	}
+
+	semanticUnknown := base
+	semanticUnknown.ObservationState, semanticUnknown.ResultState, semanticUnknown.ResultCategory = "current_indeterminate", "indeterminate", "response_semantics_unestablished"
+	semanticUnknown.GatusDeliveryState = "not_applicable"
+	httpOK := 204
+	semanticUnknown.ProviderHTTPStatus = &httpOK
+	semanticRow := publicHTMLReadModelOperation(semanticUnknown, now)
+	if semanticRow.StatusClass != "badge-warn" || semanticRow.ObservationLabel != "응답 수신 · 이용 가능성 판정 근거 부족" || semanticRow.ResultLabel != "HTTP 204 응답 · 이용 가능성 판정 근거 부족" || semanticRow.DeliveryLabel != "전달 대상 아님 · 응답 의미 미판정" {
+		t.Fatalf("observation-only response was presented as usable or sent to Gatus: %#v", semanticRow)
+	}
+	partialDetail, partialNext := publicPartialOperationDiagnosis(semanticUnknown)
+	if !strings.Contains(partialDetail, "HTTP 204 응답은 받았지만") || !strings.Contains(partialNext, "공식 API 문서") {
+		t.Fatalf("partial-source row omitted the observation-only limitation or next action: detail=%q next=%q", partialDetail, partialNext)
+	}
+	partialStatus, partialStatusClass := publicPartialOperationObservation(semanticUnknown)
+	if partialStatus != "응답 수신 · 이용 가능성 판정 근거 부족" || partialStatusClass != "badge-warn" {
+		t.Fatalf("partial-source response semantics were not visible without a healthy badge: status=%q class=%q", partialStatus, partialStatusClass)
+	}
+
+	httpFailure := base
+	httpFailure.ObservationState, httpFailure.ResultState, httpFailure.ResultCategory = "current_fail", "unhealthy", "response_http_failure"
+	httpStatus := 503
+	httpFailure.ProviderHTTPStatus = &httpStatus
+	httpFailureRow := publicHTMLReadModelOperation(httpFailure, now)
+	if httpFailureRow.StatusClass != "badge-bad" || httpFailureRow.CauseLabel != "HTTP 응답 오류 · 상태 코드 503" || strings.Contains(httpFailureRow.NextActionLabel, "provider_failure") {
+		t.Fatalf("HTTP response failure was broadened into an unsupported cause: %#v", httpFailureRow)
+	}
+	partialFailureDetail, partialFailureNext := publicPartialOperationDiagnosis(httpFailure)
+	if !strings.Contains(partialFailureDetail, "HTTP 503 응답 오류") || !strings.Contains(partialFailureDetail, "원인은 이 기록만으로 확정할 수 없습니다") || !strings.Contains(partialFailureNext, "API 사용 조건") {
+		t.Fatalf("partial-source HTTP error overstated its cause or omitted the next action: detail=%q next=%q", partialFailureDetail, partialFailureNext)
+	}
+	partialFailureStatus, partialFailureClass := publicPartialOperationObservation(httpFailure)
+	if partialFailureStatus != "HTTP 응답 오류" || partialFailureClass != "badge-bad" {
+		t.Fatalf("partial-source HTTP error was hidden behind a generic status label: status=%q class=%q", partialFailureStatus, partialFailureClass)
+	}
+
+	deferred := base
+	deferred.ObservationAttemptState, deferred.AttemptState = "none", "deferred"
+	deferred.ObservationState, deferred.ResultState, deferred.ResultCategory = "unobserved", "", ""
+	requestStarted := false
+	deferred.RequestStarted = &requestStarted
+	deferred.ExecutionBlockReason = "history_capacity"
+	deferredRow := publicHTMLReadModelOperation(deferred, now)
+	if deferredRow.StatusClass == "badge-good" || !strings.Contains(deferredRow.AttemptLabel, "검사 요청 전 보류") || !strings.Contains(deferredRow.AttemptLabel, "결과 저장 공간") {
+		t.Fatalf("pre-dispatch deferral was presented as a request or healthy result: %#v", deferredRow)
+	}
+	partialAttemptLabel := publicOperationAttemptLabel(deferred.AttemptState, deferred.RequestStarted, deferred.ExecutionBlockReason)
+	if !strings.Contains(partialAttemptLabel, "요청 전 보류") || !strings.Contains(partialAttemptLabel, "결과 저장 공간") {
+		t.Fatalf("partial-source row did not preserve the safe pre-dispatch reason: %q", partialAttemptLabel)
 	}
 
 	failed := base
@@ -498,6 +592,134 @@ func TestRegistryMetadataLoaderBindsVerifiedProjectionToArtifact(t *testing.T) {
 	sum = sha256.Sum256(encoded)
 	if hex.EncodeToString(sum[:]) == metadata.verifiedProjectionSHA256 {
 		t.Fatal("post-load exported metadata mutation retained the verified projection digest")
+	}
+}
+
+func TestPublicStatusHandlerFreezesAndVerifiesRegistryMetadata(t *testing.T) {
+	metadata := testRegistryAPIMetadata(t)
+	firstAPI := metadata.APIs[0]
+	firstOperation := firstAPI.Operations[0]
+	if _, err := cloneVerifiedRegistryAPIMetadata(metadata); err != nil {
+		t.Fatalf("freezing verified Registry metadata failed: %v", err)
+	}
+	handler, err := NewPublicStatusHandlerWithRegistryMetadata(staticPublicSource{document: testPublicDocument(t)}, []string{"https://datapan.statpan.com"}, metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	metadata.APIs[0].Title = "caller mutation"
+	metadata.APIs[0].Operations[0].Name = "caller operation mutation"
+	metadata.HealthCanaryLinks[0].OperationName = "caller canary mutation"
+	if handler.registry.APIs[0].Title != firstAPI.Title || handler.registry.APIs[0].Operations[0].Name != firstOperation.Name || handler.registry.HealthCanaryLinks[0].OperationName == "caller canary mutation" {
+		t.Fatal("handler retained caller-owned Registry metadata slices")
+	}
+
+	mutated := testRegistryAPIMetadata(t)
+	mutated.APIs = append([]RegistryAPIMetadataAPI(nil), mutated.APIs...)
+	mutated.APIs[0].Title = "changed after verification"
+	if _, err := NewPublicStatusHandlerWithRegistryMetadata(staticPublicSource{document: testPublicDocument(t)}, []string{"https://datapan.statpan.com"}, mutated); err == nil {
+		t.Fatal("handler accepted Registry metadata whose verified projection had changed")
+	}
+}
+
+func TestPublicOperationRendererRetainsPinnedKoreanDescriptionCorpus(t *testing.T) {
+	metadata := testRegistryAPIMetadata(t)
+	var present, sanitized, retained, operationDetailsRetained int
+	for _, api := range metadata.APIs {
+		switch api.DescriptionState {
+		case "present":
+			present++
+		case "sanitized":
+			sanitized++
+		}
+		if api.DescriptionState != "present" && api.DescriptionState != "sanitized" {
+			continue
+		}
+		verifiedText := safeVerifiedRegistryMetadataText(api.Description, maxPublicOperationPurposeBytes, maxPublicOperationPurposeRunes)
+		listed := metadataFieldText(api.Description, api.DescriptionState, "기능 설명")
+		if verifiedText {
+			retained++
+			if !strings.HasPrefix(listed, api.Description) {
+				t.Fatalf("verified Registry description was lost by the directory renderer; present=%d sanitized=%d retained=%d", present, sanitized, retained)
+			}
+		} else if strings.Contains(listed, api.Description) {
+			t.Fatalf("description rejected by the shared safety predicate reached HTML; present=%d sanitized=%d retained=%d", present, sanitized, retained)
+		}
+
+		if len(api.Operations) == 0 {
+			continue
+		}
+		operation := api.Operations[0]
+		name, nameState := sanitizeClassifiedMetadata(operation.Name, operation.NameState, maxPublicOperationLabelBytes, maxPublicOperationLabelRunes)
+		title, titleState := sanitizeClassifiedMetadata(api.Title, api.TitleState, maxPublicOperationLabelBytes, maxPublicOperationLabelRunes)
+		organization, organizationState := sanitizeClassifiedMetadata(api.Organization, api.OrganizationState, maxPublicOperationLabelBytes, maxPublicOperationLabelRunes)
+		purpose, purposeState := sanitizeClassifiedMetadata(api.Description, api.DescriptionState, maxPublicOperationPurposeBytes, maxPublicOperationPurposeRunes)
+		apiID := api.RegistryAPIID
+		row := OperationReadModelRow{
+			SourceID: "data_go_kr", RegistryOperationID: operation.RegistryOperationID, APIID: &apiID,
+			OperationName: name, OperationNameState: nameState, Title: title, TitleState: titleState,
+			Organization: organization, OrganizationState: organizationState, Purpose: purpose, PurposeState: purposeState,
+		}
+		rendered := publicHTMLReadModelOperation(row, time.Now().UTC())
+		if verifiedText {
+			operationDetailsRetained++
+			if rendered.Description != api.Description || rendered.DescriptionLabel != "상위 API 설명" {
+				t.Fatalf("verified Registry description was lost by the operation renderer; present=%d sanitized=%d retained=%d operation_details=%d", present, sanitized, retained, operationDetailsRetained)
+			}
+		} else if strings.Contains(rendered.Description, api.Description) {
+			t.Fatalf("unsafe Registry description reached operation HTML; present=%d sanitized=%d retained=%d operation_details=%d", present, sanitized, retained, operationDetailsRetained)
+		}
+	}
+	if present != 5807 || sanitized != 6474 || retained != 12272 || operationDetailsRetained < 7000 {
+		t.Fatalf("pinned metadata rendering coverage changed; present=%d sanitized=%d retained=%d operation_details=%d", present, sanitized, retained, operationDetailsRetained)
+	}
+}
+
+func TestDirectoryExplainsLinkOnlyAndOperationlessEntities(t *testing.T) {
+	metadata := testRegistryAPIMetadata(t)
+	var linkOnly, operationless int
+	var sampleAPIs [2]RegistryAPIMetadataAPI
+	for _, api := range metadata.APIs {
+		if len(api.Operations) != 0 {
+			continue
+		}
+		if api.LinkOperationCount > 0 {
+			linkOnly++
+			if sampleAPIs[0].RegistryAPIID == "" {
+				sampleAPIs[0] = api
+			}
+		} else {
+			operationless++
+			if sampleAPIs[1].RegistryAPIID == "" {
+				sampleAPIs[1] = api
+			}
+		}
+	}
+	if linkOnly != 4222 || operationless != 473 {
+		t.Fatalf("pinned Registry entity type counts changed; link_only=%d operationless=%d", linkOnly, operationless)
+	}
+	for index, expected := range []string{
+		"외부 링크만 등록되어 API 기능별 검사 조건은 확인할 수 없습니다",
+		"등록된 API 기능과 외부 링크가 없습니다",
+	} {
+		api := sampleAPIs[index]
+		if api.RegistryAPIID == "" || !strings.Contains(apiRegistrationNote(api), expected) {
+			t.Fatalf("Registry entity type %d lacks a clear inspection explanation", index)
+		}
+		progress := OperationAPIProgress{APIID: api.RegistryAPIID, CoverageState: "no_registered_operations", MissingReasons: map[string]int{}}
+		status := publicHTMLAPIProgressValue(progress, 0)
+		if status.StatusClass == "badge-good" {
+			t.Fatalf("entity without API operation identities became healthy: type=%d", index)
+		}
+		page := buildPublicHTMLAPIDetail(metadata, api, nil, true, publicHTMLRequest{page: 1}, time.Now().UTC())
+		page.DetailProgress = status
+		var rendered bytes.Buffer
+		if err := publicStatusPages.Execute(&rendered, page); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(rendered.String(), expected) {
+			t.Fatalf("entity type %d explanation is not visible in the API detail", index)
+		}
 	}
 }
 

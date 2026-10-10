@@ -22,10 +22,12 @@ func main() {
 	canaryPath := flag.String("canaries", env("CANARY_CONFIG", "config/canaries.json"), "reviewed public canary identity map")
 	registryMetadataPath := flag.String("registry-api-metadata", env("REGISTRY_API_METADATA", "/opt/datapan-health/config/registry/api-metadata.v1.json"), "pinned Registry API purpose and inventory metadata")
 	registryMetadataPinPath := flag.String("registry-api-metadata-pin", env("REGISTRY_API_METADATA_PIN", "/opt/datapan-health/config/registry/api-metadata-source-pin.v1.json"), "pinned Registry API metadata source and artifact identity")
+	operationDisplayPath := flag.String("operation-display-metadata", env("PUBLIC_OPERATION_DISPLAY_METADATA", "/opt/datapan-health/config/registry/operator-operation-display.v1.json"), "hash-pinned Korean display labels and Registry source-document facts for partial scopes")
+	operationDisplayEvidenceRoot := flag.String("operation-display-evidence-root", env("PUBLIC_OPERATION_DISPLAY_EVIDENCE_ROOT", "/opt/datapan-health/config/registry/operation-display-registry-760"), "manifest-bound Registry document-evidence subset used for partial-scope metadata")
 	diagnosisPath := flag.String("diagnosis-snapshot", env("PUBLIC_DIAGNOSIS_SNAPSHOT", "data/public-diagnosis-snapshot.json"), "atomic reviewed diagnosis snapshot")
 	assertionPinPath := flag.String("assertion-pin", env("ASSERTION_POLICY_PIN", "config/registry/assertion-policy-contract-pin.json"), "exact assertion policy contract")
-	operationPlanRoot := flag.String("operation-plan-root", env("REGISTRY_OPERATION_PLAN_ROOT", "/opt/datapan-cli/.datapan/release"), "installed pinned Registry operation-plan release root")
-	operationPlanPinPath := flag.String("operation-plan-pin", env("REGISTRY_OPERATION_PLAN_PIN", "/opt/datapan-cli/.datapan/release/operation-observation-plan-runtime-pin.v1.json"), "image-owned Registry operation-plan binding")
+	operationPlanRoot := flag.String("operation-plan-root", os.Getenv("REGISTRY_OPERATION_PLAN_ROOT"), "installed pinned Registry operation-plan release root")
+	operationPlanPinPath := flag.String("operation-plan-pin", os.Getenv("REGISTRY_OPERATION_PLAN_PIN"), "image-owned Registry operation-plan binding")
 	operationAttemptStorePath := flag.String("operation-attempt-store", os.Getenv("HEALTH_OPERATION_ATTEMPT_STATE"), "read-only shared durable operation-attempt store")
 	operationReadMaxAge := flag.Duration("operation-read-max-age", envDuration("HEALTH_OPERATION_READ_MAX_AGE", 5*time.Minute), "maximum age for a complete operation read-model snapshot")
 	operationBatchInterval := flag.Duration("operation-refresh-batch-interval", envDuration("HEALTH_OPERATION_REFRESH_BATCH_INTERVAL", time.Second), "delay between bounded read-model identity batches")
@@ -42,62 +44,74 @@ func main() {
 
 	canaries, err := health.LoadCanaryConfig(*canaryPath)
 	if err != nil {
-		fatal()
+		fatalAt(startupStageCanaryConfig)
 	}
 	if *doctor {
 		reference := time.Now().UTC()
 		if *scheduleCoverageReferenceAt != "" {
 			parsed, parseErr := time.Parse(time.RFC3339, *scheduleCoverageReferenceAt)
 			if parseErr != nil {
-				fatal()
+				fatalAt(startupStageDoctorReference)
 			}
 			reference = parsed.UTC()
 		}
 		schedule := health.ReadScheduleCoverageDoctorReport(*scheduleCoverageState, reference, *scheduleCoverageMaxAge)
 		report, err := health.BuildPublicStatusDoctorReportWithSchedule(context.Background(), health.DefaultOwnedServiceStatusSource(), len(canaries.Canaries), schedule)
 		if err != nil || json.NewEncoder(os.Stdout).Encode(report) != nil {
-			fatal()
+			fatalAt(startupStageDoctorReport)
 		}
 		return
 	}
 	registryMetadata, err := health.LoadRegistryAPIMetadata(*registryMetadataPath, *registryMetadataPinPath, canaries)
 	if err != nil {
-		fatal()
+		fatalAt(startupStageRegistryMetadata)
+	}
+	operationDisplay, err := health.LoadPublicOperationDisplayMetadata(*operationDisplayPath, *operationDisplayEvidenceRoot)
+	if err != nil {
+		fatalAt(startupStageDisplayMetadata)
 	}
 	source, err := health.NewGatusPublicStatusSource(*gatusStatusURL, canaries, 5*time.Second)
 	if err != nil {
-		fatal()
+		fatalAt(startupStageGatusAdapter)
 	}
 	assertionContract, err := health.LoadAssertionPolicyContract(*assertionPinPath, canaries)
 	if err != nil {
-		fatal()
+		fatalAt(startupStageAssertionContract)
 	}
 	publicSource, err := health.NewDiagnosisOverlaySource(source, *diagnosisPath, assertionContract)
 	if err != nil {
-		fatal()
+		fatalAt(startupStageDiagnosisOverlay)
 	}
 	origins := splitOrigins(*originList)
 	cachedSource, err := health.NewCachedPublicStatusSource(publicSource, 5*time.Second, 5*time.Second)
 	if err != nil {
-		fatal()
+		fatalAt(startupStagePublicStatusCache)
 	}
 	readinessSource, err := health.NewSchedulerHealthSelfReadinessSource(*selfReadinessURL, canaries, time.Second)
 	if err != nil {
-		fatal()
+		fatalAt(startupStageSelfReadiness)
 	}
 	cachedReadiness, err := health.NewCachedHealthSelfReadinessSource(readinessSource, time.Second, time.Second)
 	if err != nil {
-		fatal()
+		fatalAt(startupStageSelfReadiness)
 	}
 	var operationSource health.PublicRegistryOperationsSource
-	verifiedMetadata, metadataErr := health.NewVerifiedRegistryAPIMetadata(registryMetadata)
-	if strings.TrimSpace(*operationAttemptStorePath) != "" {
+	operationConfigured, operationConfigValid := operationReadModelConfiguration(*operationPlanRoot, *operationPlanPinPath, *operationAttemptStorePath)
+	if !operationConfigured {
+		log.Print("Registry operation read model unavailable: pinned plan and shared state are not configured")
+	} else if !operationConfigValid {
+		log.Print("Registry operation read model unavailable: configuration is incomplete")
+	} else {
+		verifiedMetadata, metadataErr := health.NewVerifiedRegistryAPIMetadata(registryMetadata)
 		policy := health.OperationReadModelRefreshPolicy{
 			BatchSize: 256, BatchInterval: *operationBatchInterval,
 			FullRefreshInterval: *operationFullRefreshInterval, MaxPassDuration: 2 * time.Minute,
 		}
 		if health.ValidateOperationReadModelRefreshPolicy(policy) != nil {
-			fatal()
+			fatalAt(startupStageReadModel)
+		}
+		if *operationReadMaxAge < time.Minute || *operationReadMaxAge > 24*time.Hour {
+			fatalAt(startupStageReadModel)
 		}
 		if metadataErr != nil {
 			log.Print("Registry operation read model unavailable: verified metadata is unavailable")
@@ -113,20 +127,40 @@ func main() {
 			}
 		}
 	}
-	handler, err := health.NewPublicStatusHandlerWithRegistryOperations(cachedSource, origins, registryMetadata, cachedReadiness, operationSource)
+	handler, err := health.NewPublicStatusHandlerWithOperationDisplay(cachedSource, origins, registryMetadata, cachedReadiness, operationSource, operationDisplay)
 	if err != nil {
-		fatal()
+		fatalAt(startupStagePublicHandler)
 	}
 
 	guard, err := health.NewPublicReadGuard(handler, health.PublicReadLimits{RequestsPerSecond: *readRate, Burst: *readBurst, MaxConcurrent: *readConcurrent})
 	if err != nil {
-		fatal()
+		fatalAt(startupStageReadGuard)
 	}
 	server := &http.Server{Addr: *listen, Handler: guard, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 * 1024}
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		fatal()
+		fatalAt(startupStageListener)
 	}
 }
+
+type publicStartupFailureStage string
+
+const (
+	startupStageCanaryConfig      publicStartupFailureStage = "canary_config"
+	startupStageDoctorReference   publicStartupFailureStage = "doctor_reference"
+	startupStageDoctorReport      publicStartupFailureStage = "doctor_report"
+	startupStageRegistryMetadata  publicStartupFailureStage = "registry_metadata"
+	startupStageDisplayMetadata   publicStartupFailureStage = "display_metadata"
+	startupStageGatusAdapter      publicStartupFailureStage = "gatus_adapter"
+	startupStageAssertionContract publicStartupFailureStage = "assertion_contract"
+	startupStageDiagnosisOverlay  publicStartupFailureStage = "diagnosis_overlay"
+	startupStagePublicStatusCache publicStartupFailureStage = "public_status_cache"
+	startupStageSelfReadiness     publicStartupFailureStage = "self_readiness"
+	startupStageReadModel         publicStartupFailureStage = "read_model"
+	startupStagePublicHandler     publicStartupFailureStage = "public_handler"
+	startupStageReadGuard         publicStartupFailureStage = "read_guard"
+	startupStageListener          publicStartupFailureStage = "listener"
+	startupStageConfiguration     publicStartupFailureStage = "configuration"
+)
 
 func splitOrigins(value string) []string {
 	parts := strings.Split(value, ",")
@@ -146,8 +180,17 @@ func env(key, fallback string) string {
 	return fallback
 }
 
-func fatal() {
-	fmt.Fprintln(os.Stderr, "public status service failed")
+func fatalAt(stage publicStartupFailureStage) {
+	switch stage {
+	case startupStageCanaryConfig, startupStageDoctorReference, startupStageDoctorReport,
+		startupStageRegistryMetadata, startupStageDisplayMetadata, startupStageGatusAdapter,
+		startupStageAssertionContract, startupStageDiagnosisOverlay, startupStagePublicStatusCache,
+		startupStageSelfReadiness, startupStageReadModel, startupStagePublicHandler,
+		startupStageReadGuard, startupStageListener, startupStageConfiguration:
+	default:
+		stage = startupStageConfiguration
+	}
+	fmt.Fprintf(os.Stderr, "public status service failed at stage=%s\n", stage)
 	os.Exit(1)
 }
 
@@ -158,7 +201,7 @@ func envInt(key string, fallback int) int {
 	}
 	value, err := strconv.Atoi(raw)
 	if err != nil {
-		fatal()
+		fatalAt(startupStageConfiguration)
 	}
 	return value
 }
@@ -170,7 +213,21 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 	}
 	value, err := time.ParseDuration(raw)
 	if err != nil {
-		fatal()
+		fatalAt(startupStageConfiguration)
 	}
 	return value
+}
+
+func operationReadModelConfiguration(planRoot, planPinPath, attemptStorePath string) (configured, valid bool) {
+	values := []string{planRoot, planPinPath, attemptStorePath}
+	configuredCount := 0
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			configuredCount++
+		}
+	}
+	if configuredCount == 0 {
+		return false, true
+	}
+	return true, configuredCount == len(values)
 }

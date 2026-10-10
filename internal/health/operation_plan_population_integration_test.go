@@ -340,12 +340,30 @@ func TestOperationPlanPinnedGatusSyntheticReceiptIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal("bounded production scheduler rejected the one-operation synthetic plan:", err)
 	}
-	schedulerStart := time.Now().UTC()
-	for pass := 0; pass < 3; pass++ {
-		if err := scheduler.ProcessDue(ctx, schedulerStart.Add(time.Duration(pass)*time.Second)); err != nil {
+	deliveryDeadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deliveryDeadline) {
+		if err := scheduler.ProcessDue(ctx, time.Now().UTC()); err != nil {
 			t.Fatalf("bounded production scheduler pass failed: %v", err)
 		}
 		scheduler.Wait()
+		latest, found, latestErr := attempts.Latest(target.Record.SourceID, target.Record.OperationID)
+		if latestErr != nil {
+			t.Fatal("could not inspect the durable synthetic attempt")
+		}
+		if found && latest.State == "observed" && latest.DeliveryState == "readback_verified" {
+			break
+		}
+		status := scheduler.Status(time.Now().UTC())
+		wait := status.LastPassAt.Add(operationPlanSchedulerPassInterval).Sub(time.Now())
+		if wait <= 0 {
+			wait = operationPlanSchedulerPassInterval
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+		case <-timer.C:
+		}
 	}
 	latest, found, err := attempts.Latest(target.Record.SourceID, target.Record.OperationID)
 	if err != nil || !found || latest.State != "observed" || latest.DeliveryState != "readback_verified" || latest.GatusReceivedAt.IsZero() || latest.Result == nil || latest.Result.ObservedAt.IsZero() {
@@ -359,6 +377,154 @@ func TestOperationPlanPinnedGatusSyntheticReceiptIntegration(t *testing.T) {
 		t.Fatal("synthetic Gatus token appeared in generated runtime artifacts")
 	}
 	t.Logf("pinned Gatus v5.36.0 accepted one generated operation registration and verified its synthetic receipt by exact-key readback")
+}
+
+func TestOperationPlanPinnedGatusManifestCapacity(t *testing.T) {
+	if os.Getenv("HEALTH_OPERATION_GATUS_CAPACITY_TEST") != "1" {
+		t.Skip("run with make operation-plan-gatus-capacity for bounded full-population Gatus source QA")
+	}
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Fatalf("Docker is required for the pinned Gatus capacity target: %v", err)
+	}
+	metadata, canaries, plan, _, identities := loadManifestDerivedPopulationPlan(t)
+	activationEntries := make([]OperationGatusActivationEntry, len(identities))
+	for index, identity := range identities {
+		activationEntries[index] = OperationGatusActivationEntry{SourceID: identity.SourceID, OperationID: identity.OperationID}
+	}
+	activationRaw, err := json.Marshal(OperationGatusActivation{
+		SchemaVersion: OperationGatusActivationSchemaVersion, RegistryRevision: plan.RegistryRevision(),
+		IndexSHA256: plan.IndexSHA256(), Operations: activationEntries,
+	})
+	if err != nil {
+		t.Fatal("could not construct the synthetic full-population activation")
+	}
+	activation, activationSHA, err := DecodeOperationGatusActivation(activationRaw, plan)
+	if err != nil {
+		t.Fatalf("the exact synthetic population did not bind to the pinned plan: %v", err)
+	}
+	canaryRaw, err := os.ReadFile("../../config/canaries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseConfig := []byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: placeholder\n")
+	artifacts, err := GenerateOperationGatusArtifacts(baseConfig, digestOperationGatusBytes(canaryRaw), canaries, metadata, &plan, &activation, activationSHA)
+	if err != nil {
+		t.Fatalf("pinned Gatus configuration could not represent all verified identities: %v", err)
+	}
+	var mapping OperationGatusIdentityMapping
+	if err := json.Unmarshal(artifacts.Mapping, &mapping); err != nil || len(mapping.Operations) != len(identities) || mapping.KnownPlanOperations != len(identities) || mapping.ActivatedPlanOperations != len(identities) || mapping.ConfiguredExternalEndpoints != len(identities) {
+		t.Fatalf("generated Gatus fleet did not reconcile exact source identities: identities=%d mapped=%d known=%d activated=%d endpoints=%d", len(identities), len(mapping.Operations), mapping.KnownPlanOperations, mapping.ActivatedPlanOperations, mapping.ConfiguredExternalEndpoints)
+	}
+	configText := strings.ToLower(string(artifacts.Config))
+	if strings.Contains(configText, "url:") || strings.Contains(configText, "http://") || strings.Contains(configText, "https://") {
+		t.Fatal("synthetic Gatus capacity configuration unexpectedly contains a provider destination")
+	}
+
+	const spreadSample = 64
+	selectedIndices := make(map[int]struct{}, spreadSample+len(identities))
+	for sample := 0; sample < min(spreadSample, len(mapping.Operations)); sample++ {
+		index := sample * (len(mapping.Operations) - 1) / max(min(spreadSample, len(mapping.Operations))-1, 1)
+		selectedIndices[index] = struct{}{}
+	}
+	selectedSources := make(map[string]struct{})
+	for index, operation := range mapping.Operations {
+		if _, found := selectedSources[operation.SourceID]; !found {
+			selectedSources[operation.SourceID] = struct{}{}
+			selectedIndices[index] = struct{}{}
+		}
+	}
+	sampleIndices := make([]int, 0, len(selectedIndices))
+	for index := range selectedIndices {
+		sampleIndices = append(sampleIndices, index)
+	}
+	sort.Ints(sampleIndices)
+	populationSources := make(map[string]struct{})
+	for _, identity := range identities {
+		populationSources[identity.SourceID] = struct{}{}
+	}
+	if len(selectedSources) != len(populationSources) || len(sampleIndices) < min(spreadSample, len(mapping.Operations)) || len(sampleIndices) > spreadSample+len(populationSources) {
+		t.Fatalf("bounded Gatus capacity sample did not cover the expected source groups: sample=%d source_groups=%d expected_groups=%d", len(sampleIndices), len(selectedSources), len(populationSources))
+	}
+
+	root := t.TempDir()
+	configPath := filepath.Join(root, "config.yaml")
+	if err := os.WriteFile(configPath, artifacts.Config, 0o444); err != nil {
+		t.Fatal("could not stage the synthetic Gatus configuration")
+	}
+	containerName := fmt.Sprintf("health-operation-fleet-test-%d", time.Now().UnixNano())
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cleanupCancel()
+		_ = exec.CommandContext(cleanupCtx, "docker", "rm", "--force", containerName).Run()
+	}()
+	const token = "synthetic-local-gatus-fleet-token"
+	startupStarted := time.Now()
+	start := exec.CommandContext(ctx, "docker", "run", "--detach", "--rm", "--name", containerName,
+		"--publish", "127.0.0.1::8080", "--volume", configPath+":/config/config.yaml:ro",
+		"--env", "GATUS_TOKEN="+token, pinnedOperationPlanTestGatusImage)
+	if err := start.Run(); err != nil {
+		t.Fatal("pinned Gatus could not start with the generated full-population configuration")
+	}
+	portOutput, err := exec.CommandContext(ctx, "docker", "port", containerName, "8080/tcp").Output()
+	if err != nil {
+		t.Fatal("could not inspect the local Gatus listener")
+	}
+	address := strings.TrimSpace(string(portOutput))
+	if index := strings.LastIndex(address, ":"); index < 0 || index == len(address)-1 || !strings.HasPrefix(address, "127.0.0.1:") {
+		t.Fatal("pinned Gatus did not bind its capacity test listener to loopback")
+	}
+	baseURL := "http://" + address
+	readyClient := &http.Client{Timeout: 3 * time.Second}
+	ready := false
+	readyCtx, readyCancel := context.WithTimeout(ctx, 12*time.Minute)
+	defer readyCancel()
+	for !ready && readyCtx.Err() == nil {
+		request, requestErr := http.NewRequestWithContext(readyCtx, http.MethodGet, baseURL+"/health", nil)
+		if requestErr == nil {
+			response, requestErr := readyClient.Do(request)
+			if requestErr == nil {
+				_ = response.Body.Close()
+				ready = response.StatusCode == http.StatusOK
+			}
+		}
+		if !ready {
+			time.Sleep(250 * time.Millisecond)
+		}
+	}
+	if !ready {
+		t.Fatal("pinned Gatus did not finish loading the generated full-population configuration within 12 minutes")
+	}
+	startupDuration := time.Since(startupStarted)
+	delivery, err := NewOperationPlanGatusDelivery(baseURL, token, 5*time.Second)
+	if err != nil {
+		t.Fatal("local pinned Gatus delivery adapter rejected the loopback listener")
+	}
+	deliveryCtx, deliveryCancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer deliveryCancel()
+	for sampleIndex, mappingIndex := range sampleIndices {
+		operation := mapping.Operations[mappingIndex]
+		now := time.Now().UTC()
+		result := OperationObservationResult{
+			State: "healthy", Category: "healthy", ObservedAt: now, ReceivedAt: now,
+			ReceiptSHA: strings.Repeat("a", 64), LatencyMS: 1,
+		}
+		acknowledgedAt, pushErr := delivery.Push(deliveryCtx, operation.GatusEndpointKey, result)
+		if pushErr != nil {
+			t.Fatalf("pinned Gatus rejected bounded exact-key sample %d/%d", sampleIndex+1, len(sampleIndices))
+		}
+		readbackAt, state, readErr := delivery.Readback(deliveryCtx, operation.GatusEndpointKey, result, acknowledgedAt)
+		if readErr != nil || state != "healthy" || readbackAt.Before(acknowledgedAt) {
+			t.Fatalf("pinned Gatus did not verify bounded exact-key sample %d/%d: state=%s", sampleIndex+1, len(sampleIndices), state)
+		}
+	}
+	memoryOutput, err := exec.CommandContext(ctx, "docker", "stats", "--no-stream", "--format", "{{.MemUsage}}", containerName).Output()
+	if err != nil || len(strings.TrimSpace(string(memoryOutput))) == 0 || len(strings.TrimSpace(string(memoryOutput))) > 100 {
+		t.Fatal("could not measure pinned Gatus container memory after the exact-key readback sample")
+	}
+	unknownIdentities := unknownOperationCount(identities)
+	t.Logf("pinned Gatus v5.36.0 full-population source QA: identities=%d sources=%d inventory_unknown_identities=%d generated_config_bytes=%d startup_to_health=%s sampled_push_and_exact_readbacks=%d container_memory=%s provider_destinations=0", len(identities), len(populationSources), unknownIdentities, len(artifacts.Config), startupDuration.Round(time.Millisecond), len(sampleIndices), strings.TrimSpace(string(memoryOutput)))
 }
 
 func loadManifestDerivedPopulationPlan(t *testing.T) (VerifiedRegistryAPIMetadata, CanaryConfig, PinnedOperationObservationPlan, string, []operationPlanPopulationIdentity) {

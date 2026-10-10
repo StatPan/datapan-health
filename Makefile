@@ -2,7 +2,7 @@ RUNTIME_IMAGE ?= datapan-health-runtime:test
 ARCHIVE_IMAGE ?= datapan-health-archive:test
 TESTED_REVISION ?= $(HEALTH_HEAD)
 
-.PHONY: test quality build images image-smoke release-oci release-governance-smoke release-provenance-smoke runtime-publication-contract smoke visual archive-smoke hf-publish-smoke governance-check security-reporting-check security-reporting-check-test diagnostic-compatibility diagnostic-provenance diagnostic-provenance-check assertion-policy-compatibility correlation-replay diagnosis-snapshot-evidence public-status-doctor manifest-verify schedule-coverage schedule-coverage-doctor operation-plan-full-population operation-plan-gatus-integration
+.PHONY: test quality build images image-smoke release-oci release-governance-smoke release-provenance-smoke runtime-publication-contract smoke visual archive-smoke hf-publish-smoke governance-check security-reporting-check security-reporting-check-test diagnostic-compatibility diagnostic-provenance diagnostic-provenance-check assertion-policy-compatibility correlation-replay diagnosis-snapshot-evidence public-status-doctor manifest-verify schedule-coverage schedule-coverage-doctor operation-plan-full-population operation-plan-gatus-integration operation-plan-gatus-capacity
 
 test:
 	go test ./...
@@ -80,6 +80,11 @@ operation-plan-full-population:
 # receipt through the production push/readback adapter. No provider is called.
 operation-plan-gatus-integration:
 	HEALTH_OPERATION_GATUS_INTEGRATION_TEST=1 go test ./internal/health -run '^TestOperationPlanPinnedGatusSyntheticReceiptIntegration$$' -count=1 -timeout=5m
+
+# Loads the complete manifest-derived identity mapping into pinned Gatus and
+# verifies bounded exact-key push/readback samples without provider URLs.
+operation-plan-gatus-capacity:
+	HEALTH_OPERATION_GATUS_CAPACITY_TEST=1 go test ./internal/health -run '^TestOperationPlanPinnedGatusManifestCapacity$$' -count=1 -timeout=20m -v
 
 hf-publish-smoke:
 	./scripts/hf-publish-smoke.sh

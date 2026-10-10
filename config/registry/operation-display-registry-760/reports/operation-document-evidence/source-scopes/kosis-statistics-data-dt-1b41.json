@@ -1,0 +1,4157 @@
+{
+  "authentication": {
+    "mechanism": "api_key",
+    "parameter_names": [
+      "apiKey"
+    ],
+    "placement": "query",
+    "requirement": "required",
+    "source_refs": [
+      {
+        "evidence_kind": "parameter_name",
+        "locator": {
+          "cell_index": 0,
+          "kind": "html_table_cell",
+          "row_index": 1,
+          "source_id": "kosis_official_devguide",
+          "table_index": 2
+        }
+      },
+      {
+        "evidence_kind": "authentication_credential_description",
+        "locator": {
+          "cell_index": 2,
+          "kind": "html_table_cell",
+          "row_index": 1,
+          "source_id": "kosis_official_devguide",
+          "table_index": 2
+        }
+      },
+      {
+        "evidence_kind": "parameter_requiredness",
+        "locator": {
+          "cell_index": 3,
+          "kind": "html_table_cell",
+          "row_index": 1,
+          "source_id": "kosis_official_devguide",
+          "table_index": 2
+        }
+      }
+    ],
+    "status": "documented"
+  },
+  "effect": {
+    "authority": "operation_document",
+    "classification": "read_only",
+    "source_refs": [
+      {
+        "evidence_kind": "statistics_table_selection_operation",
+        "locator": {
+          "byte_end": 26495,
+          "byte_start": 26473,
+          "kind": "html_byte_range",
+          "source_id": "kosis_official_devguide"
+        }
+      },
+      {
+        "evidence_kind": "declared_output_field_name",
+        "locator": {
+          "cell_index": 0,
+          "kind": "html_table_cell",
+          "row_index": 1,
+          "source_id": "kosis_official_devguide",
+          "table_index": 3
+        }
+      }
+    ],
+    "status": "documented"
+  },
+  "explicit_unknowns": [
+    "operation_http_method_not_established",
+    "parameter_cardinality_not_established",
+    "period_selection_condition_not_fully_normalized",
+    "success_http_status_not_established",
+    "success_response_shape_not_established",
+    "success_result_collection_not_established",
+    "successful_result_code_semantics_not_established",
+    "operation_purpose_sentence_not_found_in_parsed_sources",
+    "provider_quota_scope_not_established",
+    "provider_quota_account_tier_not_established",
+    "response_empty_result_semantics_not_declared"
+  ],
+  "identity": {
+    "operation_id": "kosis-statistics-data-dt-1b41",
+    "operation_name": "KOSIS population table bounded data query",
+    "protocol": "REST",
+    "provider": "KOSIS",
+    "source_id": "kosis",
+    "source_refs": [
+      {
+        "evidence_kind": "registered_operation_endpoint_binding",
+        "locator": {
+          "byte_end": 26768,
+          "byte_start": 26712,
+          "kind": "html_byte_range",
+          "source_id": "kosis_official_devguide"
+        }
+      },
+      {
+        "evidence_kind": "official_operation_title",
+        "locator": {
+          "byte_end": 26495,
+          "byte_start": 26473,
+          "kind": "html_byte_range",
+          "source_id": "kosis_official_devguide"
+        }
+      }
+    ]
+  },
+  "limits": {
+    "provider_quota": {
+      "account_tier": {
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "scope": {
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "provider_quota",
+          "locator": {
+            "entry": "error code 40 rate limit of 200 requests per minute",
+            "kind": "pdf_page_section",
+            "page_number": 16,
+            "section": "1.4",
+            "source_id": "kosis_official_api_manual"
+          }
+        }
+      ],
+      "status": "documented",
+      "unit": "requests/minute",
+      "value": 200
+    },
+    "request_budget": {
+      "source_refs": [],
+      "status": "not_a_provider_fact",
+      "value": null
+    }
+  },
+  "operation_document": {
+    "purpose": {
+      "source_refs": [],
+      "status": "not_found_in_parsed_operation_sources",
+      "value": null
+    },
+    "title": {
+      "source_refs": [
+        {
+          "evidence_kind": "official_operation_title",
+          "locator": {
+            "byte_end": 26495,
+            "byte_start": 26473,
+            "kind": "html_byte_range",
+            "source_id": "kosis_official_devguide"
+          }
+        }
+      ],
+      "status": "documented",
+      "value": "통계표선택 방법"
+    }
+  },
+  "parameters": [
+    {
+      "cardinality": {
+        "maximum": null,
+        "minimum": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 1,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown"
+      },
+      "data_type": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_data_type",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 1,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "String"
+      },
+      "default": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 1,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "value": null
+      },
+      "enum": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 1,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "values": []
+      },
+      "location": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 1,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          },
+          {
+            "evidence_kind": "operation_request_url_query_parameters",
+            "locator": {
+              "byte_end": 26768,
+              "byte_start": 26712,
+              "kind": "html_byte_range",
+              "source_id": "kosis_official_devguide"
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "query"
+      },
+      "name": "apiKey",
+      "requiredness": {
+        "condition": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_requiredness",
+            "locator": {
+              "cell_index": 3,
+              "kind": "html_table_cell",
+              "row_index": 1,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "required"
+      },
+      "sample": {
+        "present": false,
+        "source_refs": [],
+        "value_stored": false
+      },
+      "size": {
+        "observed_values": [],
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "parameter_name",
+          "locator": {
+            "cell_index": 0,
+            "kind": "html_table_cell",
+            "row_index": 1,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_data_type",
+          "locator": {
+            "cell_index": 1,
+            "kind": "html_table_cell",
+            "row_index": 1,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_requiredness",
+          "locator": {
+            "cell_index": 3,
+            "kind": "html_table_cell",
+            "row_index": 1,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        }
+      ]
+    },
+    {
+      "cardinality": {
+        "maximum": null,
+        "minimum": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 2,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown"
+      },
+      "data_type": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_data_type",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 2,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "String"
+      },
+      "default": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 2,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "value": null
+      },
+      "enum": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 2,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "values": []
+      },
+      "location": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 2,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          },
+          {
+            "evidence_kind": "operation_request_url_query_parameters",
+            "locator": {
+              "byte_end": 26768,
+              "byte_start": 26712,
+              "kind": "html_byte_range",
+              "source_id": "kosis_official_devguide"
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "query"
+      },
+      "name": "orgId",
+      "requiredness": {
+        "condition": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_requiredness",
+            "locator": {
+              "cell_index": 3,
+              "kind": "html_table_cell",
+              "row_index": 2,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "required"
+      },
+      "sample": {
+        "present": false,
+        "source_refs": [],
+        "value_stored": false
+      },
+      "size": {
+        "observed_values": [],
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "parameter_name",
+          "locator": {
+            "cell_index": 0,
+            "kind": "html_table_cell",
+            "row_index": 2,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_data_type",
+          "locator": {
+            "cell_index": 1,
+            "kind": "html_table_cell",
+            "row_index": 2,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_requiredness",
+          "locator": {
+            "cell_index": 3,
+            "kind": "html_table_cell",
+            "row_index": 2,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        }
+      ]
+    },
+    {
+      "cardinality": {
+        "maximum": null,
+        "minimum": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 3,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown"
+      },
+      "data_type": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_data_type",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 3,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "String"
+      },
+      "default": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 3,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "value": null
+      },
+      "enum": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 3,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "values": []
+      },
+      "location": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 3,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          },
+          {
+            "evidence_kind": "operation_request_url_query_parameters",
+            "locator": {
+              "byte_end": 26768,
+              "byte_start": 26712,
+              "kind": "html_byte_range",
+              "source_id": "kosis_official_devguide"
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "query"
+      },
+      "name": "tblId",
+      "requiredness": {
+        "condition": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_requiredness",
+            "locator": {
+              "cell_index": 3,
+              "kind": "html_table_cell",
+              "row_index": 3,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "required"
+      },
+      "sample": {
+        "present": false,
+        "source_refs": [],
+        "value_stored": false
+      },
+      "size": {
+        "observed_values": [],
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "parameter_name",
+          "locator": {
+            "cell_index": 0,
+            "kind": "html_table_cell",
+            "row_index": 3,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_data_type",
+          "locator": {
+            "cell_index": 1,
+            "kind": "html_table_cell",
+            "row_index": 3,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_requiredness",
+          "locator": {
+            "cell_index": 3,
+            "kind": "html_table_cell",
+            "row_index": 3,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        }
+      ]
+    },
+    {
+      "cardinality": {
+        "maximum": null,
+        "minimum": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 4,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown"
+      },
+      "data_type": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_data_type",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 4,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "String"
+      },
+      "default": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 4,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "value": null
+      },
+      "enum": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 4,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "values": []
+      },
+      "location": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 4,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          },
+          {
+            "evidence_kind": "operation_request_url_query_parameters",
+            "locator": {
+              "byte_end": 26768,
+              "byte_start": 26712,
+              "kind": "html_byte_range",
+              "source_id": "kosis_official_devguide"
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "query"
+      },
+      "name": "objL1",
+      "requiredness": {
+        "condition": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_requiredness",
+            "locator": {
+              "cell_index": 3,
+              "kind": "html_table_cell",
+              "row_index": 4,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "required"
+      },
+      "sample": {
+        "present": false,
+        "source_refs": [],
+        "value_stored": false
+      },
+      "size": {
+        "observed_values": [],
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "parameter_name",
+          "locator": {
+            "cell_index": 0,
+            "kind": "html_table_cell",
+            "row_index": 4,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_data_type",
+          "locator": {
+            "cell_index": 1,
+            "kind": "html_table_cell",
+            "row_index": 4,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_requiredness",
+          "locator": {
+            "cell_index": 3,
+            "kind": "html_table_cell",
+            "row_index": 4,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        }
+      ]
+    },
+    {
+      "cardinality": {
+        "maximum": null,
+        "minimum": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown"
+      },
+      "data_type": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_data_type",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "String"
+      },
+      "default": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "value": null
+      },
+      "enum": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "values": []
+      },
+      "location": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          },
+          {
+            "evidence_kind": "operation_request_url_query_parameters",
+            "locator": {
+              "byte_end": 26768,
+              "byte_start": 26712,
+              "kind": "html_byte_range",
+              "source_id": "kosis_official_devguide"
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "query"
+      },
+      "name": "objL2",
+      "requiredness": {
+        "condition": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_requiredness",
+            "locator": {
+              "cell_index": 3,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "optional"
+      },
+      "sample": {
+        "present": false,
+        "source_refs": [],
+        "value_stored": false
+      },
+      "size": {
+        "observed_values": [],
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "parameter_name",
+          "locator": {
+            "cell_index": 0,
+            "kind": "html_table_cell",
+            "row_index": 5,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_data_type",
+          "locator": {
+            "cell_index": 1,
+            "kind": "html_table_cell",
+            "row_index": 5,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_requiredness",
+          "locator": {
+            "cell_index": 3,
+            "kind": "html_table_cell",
+            "row_index": 5,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        }
+      ]
+    },
+    {
+      "cardinality": {
+        "maximum": null,
+        "minimum": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown"
+      },
+      "data_type": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_data_type",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "String"
+      },
+      "default": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "value": null
+      },
+      "enum": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "values": []
+      },
+      "location": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          },
+          {
+            "evidence_kind": "operation_request_url_query_parameters",
+            "locator": {
+              "byte_end": 26768,
+              "byte_start": 26712,
+              "kind": "html_byte_range",
+              "source_id": "kosis_official_devguide"
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "query"
+      },
+      "name": "objL3",
+      "requiredness": {
+        "condition": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_requiredness",
+            "locator": {
+              "cell_index": 3,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "optional"
+      },
+      "sample": {
+        "present": false,
+        "source_refs": [],
+        "value_stored": false
+      },
+      "size": {
+        "observed_values": [],
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "parameter_name",
+          "locator": {
+            "cell_index": 0,
+            "kind": "html_table_cell",
+            "row_index": 5,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_data_type",
+          "locator": {
+            "cell_index": 1,
+            "kind": "html_table_cell",
+            "row_index": 5,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_requiredness",
+          "locator": {
+            "cell_index": 3,
+            "kind": "html_table_cell",
+            "row_index": 5,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        }
+      ]
+    },
+    {
+      "cardinality": {
+        "maximum": null,
+        "minimum": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown"
+      },
+      "data_type": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_data_type",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "String"
+      },
+      "default": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "value": null
+      },
+      "enum": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "values": []
+      },
+      "location": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          },
+          {
+            "evidence_kind": "operation_request_url_query_parameters",
+            "locator": {
+              "byte_end": 26768,
+              "byte_start": 26712,
+              "kind": "html_byte_range",
+              "source_id": "kosis_official_devguide"
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "query"
+      },
+      "name": "objL4",
+      "requiredness": {
+        "condition": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_requiredness",
+            "locator": {
+              "cell_index": 3,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "optional"
+      },
+      "sample": {
+        "present": false,
+        "source_refs": [],
+        "value_stored": false
+      },
+      "size": {
+        "observed_values": [],
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "parameter_name",
+          "locator": {
+            "cell_index": 0,
+            "kind": "html_table_cell",
+            "row_index": 5,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_data_type",
+          "locator": {
+            "cell_index": 1,
+            "kind": "html_table_cell",
+            "row_index": 5,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_requiredness",
+          "locator": {
+            "cell_index": 3,
+            "kind": "html_table_cell",
+            "row_index": 5,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        }
+      ]
+    },
+    {
+      "cardinality": {
+        "maximum": null,
+        "minimum": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown"
+      },
+      "data_type": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_data_type",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "String"
+      },
+      "default": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "value": null
+      },
+      "enum": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "values": []
+      },
+      "location": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          },
+          {
+            "evidence_kind": "operation_request_url_query_parameters",
+            "locator": {
+              "byte_end": 26768,
+              "byte_start": 26712,
+              "kind": "html_byte_range",
+              "source_id": "kosis_official_devguide"
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "query"
+      },
+      "name": "objL5",
+      "requiredness": {
+        "condition": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_requiredness",
+            "locator": {
+              "cell_index": 3,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "optional"
+      },
+      "sample": {
+        "present": false,
+        "source_refs": [],
+        "value_stored": false
+      },
+      "size": {
+        "observed_values": [],
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "parameter_name",
+          "locator": {
+            "cell_index": 0,
+            "kind": "html_table_cell",
+            "row_index": 5,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_data_type",
+          "locator": {
+            "cell_index": 1,
+            "kind": "html_table_cell",
+            "row_index": 5,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_requiredness",
+          "locator": {
+            "cell_index": 3,
+            "kind": "html_table_cell",
+            "row_index": 5,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        }
+      ]
+    },
+    {
+      "cardinality": {
+        "maximum": null,
+        "minimum": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown"
+      },
+      "data_type": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_data_type",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "String"
+      },
+      "default": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "value": null
+      },
+      "enum": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "values": []
+      },
+      "location": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          },
+          {
+            "evidence_kind": "operation_request_url_query_parameters",
+            "locator": {
+              "byte_end": 26768,
+              "byte_start": 26712,
+              "kind": "html_byte_range",
+              "source_id": "kosis_official_devguide"
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "query"
+      },
+      "name": "objL6",
+      "requiredness": {
+        "condition": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_requiredness",
+            "locator": {
+              "cell_index": 3,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "optional"
+      },
+      "sample": {
+        "present": false,
+        "source_refs": [],
+        "value_stored": false
+      },
+      "size": {
+        "observed_values": [],
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "parameter_name",
+          "locator": {
+            "cell_index": 0,
+            "kind": "html_table_cell",
+            "row_index": 5,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_data_type",
+          "locator": {
+            "cell_index": 1,
+            "kind": "html_table_cell",
+            "row_index": 5,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_requiredness",
+          "locator": {
+            "cell_index": 3,
+            "kind": "html_table_cell",
+            "row_index": 5,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        }
+      ]
+    },
+    {
+      "cardinality": {
+        "maximum": null,
+        "minimum": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown"
+      },
+      "data_type": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_data_type",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "String"
+      },
+      "default": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "value": null
+      },
+      "enum": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "values": []
+      },
+      "location": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          },
+          {
+            "evidence_kind": "operation_request_url_query_parameters",
+            "locator": {
+              "byte_end": 26768,
+              "byte_start": 26712,
+              "kind": "html_byte_range",
+              "source_id": "kosis_official_devguide"
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "query"
+      },
+      "name": "objL7",
+      "requiredness": {
+        "condition": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_requiredness",
+            "locator": {
+              "cell_index": 3,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "optional"
+      },
+      "sample": {
+        "present": false,
+        "source_refs": [],
+        "value_stored": false
+      },
+      "size": {
+        "observed_values": [],
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "parameter_name",
+          "locator": {
+            "cell_index": 0,
+            "kind": "html_table_cell",
+            "row_index": 5,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_data_type",
+          "locator": {
+            "cell_index": 1,
+            "kind": "html_table_cell",
+            "row_index": 5,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_requiredness",
+          "locator": {
+            "cell_index": 3,
+            "kind": "html_table_cell",
+            "row_index": 5,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        }
+      ]
+    },
+    {
+      "cardinality": {
+        "maximum": null,
+        "minimum": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown"
+      },
+      "data_type": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_data_type",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "String"
+      },
+      "default": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "value": null
+      },
+      "enum": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "values": []
+      },
+      "location": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          },
+          {
+            "evidence_kind": "operation_request_url_query_parameters",
+            "locator": {
+              "byte_end": 26768,
+              "byte_start": 26712,
+              "kind": "html_byte_range",
+              "source_id": "kosis_official_devguide"
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "query"
+      },
+      "name": "objL8",
+      "requiredness": {
+        "condition": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_requiredness",
+            "locator": {
+              "cell_index": 3,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "optional"
+      },
+      "sample": {
+        "present": false,
+        "source_refs": [],
+        "value_stored": false
+      },
+      "size": {
+        "observed_values": [],
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "parameter_name",
+          "locator": {
+            "cell_index": 0,
+            "kind": "html_table_cell",
+            "row_index": 5,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_data_type",
+          "locator": {
+            "cell_index": 1,
+            "kind": "html_table_cell",
+            "row_index": 5,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_requiredness",
+          "locator": {
+            "cell_index": 3,
+            "kind": "html_table_cell",
+            "row_index": 5,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        }
+      ]
+    },
+    {
+      "cardinality": {
+        "maximum": null,
+        "minimum": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 6,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown"
+      },
+      "data_type": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_data_type",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 6,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "String"
+      },
+      "default": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 6,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "value": null
+      },
+      "enum": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 6,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "values": []
+      },
+      "location": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 6,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          },
+          {
+            "evidence_kind": "operation_request_url_query_parameters",
+            "locator": {
+              "byte_end": 26768,
+              "byte_start": 26712,
+              "kind": "html_byte_range",
+              "source_id": "kosis_official_devguide"
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "query"
+      },
+      "name": "itmId",
+      "requiredness": {
+        "condition": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_requiredness",
+            "locator": {
+              "cell_index": 3,
+              "kind": "html_table_cell",
+              "row_index": 6,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "required"
+      },
+      "sample": {
+        "present": false,
+        "source_refs": [],
+        "value_stored": false
+      },
+      "size": {
+        "observed_values": [],
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "parameter_name",
+          "locator": {
+            "cell_index": 0,
+            "kind": "html_table_cell",
+            "row_index": 6,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_data_type",
+          "locator": {
+            "cell_index": 1,
+            "kind": "html_table_cell",
+            "row_index": 6,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_requiredness",
+          "locator": {
+            "cell_index": 3,
+            "kind": "html_table_cell",
+            "row_index": 6,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        }
+      ]
+    },
+    {
+      "cardinality": {
+        "maximum": null,
+        "minimum": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 7,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown"
+      },
+      "data_type": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_data_type",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 7,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "String"
+      },
+      "default": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 7,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "value": null
+      },
+      "enum": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 7,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "values": []
+      },
+      "location": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 7,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          },
+          {
+            "evidence_kind": "operation_request_url_query_parameters",
+            "locator": {
+              "byte_end": 26768,
+              "byte_start": 26712,
+              "kind": "html_byte_range",
+              "source_id": "kosis_official_devguide"
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "query"
+      },
+      "name": "prdSe",
+      "requiredness": {
+        "condition": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_requiredness",
+            "locator": {
+              "cell_index": 3,
+              "kind": "html_table_cell",
+              "row_index": 7,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "required"
+      },
+      "sample": {
+        "present": false,
+        "source_refs": [],
+        "value_stored": false
+      },
+      "size": {
+        "observed_values": [],
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "parameter_name",
+          "locator": {
+            "cell_index": 0,
+            "kind": "html_table_cell",
+            "row_index": 7,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_data_type",
+          "locator": {
+            "cell_index": 1,
+            "kind": "html_table_cell",
+            "row_index": 7,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_requiredness",
+          "locator": {
+            "cell_index": 3,
+            "kind": "html_table_cell",
+            "row_index": 7,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        }
+      ]
+    },
+    {
+      "cardinality": {
+        "maximum": null,
+        "minimum": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 8,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown"
+      },
+      "data_type": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_data_type",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 8,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "String"
+      },
+      "default": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 8,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "value": null
+      },
+      "enum": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 8,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "values": []
+      },
+      "location": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 8,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          },
+          {
+            "evidence_kind": "operation_request_url_query_parameters",
+            "locator": {
+              "byte_end": 26768,
+              "byte_start": 26712,
+              "kind": "html_byte_range",
+              "source_id": "kosis_official_devguide"
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "query"
+      },
+      "name": "startPrdDe",
+      "requiredness": {
+        "condition": "source_describes_alternative_period_selection",
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_requiredness",
+            "locator": {
+              "cell_index": 4,
+              "kind": "html_table_cell",
+              "row_index": 8,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "conditional"
+      },
+      "sample": {
+        "present": false,
+        "source_refs": [],
+        "value_stored": false
+      },
+      "size": {
+        "observed_values": [],
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "parameter_name",
+          "locator": {
+            "cell_index": 1,
+            "kind": "html_table_cell",
+            "row_index": 8,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_data_type",
+          "locator": {
+            "cell_index": 2,
+            "kind": "html_table_cell",
+            "row_index": 8,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_requiredness",
+          "locator": {
+            "cell_index": 4,
+            "kind": "html_table_cell",
+            "row_index": 8,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        }
+      ]
+    },
+    {
+      "cardinality": {
+        "maximum": null,
+        "minimum": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 9,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown"
+      },
+      "data_type": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_data_type",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 9,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "String"
+      },
+      "default": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 9,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "value": null
+      },
+      "enum": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 9,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "values": []
+      },
+      "location": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 9,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          },
+          {
+            "evidence_kind": "operation_request_url_query_parameters",
+            "locator": {
+              "byte_end": 26768,
+              "byte_start": 26712,
+              "kind": "html_byte_range",
+              "source_id": "kosis_official_devguide"
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "query"
+      },
+      "name": "endPrdDe",
+      "requiredness": {
+        "condition": "source_describes_alternative_period_selection",
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_requiredness",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 9,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "conditional"
+      },
+      "sample": {
+        "present": false,
+        "source_refs": [],
+        "value_stored": false
+      },
+      "size": {
+        "observed_values": [],
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "parameter_name",
+          "locator": {
+            "cell_index": 0,
+            "kind": "html_table_cell",
+            "row_index": 9,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_data_type",
+          "locator": {
+            "cell_index": 1,
+            "kind": "html_table_cell",
+            "row_index": 9,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_requiredness",
+          "locator": {
+            "cell_index": 2,
+            "kind": "html_table_cell",
+            "row_index": 9,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        }
+      ]
+    },
+    {
+      "cardinality": {
+        "maximum": null,
+        "minimum": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 10,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown"
+      },
+      "data_type": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_data_type",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 10,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "String"
+      },
+      "default": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 10,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "value": null
+      },
+      "enum": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 10,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "values": []
+      },
+      "location": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 10,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          },
+          {
+            "evidence_kind": "operation_request_url_query_parameters",
+            "locator": {
+              "byte_end": 26768,
+              "byte_start": 26712,
+              "kind": "html_byte_range",
+              "source_id": "kosis_official_devguide"
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "query"
+      },
+      "name": "newEstPrdCnt",
+      "requiredness": {
+        "condition": "source_describes_alternative_period_selection",
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_requiredness",
+            "locator": {
+              "cell_index": 3,
+              "kind": "html_table_cell",
+              "row_index": 10,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "conditional"
+      },
+      "sample": {
+        "present": false,
+        "source_refs": [],
+        "value_stored": false
+      },
+      "size": {
+        "observed_values": [],
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "parameter_name",
+          "locator": {
+            "cell_index": 1,
+            "kind": "html_table_cell",
+            "row_index": 10,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_data_type",
+          "locator": {
+            "cell_index": 2,
+            "kind": "html_table_cell",
+            "row_index": 10,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_requiredness",
+          "locator": {
+            "cell_index": 3,
+            "kind": "html_table_cell",
+            "row_index": 10,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        }
+      ]
+    },
+    {
+      "cardinality": {
+        "maximum": null,
+        "minimum": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 11,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown"
+      },
+      "data_type": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_data_type",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 11,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "String"
+      },
+      "default": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 11,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "value": null
+      },
+      "enum": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 11,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "values": []
+      },
+      "location": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 11,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          },
+          {
+            "evidence_kind": "operation_request_url_query_parameters",
+            "locator": {
+              "byte_end": 26768,
+              "byte_start": 26712,
+              "kind": "html_byte_range",
+              "source_id": "kosis_official_devguide"
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "query"
+      },
+      "name": "prdInterval",
+      "requiredness": {
+        "condition": "source_describes_alternative_period_selection",
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_requiredness",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 11,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "conditional"
+      },
+      "sample": {
+        "present": false,
+        "source_refs": [],
+        "value_stored": false
+      },
+      "size": {
+        "observed_values": [],
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "parameter_name",
+          "locator": {
+            "cell_index": 0,
+            "kind": "html_table_cell",
+            "row_index": 11,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_data_type",
+          "locator": {
+            "cell_index": 1,
+            "kind": "html_table_cell",
+            "row_index": 11,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_requiredness",
+          "locator": {
+            "cell_index": 2,
+            "kind": "html_table_cell",
+            "row_index": 11,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        }
+      ]
+    },
+    {
+      "cardinality": {
+        "maximum": null,
+        "minimum": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 12,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown"
+      },
+      "data_type": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_data_type",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 12,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "String"
+      },
+      "default": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 12,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "value": null
+      },
+      "enum": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 12,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "values": []
+      },
+      "location": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 12,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          },
+          {
+            "evidence_kind": "operation_request_url_query_parameters",
+            "locator": {
+              "byte_end": 26768,
+              "byte_start": 26712,
+              "kind": "html_byte_range",
+              "source_id": "kosis_official_devguide"
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "query"
+      },
+      "name": "format",
+      "requiredness": {
+        "condition": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_requiredness",
+            "locator": {
+              "cell_index": 3,
+              "kind": "html_table_cell",
+              "row_index": 12,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "required"
+      },
+      "sample": {
+        "present": false,
+        "source_refs": [],
+        "value_stored": false
+      },
+      "size": {
+        "observed_values": [],
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "parameter_name",
+          "locator": {
+            "cell_index": 0,
+            "kind": "html_table_cell",
+            "row_index": 12,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_data_type",
+          "locator": {
+            "cell_index": 1,
+            "kind": "html_table_cell",
+            "row_index": 12,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_requiredness",
+          "locator": {
+            "cell_index": 3,
+            "kind": "html_table_cell",
+            "row_index": 12,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        }
+      ]
+    },
+    {
+      "cardinality": {
+        "maximum": null,
+        "minimum": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 13,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown"
+      },
+      "data_type": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_data_type",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 13,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "String"
+      },
+      "default": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 13,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "value": null
+      },
+      "enum": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 13,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "values": []
+      },
+      "location": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 13,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          },
+          {
+            "evidence_kind": "operation_request_url_query_parameters",
+            "locator": {
+              "byte_end": 26768,
+              "byte_start": 26712,
+              "kind": "html_byte_range",
+              "source_id": "kosis_official_devguide"
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "query"
+      },
+      "name": "outputFields",
+      "requiredness": {
+        "condition": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_requiredness",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 13,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "optional"
+      },
+      "sample": {
+        "present": false,
+        "source_refs": [],
+        "value_stored": false
+      },
+      "size": {
+        "observed_values": [],
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "parameter_name",
+          "locator": {
+            "cell_index": 0,
+            "kind": "html_table_cell",
+            "row_index": 13,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_data_type",
+          "locator": {
+            "cell_index": 1,
+            "kind": "html_table_cell",
+            "row_index": 13,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_requiredness",
+          "locator": {
+            "cell_index": 2,
+            "kind": "html_table_cell",
+            "row_index": 13,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        }
+      ]
+    },
+    {
+      "cardinality": {
+        "maximum": null,
+        "minimum": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 14,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown"
+      },
+      "data_type": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_data_type",
+            "locator": {
+              "cell_index": 1,
+              "kind": "html_table_cell",
+              "row_index": 14,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "String"
+      },
+      "default": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 14,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "value": null
+      },
+      "enum": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 14,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "unknown",
+        "values": []
+      },
+      "location": {
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 14,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          },
+          {
+            "evidence_kind": "operation_request_url_query_parameters",
+            "locator": {
+              "byte_end": 26768,
+              "byte_start": 26712,
+              "kind": "html_byte_range",
+              "source_id": "kosis_official_devguide"
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "query"
+      },
+      "name": "smblChk",
+      "requiredness": {
+        "condition": null,
+        "source_refs": [
+          {
+            "evidence_kind": "parameter_requiredness",
+            "locator": {
+              "cell_index": 3,
+              "kind": "html_table_cell",
+              "row_index": 14,
+              "source_id": "kosis_official_devguide",
+              "table_index": 2
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "optional"
+      },
+      "sample": {
+        "present": false,
+        "source_refs": [],
+        "value_stored": false
+      },
+      "size": {
+        "observed_values": [],
+        "source_refs": [],
+        "status": "unknown",
+        "value": null
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "parameter_name",
+          "locator": {
+            "cell_index": 0,
+            "kind": "html_table_cell",
+            "row_index": 14,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_data_type",
+          "locator": {
+            "cell_index": 1,
+            "kind": "html_table_cell",
+            "row_index": 14,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        },
+        {
+          "evidence_kind": "parameter_requiredness",
+          "locator": {
+            "cell_index": 3,
+            "kind": "html_table_cell",
+            "row_index": 14,
+            "source_id": "kosis_official_devguide",
+            "table_index": 2
+          }
+        }
+      ]
+    }
+  ],
+  "parse_status": "parsed_with_unknowns",
+  "parser": {
+    "id": "registered-operation-document-parser",
+    "version": "2.1.0"
+  },
+  "registry_binding": {
+    "candidate_artifact": "reports/kosis/runtime-candidates.json",
+    "candidate_artifact_sha256": "389e21301b6c5ddaf1827ec9252b274a6e2f1ed24f66df54ed53b84c8d4d762b",
+    "candidate_json_pointer": "#/candidates/0",
+    "operation_id": "kosis-statistics-data-dt-1b41",
+    "registry_revision": "dcb4ae423fcc1612ce3678cbb79eeab0b4e7517f",
+    "source_id": "kosis",
+    "source_profile_artifact": "sources/kosis.json",
+    "source_profile_json_pointer": "#/source_id",
+    "source_profile_sha256": "2fcff2cd1e5e7968473d0ecfc8a35ee90f0bafa4b5f2d82005f4ed00e3d1d344"
+  },
+  "response_assertion": {
+    "empty_result_semantics": {
+      "source_refs": [],
+      "status": "unknown",
+      "value": null
+    },
+    "fields": [],
+    "kind": "unknown",
+    "source_refs": []
+  },
+  "response_contract": {
+    "accepted_http_status_codes": {
+      "source_refs": [],
+      "status": "unknown",
+      "values": []
+    },
+    "coded_result_field_inventory": {
+      "candidates": [],
+      "source_refs": [],
+      "status": "unknown"
+    },
+    "declared_output_fields": [
+      {
+        "data_type": "VARCHAR2(40)",
+        "name": "ORG_ID",
+        "size": "40",
+        "source_refs": [
+          {
+            "evidence_kind": "declared_output_field_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 1,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          },
+          {
+            "evidence_kind": "declared_output_field_type",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 1,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          }
+        ]
+      },
+      {
+        "data_type": "VARCHAR2(40)",
+        "name": "TBL_ID",
+        "size": "40",
+        "source_refs": [
+          {
+            "evidence_kind": "declared_output_field_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 2,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          },
+          {
+            "evidence_kind": "declared_output_field_type",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 2,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          }
+        ]
+      },
+      {
+        "data_type": "VARCHAR2(300)",
+        "name": "TBL_NM",
+        "size": "300",
+        "source_refs": [
+          {
+            "evidence_kind": "declared_output_field_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 3,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          },
+          {
+            "evidence_kind": "declared_output_field_type",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 3,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          }
+        ]
+      },
+      {
+        "data_type": "VARCHAR2(40)",
+        "name": "C1 ~ C8",
+        "size": "40",
+        "source_refs": [
+          {
+            "evidence_kind": "declared_output_field_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 4,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          },
+          {
+            "evidence_kind": "declared_output_field_type",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 4,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          }
+        ]
+      },
+      {
+        "data_type": "VARCHAR2(3000)",
+        "name": "C1_OBJ_NM ~ C8_OBJ_NM",
+        "size": "3000",
+        "source_refs": [
+          {
+            "evidence_kind": "declared_output_field_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          },
+          {
+            "evidence_kind": "declared_output_field_type",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 5,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          }
+        ]
+      },
+      {
+        "data_type": "VARCHAR2(3000)",
+        "name": "C1_OBJ_NM_ENG ~ C8_OBJ_NM_ENG",
+        "size": "3000",
+        "source_refs": [
+          {
+            "evidence_kind": "declared_output_field_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 6,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          },
+          {
+            "evidence_kind": "declared_output_field_type",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 6,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          }
+        ]
+      },
+      {
+        "data_type": "VARCHAR2(3000)",
+        "name": "C1_NM ~ C8_NM",
+        "size": "3000",
+        "source_refs": [
+          {
+            "evidence_kind": "declared_output_field_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 7,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          },
+          {
+            "evidence_kind": "declared_output_field_type",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 7,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          }
+        ]
+      },
+      {
+        "data_type": "VARCHAR2(3000)",
+        "name": "C1_NM_ENG ~ C8_NM_ENG",
+        "size": "3000",
+        "source_refs": [
+          {
+            "evidence_kind": "declared_output_field_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 8,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          },
+          {
+            "evidence_kind": "declared_output_field_type",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 8,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          }
+        ]
+      },
+      {
+        "data_type": "VARCHAR2(40)",
+        "name": "ITM_ID",
+        "size": "40",
+        "source_refs": [
+          {
+            "evidence_kind": "declared_output_field_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 9,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          },
+          {
+            "evidence_kind": "declared_output_field_type",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 9,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          }
+        ]
+      },
+      {
+        "data_type": "VARCHAR2(3000)",
+        "name": "ITM_NM",
+        "size": "3000",
+        "source_refs": [
+          {
+            "evidence_kind": "declared_output_field_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 10,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          },
+          {
+            "evidence_kind": "declared_output_field_type",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 10,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          }
+        ]
+      },
+      {
+        "data_type": "VARCHAR2(3000)",
+        "name": "ITM_NM_ENG",
+        "size": "3000",
+        "source_refs": [
+          {
+            "evidence_kind": "declared_output_field_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 11,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          },
+          {
+            "evidence_kind": "declared_output_field_type",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 11,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          }
+        ]
+      },
+      {
+        "data_type": "VARCHAR2(40)",
+        "name": "UNIT_ID",
+        "size": "40",
+        "source_refs": [
+          {
+            "evidence_kind": "declared_output_field_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 12,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          },
+          {
+            "evidence_kind": "declared_output_field_type",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 12,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          }
+        ]
+      },
+      {
+        "data_type": "VARCHAR2(1000)",
+        "name": "UNIT_NM",
+        "size": "1000",
+        "source_refs": [
+          {
+            "evidence_kind": "declared_output_field_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 13,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          },
+          {
+            "evidence_kind": "declared_output_field_type",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 13,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          }
+        ]
+      },
+      {
+        "data_type": "VARCHAR2(1000)",
+        "name": "UNIT_NM_ENG",
+        "size": "1000",
+        "source_refs": [
+          {
+            "evidence_kind": "declared_output_field_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 14,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          },
+          {
+            "evidence_kind": "declared_output_field_type",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 14,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          }
+        ]
+      },
+      {
+        "data_type": "VARCHAR2(20)",
+        "name": "PRD_SE",
+        "size": "20",
+        "source_refs": [
+          {
+            "evidence_kind": "declared_output_field_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 15,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          },
+          {
+            "evidence_kind": "declared_output_field_type",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 15,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          }
+        ]
+      },
+      {
+        "data_type": "VARCHAR2(8)",
+        "name": "PRD_DE",
+        "size": "8",
+        "source_refs": [
+          {
+            "evidence_kind": "declared_output_field_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 16,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          },
+          {
+            "evidence_kind": "declared_output_field_type",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 16,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          }
+        ]
+      },
+      {
+        "data_type": "VARCHAR2(100)",
+        "name": "DT",
+        "size": "100",
+        "source_refs": [
+          {
+            "evidence_kind": "declared_output_field_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 17,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          },
+          {
+            "evidence_kind": "declared_output_field_type",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 17,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          }
+        ]
+      },
+      {
+        "data_type": "VARCHAR2(10)",
+        "name": "LST_CHN_DE",
+        "size": "10",
+        "source_refs": [
+          {
+            "evidence_kind": "declared_output_field_name",
+            "locator": {
+              "cell_index": 0,
+              "kind": "html_table_cell",
+              "row_index": 18,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          },
+          {
+            "evidence_kind": "declared_output_field_type",
+            "locator": {
+              "cell_index": 2,
+              "kind": "html_table_cell",
+              "row_index": 18,
+              "source_id": "kosis_official_devguide",
+              "table_index": 3
+            }
+          }
+        ]
+      }
+    ],
+    "documented_error_contract": {
+      "code_path": {
+        "kind": "xml_qname_path",
+        "segments": [
+          {
+            "local_name": "error",
+            "namespace": null
+          },
+          {
+            "local_name": "err",
+            "namespace": null
+          }
+        ]
+      },
+      "codes": [
+        {
+          "classification": "credential",
+          "source_refs": [
+            {
+              "evidence_kind": "kosis_manual_error_contract",
+              "locator": {
+                "entry": "error code 10",
+                "kind": "pdf_page_section",
+                "page_number": 16,
+                "section": "1.4",
+                "source_id": "kosis_official_api_manual"
+              }
+            }
+          ],
+          "value": "10"
+        },
+        {
+          "classification": "credential",
+          "source_refs": [
+            {
+              "evidence_kind": "kosis_manual_error_contract",
+              "locator": {
+                "entry": "error code 11",
+                "kind": "pdf_page_section",
+                "page_number": 16,
+                "section": "1.4",
+                "source_id": "kosis_official_api_manual"
+              }
+            }
+          ],
+          "value": "11"
+        },
+        {
+          "classification": "bad_request",
+          "source_refs": [
+            {
+              "evidence_kind": "kosis_manual_error_contract",
+              "locator": {
+                "entry": "error code 20",
+                "kind": "pdf_page_section",
+                "page_number": 16,
+                "section": "1.4",
+                "source_id": "kosis_official_api_manual"
+              }
+            }
+          ],
+          "value": "20"
+        },
+        {
+          "classification": "bad_request",
+          "source_refs": [
+            {
+              "evidence_kind": "kosis_manual_error_contract",
+              "locator": {
+                "entry": "error code 21",
+                "kind": "pdf_page_section",
+                "page_number": 16,
+                "section": "1.4",
+                "source_id": "kosis_official_api_manual"
+              }
+            }
+          ],
+          "value": "21"
+        },
+        {
+          "classification": "empty_result",
+          "source_refs": [
+            {
+              "evidence_kind": "kosis_manual_error_contract",
+              "locator": {
+                "entry": "error code 30",
+                "kind": "pdf_page_section",
+                "page_number": 16,
+                "section": "1.4",
+                "source_id": "kosis_official_api_manual"
+              }
+            }
+          ],
+          "value": "30"
+        },
+        {
+          "classification": "size_limit",
+          "source_refs": [
+            {
+              "evidence_kind": "kosis_manual_error_contract",
+              "locator": {
+                "entry": "error code 31",
+                "kind": "pdf_page_section",
+                "page_number": 16,
+                "section": "1.4",
+                "source_id": "kosis_official_api_manual"
+              }
+            }
+          ],
+          "value": "31"
+        },
+        {
+          "classification": "quota",
+          "source_refs": [
+            {
+              "evidence_kind": "kosis_manual_error_contract",
+              "locator": {
+                "entry": "error code 40",
+                "kind": "pdf_page_section",
+                "page_number": 16,
+                "section": "1.4",
+                "source_id": "kosis_official_api_manual"
+              }
+            }
+          ],
+          "value": "40"
+        },
+        {
+          "classification": "size_limit",
+          "source_refs": [
+            {
+              "evidence_kind": "kosis_manual_error_contract",
+              "locator": {
+                "entry": "error code 41",
+                "kind": "pdf_page_section",
+                "page_number": 16,
+                "section": "1.4",
+                "source_id": "kosis_official_api_manual"
+              }
+            }
+          ],
+          "value": "41"
+        },
+        {
+          "classification": "quota",
+          "source_refs": [
+            {
+              "evidence_kind": "kosis_manual_error_contract",
+              "locator": {
+                "entry": "error code 42",
+                "kind": "pdf_page_section",
+                "page_number": 16,
+                "section": "1.4",
+                "source_id": "kosis_official_api_manual"
+              }
+            }
+          ],
+          "value": "42"
+        },
+        {
+          "classification": "server",
+          "source_refs": [
+            {
+              "evidence_kind": "kosis_manual_error_contract",
+              "locator": {
+                "entry": "error code 50",
+                "kind": "pdf_page_section",
+                "page_number": 16,
+                "section": "1.4",
+                "source_id": "kosis_official_api_manual"
+              }
+            }
+          ],
+          "value": "50"
+        }
+      ],
+      "format": "xml",
+      "message_path": {
+        "kind": "xml_qname_path",
+        "segments": [
+          {
+            "local_name": "error",
+            "namespace": null
+          },
+          {
+            "local_name": "errMsg",
+            "namespace": null
+          }
+        ]
+      },
+      "source_refs": [
+        {
+          "evidence_kind": "kosis_manual_error_contract",
+          "locator": {
+            "entry": "XML error envelope fields err and errMsg",
+            "kind": "pdf_page_section",
+            "page_number": 16,
+            "section": "1.4",
+            "source_id": "kosis_official_api_manual"
+          }
+        }
+      ],
+      "status": "documented"
+    },
+    "documented_fields": [],
+    "documented_http_error_branches": [],
+    "payload": {
+      "kind": "unknown",
+      "media_types": [],
+      "source_refs": [],
+      "status": "unknown"
+    },
+    "provider_result_codes": {
+      "error_values": {
+        "source_refs": [],
+        "status": "unknown",
+        "values": []
+      },
+      "evidence_strength": "unknown",
+      "path": null,
+      "source_refs": [],
+      "status": "unknown",
+      "success_values": {
+        "source_refs": [],
+        "status": "unknown",
+        "values": []
+      },
+      "value_type": null
+    },
+    "required_fields": [],
+    "result_collection": {
+      "container_cardinality": {
+        "maximum": null,
+        "minimum": null,
+        "source_refs": [],
+        "status": "unknown"
+      },
+      "container_path": null,
+      "item_path": null,
+      "path": null,
+      "source_refs": [],
+      "status": "unknown",
+      "value_type": null
+    },
+    "schema_shape": {
+      "source_refs": [],
+      "status": "unknown"
+    },
+    "success_branches": []
+  },
+  "schema_version": "datapan.operation-document-evidence.v2",
+  "source_bindings": [
+    {
+      "bytes": 93406,
+      "capture_role": "operation_request_and_declared_output_tables",
+      "media_type": "text/html",
+      "origin": {
+        "body_values_stored": false,
+        "host": "kosis.kr",
+        "method": "GET",
+        "path": "/openapi/devGuide/devGuide_0201List.do",
+        "query_values_stored": false,
+        "scheme": "https"
+      },
+      "parser": {
+        "id": "registered-operation-document-parser",
+        "version": "2.1.0"
+      },
+      "retrieved_at": "2026-10-07T06:15:34Z",
+      "sha256": "ffa38d0e4afaf09d54b8e3542fe815b5a4cc1237a4376b4812ce49fd15b07c52",
+      "source_id": "kosis_official_devguide"
+    },
+    {
+      "bytes": 12037427,
+      "capture_role": "source_error_and_quota_semantics",
+      "media_type": "application/pdf",
+      "origin": {
+        "body_values_stored": false,
+        "host": "kosis.kr",
+        "method": "GET",
+        "path": "/openapi/file/openApi_manual_v1.0.pdf",
+        "query_values_stored": false,
+        "scheme": "https"
+      },
+      "parser": {
+        "id": "registered-operation-document-parser",
+        "version": "2.1.0"
+      },
+      "retrieved_at": "2026-10-07T06:16:32Z",
+      "sha256": "0d2de8e58bebdeb1546b9accc805407c6c8fc0ece0eaba9af2ef6fcc578fb821",
+      "source_id": "kosis_official_api_manual"
+    }
+  ],
+  "transport": {
+    "body_encoding": {
+      "source_refs": [],
+      "status": "not_applicable",
+      "value": null
+    },
+    "envelope_namespace": {
+      "source_refs": [],
+      "status": "not_applicable",
+      "value": null
+    },
+    "fixed_query_selectors": [
+      {
+        "name": "method",
+        "role": "operation_selector",
+        "source_refs": [
+          {
+            "evidence_kind": "operation_fixed_query_selector",
+            "locator": {
+              "byte_end": 26768,
+              "byte_start": 26712,
+              "kind": "html_byte_range",
+              "source_id": "kosis_official_devguide"
+            }
+          }
+        ],
+        "status": "documented",
+        "value": "getList"
+      }
+    ],
+    "host": {
+      "source_refs": [
+        {
+          "evidence_kind": "registered_operation_endpoint_binding",
+          "locator": {
+            "byte_end": 26768,
+            "byte_start": 26712,
+            "kind": "html_byte_range",
+            "source_id": "kosis_official_devguide"
+          }
+        }
+      ],
+      "status": "documented",
+      "value": "kosis.kr"
+    },
+    "http_method": {
+      "authority_scope": "not_found_in_parsed_operation_sources",
+      "source_refs": [],
+      "status": "unknown",
+      "value": null
+    },
+    "operation_qname": {
+      "source_refs": [],
+      "status": "not_applicable",
+      "value": null
+    },
+    "path": {
+      "source_refs": [
+        {
+          "evidence_kind": "registered_operation_endpoint_binding",
+          "locator": {
+            "byte_end": 26768,
+            "byte_start": 26712,
+            "kind": "html_byte_range",
+            "source_id": "kosis_official_devguide"
+          }
+        }
+      ],
+      "status": "documented",
+      "value": "/openapi/Param/statisticsParameterData.do"
+    },
+    "protocol": {
+      "source_refs": [
+        {
+          "evidence_kind": "registered_operation_endpoint_binding",
+          "locator": {
+            "byte_end": 26768,
+            "byte_start": 26712,
+            "kind": "html_byte_range",
+            "source_id": "kosis_official_devguide"
+          }
+        }
+      ],
+      "status": "documented",
+      "value": "REST"
+    },
+    "scheme": {
+      "source_refs": [
+        {
+          "evidence_kind": "registered_operation_endpoint_binding",
+          "locator": {
+            "byte_end": 26768,
+            "byte_start": 26712,
+            "kind": "html_byte_range",
+            "source_id": "kosis_official_devguide"
+          }
+        }
+      ],
+      "status": "documented",
+      "value": "https"
+    },
+    "soap_action": {
+      "source_refs": [],
+      "status": "not_applicable",
+      "value": null
+    },
+    "soap_version": {
+      "source_refs": [],
+      "status": "not_applicable",
+      "value": null
+    }
+  }
+}

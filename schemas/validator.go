@@ -248,6 +248,18 @@ func ValidateHealthRegistryAPIMetadataSourcePinV1(data []byte) error {
 	return validate(data, healthRegistryMetadataPin, healthRegistryMetadataPinErr, "Registry API metadata source pin")
 }
 
+// ValidateRegistryOperationDocumentEvidenceV2 validates an exact Registry
+// release-bound operation-document schema copy and one bounded evidence row.
+func ValidateRegistryOperationDocumentEvidenceV2(data, sourceSchema []byte) error {
+	const schemaSHA256 = "d6edb7dad63b9d7cdac6753fc02cba962cb8d96d7c01119c031935abfc973108"
+	sum := sha256.Sum256(sourceSchema)
+	if hex.EncodeToString(sum[:]) != schemaSHA256 {
+		return errors.New("Registry operation evidence schema digest mismatch")
+	}
+	compiled, err := compile(sourceSchema, "https://schemas.datapan.dev/datapan.operation-document-evidence.v2.schema.json")
+	return validate(data, compiled, err, "Registry operation document evidence")
+}
+
 func compile(source []byte, uri string) (*jsonschema.Schema, error) {
 	var document any
 	if err := json.Unmarshal(source, &document); err != nil {

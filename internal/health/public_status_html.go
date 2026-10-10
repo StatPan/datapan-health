@@ -174,8 +174,9 @@ const publicStatusHTMLTemplate = `<!doctype html>
       <article class="status-item">
         <h3>{{.Title}}</h3>
         <p><strong>기관:</strong> {{.Organization}}</p>
-        <p><strong>기능:</strong> {{.Description}}</p>
+        <p><strong>API 설명:</strong> {{.Description}}</p>
         <p><strong>API 기능:</strong> {{count .APIOperations}}개 · <strong>외부 링크:</strong> {{count .LinkOperations}}개</p>
+        {{if .RegistrationNote}}<p class="notice">{{.RegistrationNote}}</p>{{end}}
         <p><strong>검사 연결:</strong> {{count .ConfiguredOperations}}개 · <strong>검사 연결 전:</strong> {{count .UnconfiguredOperations}}개</p>
         <p><strong>기존 Gatus 수신 결과:</strong> {{.RecentObservations}}</p>
         {{if .Progress}}<p><strong>전체 기능 검사 상태:</strong> <span class="badge {{.Progress.StatusClass}}">{{.Progress.StatusLabel}}</span></p><p><strong>검사 계획:</strong> {{count .Progress.PlannedFunctions}} / {{count .Progress.RegisteredFunctions}}개 기능 · <strong>최근 통과:</strong> {{count .Progress.CurrentPass}} · <strong>최근 실패:</strong> {{count .Progress.CurrentFail}} · <strong>판정 필요:</strong> {{count .Progress.CurrentIndeterminate}} · <strong>결과 없음:</strong> {{count .Progress.Unobserved}} · <strong>기한 지남:</strong> {{count .Progress.Stale}}{{if .Progress.Pending}} · <strong>진행 중:</strong> {{count .Progress.Pending}}{{end}}</p>{{end}}
@@ -196,14 +197,20 @@ const publicStatusHTMLTemplate = `<!doctype html>
     {{if .PartialScopes}}<section class="section" aria-labelledby="partial-scope-heading">
       <h2 id="partial-scope-heading">다른 제공처의 부분 등록 기능</h2>
       <p class="muted">아래 항목은 확인된 일부 기능이며, 제공처 전체 목록이나 사용 가능 판정을 뜻하지 않습니다.</p>
+      <p class="muted">‘운영자 표기’는 등록된 기능 ID를 읽기 쉽게 옮긴 이름입니다. 공식 API 이름이나 기능 설명을 대신하지 않으며, 문서로 확인된 정보는 따로 표시합니다.</p>
       <ul class="operation-list">
-        {{range .PartialScopes}}<li class="status-item"><strong>{{.ProviderLabel}}</strong> · {{.OperationName}}
+        {{range .PartialScopes}}<li class="status-item"><strong>{{.ProviderLabel}}</strong> · {{.OperationName}}{{if .NameAttribution}} <span class="muted">({{.NameAttribution}})</span>{{end}}
           <p><strong>제공처 전체 목록:</strong> 부분 등록 · <span class="badge badge-unknown">미확인</span></p>
           <p><strong>검사 결과:</strong> <span class="badge {{.StatusClass}}">{{.StatusLabel}}</span></p>
+          {{if .ObservationDetail}}<p><strong>결과 설명:</strong> {{.ObservationDetail}}</p>{{end}}
+          {{if .AttemptLabel}}<p><strong>검사 진행:</strong> {{.AttemptLabel}}</p>{{end}}
+          {{if .NextActionLabel}}<p><strong>다음 확인:</strong> {{.NextActionLabel}}</p>{{end}}
           <p><strong>실행 조건:</strong> {{.AvailabilityLabel}}</p>
           <p><strong>API 이름:</strong> {{.Title}}</p>
+          {{if .GuideTitle}}<p><strong>근거 문서:</strong> {{.GuideTitle}}</p>{{end}}
           <p><strong>기관:</strong> {{.Organization}}</p>
           <p><strong>기능 설명:</strong> {{.Purpose}}</p>
+          {{if .ServiceStatusLabel}}<p class="notice warning">{{.ServiceStatusLabel}}</p>{{end}}
           {{if .MetadataAction}}<p><strong>정보 확인:</strong> {{.MetadataAction}}</p>{{end}}
         </li>{{end}}
       </ul>
@@ -232,6 +239,7 @@ const publicStatusHTMLTemplate = `<!doctype html>
       <div><dt>전체 목록 미확인 제공처</dt><dd>{{count .OperationPlan.InventoryUnknownScopes}}곳</dd></div>
       <div><dt>범위 확인이 필요한 기능</dt><dd>{{count .OperationPlan.InventoryUnknownOperations}}개</dd></div>
       <div><dt>실행 조건 확인</dt><dd>{{count .OperationPlan.Admitted}}</dd></div>
+      <div><dt>실행 전 보류</dt><dd>{{count .OperationPlan.Deferred}}</dd></div>
       <div><dt>실행 시도</dt><dd>{{count .OperationPlan.Attempted}}</dd></div>
       <div><dt>결과 저장</dt><dd>{{count .OperationPlan.Persisted}}</dd></div>
       <div><dt>Gatus 전달 확인</dt><dd>{{count .OperationPlan.Acknowledged}}</dd></div>
@@ -254,9 +262,10 @@ const publicStatusHTMLTemplate = `<!doctype html>
     <article class="status-item">
       <h2 id="api-detail-heading">{{.DetailTitle}}</h2>
       <p><strong>기관:</strong> {{.DetailOrganization}}</p>
-      <p><strong>기능:</strong> {{.DetailDescription}}</p>
+      <p><strong>API 설명:</strong> {{.DetailDescription}}</p>
       <p><strong>API 기능:</strong> {{.DetailAPIOperations}}개</p>
       <p><strong>외부 링크:</strong> {{.DetailLinkOperations}}개</p>
+      {{if .DetailRegistrationNote}}<p class="notice">{{.DetailRegistrationNote}}</p>{{end}}
         <p><strong>검사 연결:</strong> {{.DetailConfigured}}개 · <strong>최근 결과:</strong> {{.DetailRecentObservations}}</p>
       {{if .DetailProgress}}<p><strong>전체 기능 검사 상태:</strong> <span class="badge {{.DetailProgress.StatusClass}}">{{.DetailProgress.StatusLabel}}</span> · 계획 {{count .DetailProgress.PlannedFunctions}} / {{count .DetailProgress.RegisteredFunctions}} · 통과 {{count .DetailProgress.CurrentPass}} · 실패 {{count .DetailProgress.CurrentFail}} · 판정 필요 {{count .DetailProgress.CurrentIndeterminate}} · 결과 없음 {{count .DetailProgress.Unobserved}} · 기한 지남 {{count .DetailProgress.Stale}}</p>{{end}}
       <p class="muted">검사 결과는 연결된 개별 API 기능에만 표시합니다.</p>
@@ -272,7 +281,9 @@ const publicStatusHTMLTemplate = `<!doctype html>
       <li class="status-item">
         <h3>{{.Name}}</h3>
         <p>제공 방식: {{.Protocol}} · {{.NameState}}</p>
-        {{if .Description}}<p><strong>기능 설명:</strong> {{.Description}}</p>{{end}}
+        <p><strong>상위 API:</strong> {{.Title}} · <strong>기관:</strong> {{.Organization}}</p>
+        <p><strong>{{.DescriptionLabel}}:</strong> {{.Description}}</p>
+        <p class="muted"><strong>기능별 설명:</strong> Registry 원본에서 이 기능만의 설명은 별도로 확인되지 않았습니다. 위 설명은 상위 API 전체에 대한 설명입니다.</p>
         <p><strong>검사 결과:</strong> <span class="badge {{.StatusClass}}">{{.ObservationLabel}}</span></p>
         {{if .AvailabilityLabel}}<p><strong>실행 조건:</strong> {{.AvailabilityLabel}}</p>{{end}}
         {{if .AttemptLabel}}<p><strong>검사 진행:</strong> {{.AttemptLabel}}</p>{{end}}
@@ -453,6 +464,7 @@ type publicHTMLPage struct {
 	DetailDescription        string
 	DetailAPIOperations      int
 	DetailLinkOperations     int
+	DetailRegistrationNote   string
 	DetailConfigured         int
 	DetailRecentObservations string
 	DetailProgress           *publicHTMLAPIProgress
@@ -490,6 +502,7 @@ type publicHTMLAPI struct {
 	Description            string
 	APIOperations          int
 	LinkOperations         int
+	RegistrationNote       string
 	ConfiguredOperations   int
 	UnconfiguredOperations int
 	RecentObservations     string
@@ -516,15 +529,21 @@ type publicHTMLAPIProgress struct {
 }
 
 type publicHTMLPartialScope struct {
-	ProviderLabel     string
-	OperationName     string
-	Title             string
-	Organization      string
-	Purpose           string
-	MetadataAction    string
-	AvailabilityLabel string
-	StatusLabel       string
-	StatusClass       string
+	ProviderLabel      string
+	OperationName      string
+	NameAttribution    string
+	Title              string
+	GuideTitle         string
+	Organization       string
+	Purpose            string
+	ServiceStatusLabel string
+	ObservationDetail  string
+	AttemptLabel       string
+	NextActionLabel    string
+	MetadataAction     string
+	AvailabilityLabel  string
+	StatusLabel        string
+	StatusClass        string
 }
 
 type publicHTMLOperationPlan struct {
@@ -534,6 +553,7 @@ type publicHTMLOperationPlan struct {
 	InventoryUnknownOperations int
 	Admitted                   int
 	Claimed                    int
+	Deferred                   int
 	Attempted                  int
 	Persisted                  int
 	Acknowledged               int
@@ -564,6 +584,7 @@ type publicHTMLOperation struct {
 	Title               string
 	Organization        string
 	Description         string
+	DescriptionLabel    string
 	OperationName       string
 	DetailURL           string
 	ProviderObservedAt  *publicHTMLTime
@@ -638,7 +659,7 @@ func (h *PublicStatusHandler) serveDatapanHTML(w http.ResponseWriter, r *http.Re
 		}
 		attachPublicOperationReadModel(&page, *h.registry, h.operations, apiIDs, registered, now)
 		if page.OperationPlan.Available {
-			attachPublicPartialScopes(&page, h.operations, now)
+			attachPublicPartialScopes(&page, h.operations, h.display, now)
 		}
 	case "detail":
 		api, found := h.registry.APIByID(request.apiID)
@@ -728,7 +749,7 @@ func attachPublicOperationReadModel(page *publicHTMLPage, metadata RegistryAPIMe
 		Available: true, Known: base.IdentityCounts.Known,
 		InventoryUnknownScopes: base.IdentityCounts.InventoryUnknownScopes, InventoryUnknownOperations: base.IdentityCounts.InventoryUnknownOperations,
 		Admitted: base.IdentityCounts.Admitted,
-		Claimed:  base.IdentityCounts.Claimed, Attempted: base.IdentityCounts.Attempted,
+		Claimed:  base.IdentityCounts.Claimed, Deferred: base.IdentityCounts.Deferred, Attempted: base.IdentityCounts.Attempted,
 		Persisted: base.IdentityCounts.Persisted, Acknowledged: base.IdentityCounts.Acknowledged,
 		ReadbackVerified: base.IdentityCounts.ReadbackVerified, DeliveryPending: base.IdentityCounts.DeliveryPending,
 		Missing: base.IdentityCounts.Missing, Late: base.IdentityCounts.Late,
@@ -852,7 +873,7 @@ var publicPartialRegistryOperations = []publicPartialRegistryOperation{
 	{sourceID: "seoul_open_data", operationID: "seoul-open-data-subway-station-list", provider: "data.seoul.go.kr", providerLabel: "서울 열린데이터광장"},
 }
 
-func attachPublicPartialScopes(page *publicHTMLPage, source PublicRegistryOperationsSource, now time.Time) {
+func attachPublicPartialScopes(page *publicHTMLPage, source PublicRegistryOperationsSource, display *PublicOperationDisplayMetadata, now time.Time) {
 	if page == nil {
 		return
 	}
@@ -876,22 +897,65 @@ func attachPublicPartialScopes(page *publicHTMLPage, source PublicRegistryOperat
 			return
 		}
 		name := publicPartialScopeField(operation.OperationName, operation.OperationNameState, "API 기능 이름", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes)
+		nameAttribution, guideTitle, serviceStatusLabel := "", "", ""
+		apiTitle := publicPartialScopeField(operation.Title, operation.TitleState, "API 이름", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes)
+		purpose, purposeAction := publicPartialScopePurpose(operation)
+		var displayEntry operatorOperationDisplayEntry
+		foundDisplayEntry := false
+		if display != nil {
+			displayEntry, foundDisplayEntry = display.entry(expected.sourceID, expected.operationID)
+		}
+		if foundDisplayEntry {
+			name = displayEntry.OperatorLabelKO
+			nameAttribution = "운영자 표기 · 등록 ID 해석"
+			if displayEntry.OfficialAPITitle.State == "documented" {
+				if safe := safePublicOperationReadText(displayEntry.OfficialAPITitle.Value, maxPublicOperationLabelBytes, maxPublicOperationLabelRunes); safe != "" {
+					apiTitle = safe
+				}
+			}
+			if displayEntry.GuideTitle.State == "documented" {
+				guideTitle = safePublicOperationReadText(displayEntry.GuideTitle.Value, maxPublicOperationLabelBytes, maxPublicOperationLabelRunes)
+			}
+			if displayEntry.OfficialPurpose.State == "documented" {
+				if safe := safePublicOperationReadText(displayEntry.OfficialPurpose.Value, maxPublicOperationPurposeBytes, maxPublicOperationPurposeRunes); safe != "" {
+					purpose = safe
+					purposeAction = "공식 제공처 문서의 설명입니다."
+				}
+			}
+			if displayEntry.ServiceStatus.State == "documented" && displayEntry.ServiceStatus.Value == "terminated" {
+				serviceStatusLabel = "제공처 문서 상태: 서비스 종료 · 검사 결과와 별도 정보"
+			}
+			if displayEntry.GuideTitle.State == "documented" {
+				purposeAction = "기능 설명은 아직 확인되지 않았습니다."
+			}
+		}
 		if operation.OperationName == operation.RegistryOperationID {
-			name = "API 기능 이름 확인 필요"
+			if nameAttribution == "" {
+				name = "API 기능 이름 확인 필요"
+			}
 		}
 		statusLabel, statusClass := publicPartialOperationObservation(operation)
-		title := publicPartialScopeField(operation.Title, operation.TitleState, "API 이름", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes)
+		observationDetail, nextActionLabel := publicPartialOperationDiagnosis(operation)
+		attemptLabel := ""
+		if operation.AttemptState != "none" {
+			attemptLabel = publicOperationAttemptLabel(operation.AttemptState, operation.RequestStarted, operation.ExecutionBlockReason)
+		}
 		organization := publicPartialScopeField(operation.Organization, operation.OrganizationState, "기관 정보", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes)
-		purpose, purposeAction := publicPartialScopePurpose(operation)
 		rows = append(rows, publicHTMLPartialScope{
-			ProviderLabel:     expected.providerLabel,
-			OperationName:     name,
-			Title:             title,
-			Organization:      organization,
-			Purpose:           purpose,
-			MetadataAction:    purposeAction,
-			AvailabilityLabel: publicPartialOperationAvailability(operation),
-			StatusLabel:       statusLabel, StatusClass: statusClass,
+			ProviderLabel:      expected.providerLabel,
+			OperationName:      name,
+			NameAttribution:    nameAttribution,
+			Title:              apiTitle,
+			GuideTitle:         guideTitle,
+			Organization:       organization,
+			Purpose:            purpose,
+			ServiceStatusLabel: serviceStatusLabel,
+			ObservationDetail:  observationDetail,
+			AttemptLabel:       attemptLabel,
+			NextActionLabel:    nextActionLabel,
+			MetadataAction:     purposeAction,
+			AvailabilityLabel:  publicPartialOperationAvailability(operation),
+			StatusLabel:        statusLabel, StatusClass: statusClass,
 		})
 	}
 	page.PartialScopes = rows
@@ -899,8 +963,8 @@ func attachPublicPartialScopes(page *publicHTMLPage, source PublicRegistryOperat
 }
 
 func publicPartialScopeField(value, state, label string, maximumBytes, maximumRunes int) string {
-	if state == "present" {
-		return publicReadModelField(value, state, label, maximumBytes, maximumRunes)
+	if state == "present" || state == "sanitized" {
+		return publicUnverifiedReadModelField(value, state, label, maximumBytes, maximumRunes)
 	}
 	switch state {
 	case "missing", "blank":
@@ -915,7 +979,7 @@ func publicPartialScopeField(value, state, label string, maximumBytes, maximumRu
 }
 
 func publicPartialScopePurpose(operation OperationReadModelRow) (purpose, action string) {
-	if operation.PurposeState == "present" {
+	if operation.PurposeState == "present" || operation.PurposeState == "sanitized" {
 		if value := safePublicOperationReadText(operation.Purpose, maxPublicOperationPurposeBytes, maxPublicOperationPurposeRunes); value != "" {
 			return value, ""
 		}
@@ -938,8 +1002,14 @@ func publicPartialOperationObservation(operation OperationReadModelRow) (label, 
 	case "current_pass":
 		return "최근 검사 결과 통과", "badge-good"
 	case "current_fail":
+		if operation.ResultCategory == "response_http_failure" {
+			return "HTTP 응답 오류", "badge-bad"
+		}
 		return "최근 검사 결과 실패", "badge-bad"
 	case "current_indeterminate":
+		if operation.ResultCategory == "response_semantics_unestablished" {
+			return "응답 수신 · 이용 가능성 판정 근거 부족", "badge-warn"
+		}
 		return "현재 결과로 상태 판정 불가", "badge-warn"
 	case "stale":
 		return "최근 결과가 검사 주기를 지남", "badge-unknown"
@@ -950,6 +1020,26 @@ func publicPartialOperationObservation(operation OperationReadModelRow) (label, 
 		return "검증된 검사 결과 없음", "badge-unknown"
 	default:
 		return "검사 상태 확인 불가", "badge-warn"
+	}
+}
+
+func publicPartialOperationDiagnosis(operation OperationReadModelRow) (detail, nextAction string) {
+	switch operation.ObservationState {
+	case "current_fail":
+		if operation.ResultCategory == "response_http_failure" && operation.ProviderHTTPStatus != nil {
+			return fmt.Sprintf("HTTP %d 응답 오류입니다. 원인은 이 기록만으로 확정할 수 없습니다.", *operation.ProviderHTTPStatus), "제공처의 최신 안내와 API 사용 조건을 확인하세요."
+		}
+		return publicOperationCategoryDiagnosis(operation.ResultCategory)
+	case "current_indeterminate":
+		if operation.ResultCategory == "response_semantics_unestablished" {
+			if operation.ProviderHTTPStatus != nil && *operation.ProviderHTTPStatus >= 200 && *operation.ProviderHTTPStatus < 300 {
+				return fmt.Sprintf("HTTP %d 응답은 받았지만 기능 수행 여부를 판정할 기준이 등록되지 않았습니다.", *operation.ProviderHTTPStatus), "공식 API 문서의 성공 응답 기준을 확인해야 합니다."
+			}
+			return "응답 수신은 확인했지만 기능 수행 여부는 판정하지 못했습니다.", "공식 API 문서의 성공 응답 기준을 확인해야 합니다."
+		}
+		return publicOperationCategoryDiagnosis(operation.ResultCategory)
+	default:
+		return "", ""
 	}
 }
 
@@ -981,10 +1071,11 @@ func publicHTMLReadModelOperation(operation OperationReadModelRow, now time.Time
 	}
 	row := publicHTMLOperation{
 		Name: name, Protocol: protocol, NameState: metadataStateLabel(operation.OperationNameState),
-		Title:        publicReadModelField(operation.Title, operation.TitleState, "API 이름", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes),
-		Organization: publicReadModelField(operation.Organization, operation.OrganizationState, "기관 정보", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes),
-		Description:  publicReadModelField(operation.Purpose, operation.PurposeState, "기능 설명", maxPublicOperationPurposeBytes, maxPublicOperationPurposeRunes),
-		StatusClass:  "badge-unknown",
+		Title:            publicReadModelField(operation.Title, operation.TitleState, "API 이름", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes),
+		Organization:     publicReadModelField(operation.Organization, operation.OrganizationState, "기관 정보", maxPublicOperationLabelBytes, maxPublicOperationLabelRunes),
+		Description:      publicReadModelField(operation.Purpose, operation.PurposeState, "API 설명", maxPublicOperationPurposeBytes, maxPublicOperationPurposeRunes),
+		DescriptionLabel: "상위 API 설명",
+		StatusClass:      "badge-unknown",
 	}
 	if operation.ProviderObservedAt != nil {
 		value := publicHTMLTimeValue(*operation.ProviderObservedAt, now)
@@ -1007,9 +1098,23 @@ func publicHTMLReadModelOperation(operation OperationReadModelRow, now time.Time
 		row.ObservationLabel, row.StatusClass, row.ResultLabel = "최근 검사 결과 통과", "badge-good", "검증된 API 결과 통과"
 	case "current_fail":
 		row.ObservationLabel, row.StatusClass, row.ResultLabel = "최근 검사 결과 실패", "badge-bad", "검증된 API 결과 실패"
-		row.CauseLabel, row.NextActionLabel = publicOperationCategoryDiagnosis(operation.ResultCategory)
+		if operation.ResultCategory == "response_http_failure" && operation.ProviderHTTPStatus != nil {
+			row.CauseLabel = fmt.Sprintf("HTTP 응답 오류 · 상태 코드 %d", *operation.ProviderHTTPStatus)
+			row.NextActionLabel = "API 제공처의 최신 안내와 이용 조건을 확인하세요."
+		} else {
+			row.CauseLabel, row.NextActionLabel = publicOperationCategoryDiagnosis(operation.ResultCategory)
+		}
 	case "current_indeterminate":
 		row.ObservationLabel, row.StatusClass, row.ResultLabel = "현재 결과로 상태 판정 불가", "badge-warn", "추가 확인 필요"
+		if operation.ResultCategory == "response_semantics_unestablished" {
+			row.ObservationLabel = "응답 수신 · 이용 가능성 판정 근거 부족"
+			row.ResultLabel = "응답 의미를 확인할 기준이 등록되지 않았습니다"
+			if operation.ProviderHTTPStatus != nil && *operation.ProviderHTTPStatus >= 200 && *operation.ProviderHTTPStatus < 300 {
+				row.ResultLabel = fmt.Sprintf("HTTP %d 응답 · 이용 가능성 판정 근거 부족", *operation.ProviderHTTPStatus)
+			}
+			row.CauseLabel = "응답 수신은 확인했지만 기능 수행 여부는 미판정"
+			row.NextActionLabel = "공식 API 문서에서 성공 응답 기준을 확인해야 합니다."
+		}
 	case "stale":
 		row.ObservationLabel, row.StatusClass = "최근 결과가 검사 주기를 지남", "badge-unknown"
 		row.ResultLabel = publicLastResultLabel(operation.ResultState)
@@ -1022,7 +1127,7 @@ func publicHTMLReadModelOperation(operation OperationReadModelRow, now time.Time
 		row.ObservationLabel, row.StatusClass = "검사 상태 확인 불가", "badge-warn"
 	}
 	if operation.AttemptState != "none" {
-		row.AttemptLabel = publicOperationAttemptLabel(operation.AttemptState, operation.RequestStarted)
+		row.AttemptLabel = publicOperationAttemptLabel(operation.AttemptState, operation.RequestStarted, operation.ExecutionBlockReason)
 	}
 	row.DeliveryLabel = publicOperationDeliveryLabel(operation.GatusDeliveryState)
 	if operation.ResultState != "" && operation.ResultState != "healthy" && operation.ResultState != "unhealthy" && operation.ResultState != "indeterminate" {
@@ -1147,7 +1252,7 @@ func publicHTMLLegacyProvenanceValue(metadata RegistryAPIMetadata, document Publ
 }
 
 func publicReadModelField(value, state, label string, maximumBytes, maximumRunes int) string {
-	if state != "present" {
+	if state != "present" && state != "sanitized" {
 		switch state {
 		case "missing":
 			return label + " 없음 (원본 미제공)"
@@ -1160,6 +1265,16 @@ func publicReadModelField(value, state, label string, maximumBytes, maximumRunes
 		default:
 			return label + " 정보를 확인할 수 없습니다"
 		}
+	}
+	if safeVerifiedRegistryMetadataText(value, maximumBytes, maximumRunes) {
+		return value
+	}
+	return label + "을 안전하게 공개할 수 없습니다"
+}
+
+func publicUnverifiedReadModelField(value, state, label string, maximumBytes, maximumRunes int) string {
+	if state != "present" && state != "sanitized" {
+		return publicReadModelField(value, state, label, maximumBytes, maximumRunes)
 	}
 	if safe := safePublicOperationReadText(value, maximumBytes, maximumRunes); safe != "" {
 		return safe
@@ -1224,7 +1339,7 @@ func publicOperationMissingLabel(reason, attempt string) string {
 	}
 }
 
-func publicOperationAttemptLabel(state string, requestStarted *bool) string {
+func publicOperationAttemptLabel(state string, requestStarted *bool, executionBlockReason string) string {
 	switch state {
 	case "claimed":
 		return "검사 작업 대기 중"
@@ -1239,6 +1354,17 @@ func publicOperationAttemptLabel(state string, requestStarted *bool) string {
 		return "검사 실행 또는 결과 저장 단계 실패"
 	case "unknown":
 		return "검사 실행 상태 확인 필요"
+	case "deferred":
+		switch executionBlockReason {
+		case "quota_capacity":
+			return "검사 요청 전 보류 · 검사 용량 여유 대기"
+		case "history_capacity":
+			return "검사 요청 전 보류 · 결과 저장 공간 확인 필요"
+		case "child_unavailable":
+			return "검사 요청 전 보류 · 검사 실행기 복구 대기"
+		default:
+			return "검사 요청 전 보류 · 사유 확인 필요"
+		}
 	default:
 		return ""
 	}
@@ -1252,6 +1378,8 @@ func publicOperationDeliveryLabel(state string) string {
 		return "Gatus 접수 확인 · 저장 재확인 전"
 	case "readback_verified":
 		return "Gatus 저장 재확인"
+	case "not_applicable":
+		return "전달 대상 아님 · 응답 의미 미판정"
 	default:
 		return "Gatus 전달 전"
 	}
@@ -1285,13 +1413,13 @@ func publicOperationCategoryDiagnosis(category string) (string, string) {
 }
 
 func validPublicOperationIdentityCounts(counts OperationReadModelIdentityCounts) bool {
-	values := []int{counts.Known, counts.Admitted, counts.Claimed, counts.Attempted, counts.Persisted, counts.InventoryUnknownScopes, counts.InventoryUnknownOperations, counts.Acknowledged, counts.ReadbackVerified, counts.DeliveryPending, counts.Missing, counts.Late}
+	values := []int{counts.Known, counts.Admitted, counts.Claimed, counts.Deferred, counts.Attempted, counts.Persisted, counts.InventoryUnknownScopes, counts.InventoryUnknownOperations, counts.Acknowledged, counts.ReadbackVerified, counts.DeliveryPending, counts.Missing, counts.Late}
 	for _, value := range values {
 		if value < 0 || value > 100_000 {
 			return false
 		}
 	}
-	return counts.Admitted <= counts.Known && counts.Claimed <= counts.Known && counts.Attempted <= counts.Known && counts.Persisted <= counts.Attempted && counts.InventoryUnknownOperations <= counts.Known && counts.InventoryUnknownScopes <= counts.Known && counts.Acknowledged <= counts.Persisted && counts.ReadbackVerified <= counts.Acknowledged && counts.DeliveryPending <= counts.Persisted && counts.Missing <= counts.Known && counts.Late <= counts.Missing
+	return counts.Admitted <= counts.Known && counts.Claimed <= counts.Known && counts.Deferred <= counts.Known && counts.Attempted <= counts.Known && counts.Persisted <= counts.Attempted && counts.InventoryUnknownOperations <= counts.Known && counts.InventoryUnknownScopes <= counts.Known && counts.Acknowledged <= counts.Persisted && counts.ReadbackVerified <= counts.Acknowledged && counts.DeliveryPending <= counts.Persisted && counts.Missing <= counts.Known && counts.Late <= counts.Missing
 }
 
 func validPublicAPIProgress(progress OperationAPIProgress, registeredFunctions int) bool {
@@ -1419,12 +1547,12 @@ func publicSelfReadinessReason(reason string) string {
 		return "검사 실행에 필요한 구성 요소를 확인할 수 없습니다. 설치와 설정을 확인하세요."
 	case "delivery_failed":
 		return "검사 결과를 관제에 전달하지 못했습니다. 결과 전달 경로를 확인하세요."
-	case "operation_plan_unavailable":
-		return "전체 검사 계획의 최근 진행 상태를 확인할 수 없습니다. 검사 실행과 결과 기록을 확인하세요."
 	case "cli_receipt_missing", "receipt_unavailable", "receipt_contract":
 		return "검사 결과 기록을 확인할 수 없습니다. 검사 실행 로그와 기록 생성을 확인하세요."
 	case "receipt_storage_unavailable":
 		return "검사 결과 저장 위치를 사용할 수 없습니다. 저장소 상태와 권한을 확인하세요."
+	case "operation_plan_unavailable":
+		return "전체 검사 계획을 확인할 수 없습니다. 등록 기능 계획, 실행 가능 수량, 최근 관측 기록을 확인하세요."
 	default:
 		return "관제 상태를 확인할 수 없습니다. 검사 일정과 결과 전달을 확인하세요."
 	}
@@ -1624,6 +1752,7 @@ func buildPublicHTMLDirectory(metadata RegistryAPIMetadata, statusByOperation ma
 			Organization:  metadataFieldText(api.Organization, api.OrganizationState, "기관"),
 			Description:   truncatePublicText(metadataFieldText(api.Description, api.DescriptionState, "기능 설명"), 320),
 			APIOperations: len(api.Operations), LinkOperations: api.LinkOperationCount,
+			RegistrationNote:     apiRegistrationNote(api),
 			ConfiguredOperations: stats.configured, UnconfiguredOperations: max(0, len(api.Operations)-stats.configured),
 			RecentObservations: stats.recentText,
 			LatestCheck:        stats.latestCheck, HistoryStart: stats.historyStart,
@@ -1649,7 +1778,8 @@ func buildPublicHTMLAPIDetail(metadata RegistryAPIMetadata, api RegistryAPIMetad
 		DetailOrganization:  metadataFieldText(api.Organization, api.OrganizationState, "기관"),
 		DetailDescription:   metadataFieldText(api.Description, api.DescriptionState, "기능 설명"),
 		DetailAPIOperations: len(api.Operations), DetailLinkOperations: api.LinkOperationCount,
-		DetailConfigured: stats.configured, DetailRecentObservations: stats.recentText,
+		DetailRegistrationNote: apiRegistrationNote(api),
+		DetailConfigured:       stats.configured, DetailRecentObservations: stats.recentText,
 		PageNumber:       request.page,
 		MetadataRevision: metadata.RegistryRevision, ObservationRevision: metadata.healthCatalogRevision,
 	}
@@ -1948,6 +2078,16 @@ func publicHTMLDiagnosis(diagnosis PublicDiagnosis) (cause, next string) {
 	return cause, "추가 검사 결과와 공급처 공지, API 사용 조건을 확인하세요."
 }
 
+func apiRegistrationNote(api RegistryAPIMetadataAPI) string {
+	if len(api.Operations) > 0 {
+		return ""
+	}
+	if api.LinkOperationCount > 0 {
+		return "외부 링크만 등록되어 API 기능별 검사 조건은 확인할 수 없습니다. 링크 정보와 API 기능 검사는 별개입니다."
+	}
+	return "등록된 API 기능과 외부 링크가 없습니다. 공식 제공처 자료와 Registry 등록 범위를 확인해야 합니다."
+}
+
 func buildPublicHTMLDirectoryAPIURL(apiID string) string {
 	return "/datapan/apis/" + url.PathEscape(apiID) + "/"
 }
@@ -1984,9 +2124,16 @@ func pagesFor(items, pageSize int) int {
 func metadataFieldText(value, state, fieldLabel string) string {
 	switch state {
 	case "present", "sanitized":
-		text := safePublicMetadataText(value)
+		maximumBytes, maximumRunes := maxPublicOperationLabelBytes, maxPublicOperationLabelRunes
+		if fieldLabel == "기능 설명" {
+			maximumBytes, maximumRunes = maxPublicOperationPurposeBytes, maxPublicOperationPurposeRunes
+		}
+		if !safeVerifiedRegistryMetadataText(value, maximumBytes, maximumRunes) {
+			return fieldLabel + "은 안전한 공개 기준에 따라 생략했습니다"
+		}
+		text := value
 		if state == "sanitized" {
-			return text + " (안전 처리된 원문)"
+			return text + " (안전 처리된 설명)"
 		}
 		return text
 	case "missing":

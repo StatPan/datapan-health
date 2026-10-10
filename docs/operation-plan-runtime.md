@@ -51,9 +51,14 @@ history is sealed to the validating build.
 
 After controlled activation, check `/operation-plan/status` for the pinned
 Registry revision/index, admitted count, capacity assessment, recent controller
-pass, execution/readback counters, and a generic failure reason. The route is
-separate from legacy `/ready`: a disabled plan can coexist with legacy
-readiness, while an activated plan must pass its own readiness gate. The public
+pass, execution/readback counters, and a generic failure reason. An enabled
+plan also participates in canonical `/ready`, `/status`, and
+`datapan_health_scheduler_ready`. A disabled plan leaves legacy readiness
+unchanged. An enabled plan reports `operation_plan_unavailable` until a bounded
+full sweep confirms fresh, exact-plan durable attempt evidence for every
+admitted identity and the required per-key delivery proof. A valid provider
+failure or indeterminate result can still prove that the observer pipeline is
+working; readiness does not claim provider health. The public
 `/datapan/v2/operations` reader is based on the pinned operation identities and
 durable Health attempts; a Gatus heartbeat alone is never provider evidence.
 Verify exact per-key Gatus readback and persisted Health timestamps before
@@ -65,6 +70,7 @@ Local source QA is provider-free and uses the repository's pinned Gatus image:
 ```sh
 make operation-plan-full-population
 make operation-plan-gatus-integration
+make operation-plan-gatus-capacity
 ```
 
 The first command derives the complete registered operation population from
@@ -73,8 +79,12 @@ a test receipt executor, validated receipt history, durable attempts, exact
 generated Gatus-key bookkeeping, and bounded public paging. It does not run
 the released CLI or contact Gatus. The second starts the pinned Gatus
 container on loopback and verifies one synthetic receipt through the
-production Gatus push/readback adapter; its CLI worker remains a local test
-executor. Existing probe-runner tests separately verify the production child
-arguments, executable digest, private receipt path, and receipt validation.
-Neither command reads credentials or contacts a provider. These are source QA;
-they do not establish deployment or live-provider acceptance.
+production Gatus push/readback adapter using the synthetic worker fixture. The
+third loads the complete manifest-derived mixed-source identity mapping into
+the exact pinned Gatus image, records generated config bytes, startup time, and
+container memory, then verifies a bounded spread of per-key receipts and
+readbacks. Its generated configuration has no provider destinations. Existing
+probe-runner tests separately verify the production child arguments,
+executable digest, private receipt path, and receipt validation. These are
+source-QA boundaries; they do not establish deployment or live-provider
+acceptance.

@@ -315,17 +315,20 @@ func TestGatusReceiptHistoryIsBoundedInternalAndRendered(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	results := make([]map[string]any, 75)
+	results := make([]map[string]any, maxGatusEndpointStatusResults)
 	for index := range results {
-		results[index] = map[string]any{"timestamp": now.Add(-time.Duration(75-index) * time.Minute), "success": index%2 == 0}
+		results[index] = map[string]any{"timestamp": now.Add(-time.Duration(len(results)-index) * time.Minute), "success": index%2 == 0}
 	}
-	body, err := json.Marshal([]map[string]any{{"key": config.Canaries[0].GatusEndpointKey, "results": results}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	gatus := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	gatus := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		const prefix = "/api/v1/endpoints/"
+		const suffix = "/statuses"
+		if !strings.HasPrefix(request.URL.Path, prefix) || !strings.HasSuffix(request.URL.Path, suffix) {
+			http.NotFound(w, request)
+			return
+		}
+		key := strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, prefix), suffix)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(body)
+		_ = json.NewEncoder(w).Encode(map[string]any{"key": key, "results": results})
 	}))
 	defer gatus.Close()
 	source, err := NewGatusPublicStatusSource(gatus.URL, config, time.Second)
