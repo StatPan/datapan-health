@@ -481,7 +481,7 @@ func actualCLIWindowDrainRecoverySmoke(t *testing.T, worker *OperationPlanWorker
 	}
 
 	recovered, err := worker.ExecuteOne(context.Background(), identity.SourceID, identity.OperationID, time.Now().UTC())
-	if err != nil || recovered.AttemptState != "observed" || !recovered.RequestStarted || recovered.AttemptID == deferred.AttemptID || recovered.Generation != deferred.Generation+1 {
+	if err != nil || recovered.AttemptState != "observed" || !recovered.RequestStarted || recovered.AttemptID == deferred.AttemptID || recovered.Generation <= deferred.Generation {
 		t.Fatalf("actual CLI did not complete exactly one fresh child after the persisted cooldown: state=%s generation=%d request_started=%t worker_error=%t", recovered.AttemptState, recovered.Generation, recovered.RequestStarted, err != nil)
 	}
 	latest, found, err := attempts.Latest(identity.SourceID, identity.OperationID)
@@ -1570,6 +1570,7 @@ func actualCLIHistoricalAttemptSummary(store *OperationAttemptStore, identities 
 			return summary, &actualCLIDeferredAttemptSummaryError{Code: "attempt_identity_mismatch"}
 		}
 		summary.Identities++
+		identityDeferred := 0
 		var prior *OperationStoredAttempt
 		for _, attempt := range state.Attempts {
 			summary.Attempts++
@@ -1580,18 +1581,18 @@ func actualCLIHistoricalAttemptSummary(store *OperationAttemptStore, identities 
 				continue
 			}
 			if prior != nil {
-				if attempt.Generation != prior.Generation+1 || attempt.Binding != prior.Binding || !attempt.StartedAt.After(prior.StartedAt) || !prior.FinishedAt.IsZero() && attempt.StartedAt.Before(prior.FinishedAt) {
+				if attempt.Generation <= prior.Generation || attempt.Binding != prior.Binding || !attempt.StartedAt.After(prior.StartedAt) || !prior.FinishedAt.IsZero() && attempt.StartedAt.Before(prior.FinishedAt) {
 					summary.InvalidDeferred++
 				}
 				if prior.State == "deferred" {
 					if attempt.StartedAt.Before(prior.FinishedAt.Add(operationAttemptDeferredRetryDelay)) {
 						summary.InvalidDeferred++
 					}
-					summary.RecoveredDeferrals++
 				}
 			}
 			if attempt.State == "deferred" {
 				summary.Deferred++
+				identityDeferred++
 				deferredKeys[actualCLIDeferredAttemptKey{SourceID: identity.SourceID, OperationID: identity.OperationID, AttemptID: attempt.AttemptID, Generation: attempt.Generation}] = struct{}{}
 				validWindowDrain := attempt.BlockReason == operationAttemptReasonQuotaWindowDrain && attempt.DeferredStage == operationAttemptDeferredStageQuota && attempt.DeferredCategory == operationAttemptDeferredCategoryWindow
 				if validWindowDrain {
@@ -1609,8 +1610,14 @@ func actualCLIHistoricalAttemptSummary(store *OperationAttemptStore, identities 
 			priorCopy := attempt
 			prior = &priorCopy
 		}
-		if latest := state.Attempts[len(state.Attempts)-1]; latest.State == "deferred" {
-			summary.UnresolvedDeferrals++
+		if identityDeferred > 0 {
+			latest := state.Attempts[len(state.Attempts)-1]
+			recovered := latest.State == "observed" && latest.ReceiptValidated && latest.RequestStarted != nil && *latest.RequestStarted && latest.Result != nil && latest.ReceiptSHA256 != "" && latest.ReceiptSHA256 == latest.Result.ReceiptSHA
+			if recovered {
+				summary.RecoveredDeferrals += identityDeferred
+			} else {
+				summary.UnresolvedDeferrals += identityDeferred
+			}
 		}
 	}
 	if history != nil && len(deferredKeys) > 0 {
@@ -1641,7 +1648,7 @@ func actualCLIHistoricalAttemptSummary(store *OperationAttemptStore, identities 
 
 func TestActualCLIHistoricalAttemptSummaryRequiresBoundedQuotaWindowRecovery(t *testing.T) {
 	t.Run("same binding recovers after cooldown without matching history", func(t *testing.T) {
-		store, identity, deferred := actualCLISeedDeferredAttemptForSummaryTest(t, true)
+		store, identity, deferred := actualCLISeedDeferredAttemptForSummaryTest(t, "observed")
 		historyRoot := filepath.Join(t.TempDir(), "history")
 		if err := os.MkdirAll(filepath.Join(historyRoot, "records"), 0o700); err != nil {
 			t.Fatal("could not prepare an empty test history directory")
@@ -1656,7 +1663,7 @@ func TestActualCLIHistoricalAttemptSummaryRequiresBoundedQuotaWindowRecovery(t *
 	})
 
 	t.Run("generic defer remains unclassified", func(t *testing.T) {
-		store, identity, _ := actualCLISeedDeferredAttemptForSummaryTest(t, true)
+		store, identity, _ := actualCLISeedDeferredAttemptForSummaryTest(t, "observed")
 		state := actualCLIRewriteAttemptStateForSummaryTest(t, store, identity, func(state *operationAttemptState) {
 			state.Attempts[0].BlockReason = operationAttemptReasonChildUnavailable
 			state.Attempts[0].DeferredStage = "quota_acquire"
@@ -1669,7 +1676,7 @@ func TestActualCLIHistoricalAttemptSummaryRequiresBoundedQuotaWindowRecovery(t *
 	})
 
 	t.Run("request-started attempt cannot claim a pre-request defer", func(t *testing.T) {
-		store, identity, _ := actualCLISeedDeferredAttemptForSummaryTest(t, false)
+		store, identity, _ := actualCLISeedDeferredAttemptForSummaryTest(t, "none")
 		state, found, err := store.readState(identity.SourceID, identity.OperationID)
 		if err != nil || !found {
 			t.Fatal("could not read the test attempt before request-start mutation")
@@ -1690,7 +1697,7 @@ func TestActualCLIHistoricalAttemptSummaryRequiresBoundedQuotaWindowRecovery(t *
 	})
 
 	t.Run("retry with a different binding is invalid", func(t *testing.T) {
-		store, identity, _ := actualCLISeedDeferredAttemptForSummaryTest(t, true)
+		store, identity, _ := actualCLISeedDeferredAttemptForSummaryTest(t, "observed")
 		actualCLIRewriteAttemptStateForSummaryTest(t, store, identity, func(state *operationAttemptState) {
 			state.Attempts[1].Binding.IndexSHA = strings.Repeat("f", 64)
 			state.CurrentPlanSHA256 = operationAttemptPlanBindingSHA256(state.Attempts[1].Binding)
@@ -1702,7 +1709,7 @@ func TestActualCLIHistoricalAttemptSummaryRequiresBoundedQuotaWindowRecovery(t *
 	})
 
 	t.Run("retry before cooldown is invalid", func(t *testing.T) {
-		store, identity, _ := actualCLISeedDeferredAttemptForSummaryTest(t, true)
+		store, identity, _ := actualCLISeedDeferredAttemptForSummaryTest(t, "observed")
 		actualCLIRewriteAttemptStateForSummaryTest(t, store, identity, func(state *operationAttemptState) {
 			state.Attempts[1].StartedAt = state.Attempts[0].FinishedAt.Add(operationAttemptDeferredRetryDelay - time.Nanosecond)
 			state.Attempts[1].LeaseExpiresAt = state.Attempts[1].StartedAt.Add(time.Minute)
@@ -1714,7 +1721,7 @@ func TestActualCLIHistoricalAttemptSummaryRequiresBoundedQuotaWindowRecovery(t *
 	})
 
 	t.Run("history cannot match a deferred generation", func(t *testing.T) {
-		store, identity, deferred := actualCLISeedDeferredAttemptForSummaryTest(t, true)
+		store, identity, deferred := actualCLISeedDeferredAttemptForSummaryTest(t, "observed")
 		historyRoot := filepath.Join(t.TempDir(), "history")
 		recordsRoot := filepath.Join(historyRoot, "records")
 		if err := os.MkdirAll(recordsRoot, 0o700); err != nil {
@@ -1737,15 +1744,24 @@ func TestActualCLIHistoricalAttemptSummaryRequiresBoundedQuotaWindowRecovery(t *
 	})
 
 	t.Run("latest defer remains unresolved", func(t *testing.T) {
-		store, identity, _ := actualCLISeedDeferredAttemptForSummaryTest(t, false)
+		store, identity, _ := actualCLISeedDeferredAttemptForSummaryTest(t, "none")
 		summary, summaryErr := actualCLIHistoricalAttemptSummary(store, []operationPlanPopulationIdentity{identity}, nil)
 		if summaryErr != nil || summary.Deferred != 1 || summary.UnresolvedDeferrals != 1 || summary.RecoveredDeferrals != 0 {
 			t.Fatalf("unrecovered defer was not retained as unresolved: summary=%#v code=%v", summary, summaryErr)
 		}
 	})
+	for _, retryOutcome := range []string{"claimed", "unknown"} {
+		t.Run(retryOutcome+" successor remains unresolved", func(t *testing.T) {
+			store, identity, _ := actualCLISeedDeferredAttemptForSummaryTest(t, retryOutcome)
+			summary, summaryErr := actualCLIHistoricalAttemptSummary(store, []operationPlanPopulationIdentity{identity}, nil)
+			if summaryErr != nil || summary.Deferred != 1 || summary.RecoveredDeferrals != 0 || summary.UnresolvedDeferrals != 1 {
+				t.Fatalf("%s successor was counted as a recovered deferred observation: summary=%#v code=%v", retryOutcome, summary, summaryErr)
+			}
+		})
+	}
 }
 
-func actualCLISeedDeferredAttemptForSummaryTest(t *testing.T, includeRetry bool) (*OperationAttemptStore, operationPlanPopulationIdentity, OperationStoredAttempt) {
+func actualCLISeedDeferredAttemptForSummaryTest(t *testing.T, retryOutcome string) (*OperationAttemptStore, operationPlanPopulationIdentity, OperationStoredAttempt) {
 	t.Helper()
 	store, err := OpenOperationAttemptStore(t.TempDir())
 	if err != nil {
@@ -1753,7 +1769,7 @@ func actualCLISeedDeferredAttemptForSummaryTest(t *testing.T, includeRetry bool)
 	}
 	binding := testOperationAttemptBinding()
 	identity := operationPlanPopulationIdentity{SourceID: binding.SourceID, OperationID: binding.OperationID}
-	startedAt := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+	startedAt := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 	claim, err := store.BeginAttempt(binding, strings.Repeat("a", 64), startedAt, time.Minute)
 	if err != nil {
 		t.Fatal("could not create the initial test attempt")
@@ -1766,9 +1782,29 @@ func actualCLISeedDeferredAttemptForSummaryTest(t *testing.T, includeRetry bool)
 	if err != nil || !found || deferred.State != "deferred" {
 		t.Fatal("could not read the test quota-window defer")
 	}
-	if includeRetry {
-		if _, err := store.BeginAttempt(binding, strings.Repeat("b", 64), finishedAt.Add(operationAttemptDeferredRetryDelay), time.Minute); err != nil {
+	if retryOutcome != "none" {
+		retry, err := store.BeginAttempt(binding, strings.Repeat("b", 64), finishedAt.Add(operationAttemptDeferredRetryDelay), time.Minute)
+		if err != nil {
 			t.Fatal("could not create a same-binding test retry after cooldown")
+		}
+		if retryOutcome == "observed" {
+			observedAt := retry.StartedAt.Add(time.Second)
+			result := OperationObservationResult{State: "healthy", Category: "healthy", ObservedAt: observedAt, ReceivedAt: observedAt.Add(time.Second), ReceiptSHA: strings.Repeat("c", 64), LatencyMS: 1}
+			if err := store.CompleteAttempt(retry, result, observedAt.Add(2*time.Second)); err != nil {
+				t.Fatal("could not complete the test retry with a validated receipt summary")
+			}
+		} else if retryOutcome != "claimed" && retryOutcome != "unknown" {
+			t.Fatal("unsupported test retry outcome")
+		} else if retryOutcome == "unknown" {
+			state, found, err := store.readState(binding.SourceID, binding.OperationID)
+			if err != nil || !found {
+				t.Fatal("could not read the test retry before unknown-state transition")
+			}
+			state.Attempts[1].State = "unknown"
+			state.Attempts[1].FinishedAt = retry.StartedAt.Add(time.Second)
+			if err := store.writeState(state); err != nil {
+				t.Fatal("could not persist the test unknown retry state")
+			}
 		}
 	}
 	return store, identity, deferred
