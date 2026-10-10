@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,11 +20,13 @@ import (
 )
 
 const (
-	actualCLIPolicyPath                      = "p.json"
+	actualCLIPolicyPath                      = "policy/operation-observation-policies.v1.json"
+	actualCLIPlanIndexPath                   = "reports/operation-observation-plan/index.json"
+	actualCLISourceRegistryPath              = "data/data-go-kr.registry.json"
 	actualCLIRuntimeBindingPath              = "r.json"
 	actualCLISourceCapturePath               = "c.txt"
 	actualCLIAssertionPrefix                 = "reports/operation-response-assertions/"
-	actualCLIDocumentPrefix                  = "e/d/"
+	actualCLIDocumentPrefix                  = "d/"
 	actualCLIFixtureProviderIP               = "45.77.0.2"
 	actualCLIFixturePort                     = 8080
 	actualCLIFixtureRequestTimeoutMS         = int64(1000)
@@ -221,7 +224,7 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 	runtimeRaw, err := json.Marshal(map[string]any{
 		"schema_version": "datapan.health-actual-cli-synthetic-runtime-binding.v1",
 		"fixture_scope":  "synthetic local source-QA only",
-		"reviewed_observation_period": map[string]any{
+		"p": map[string]any{
 			"observation_period_seconds": actualCLIFixtureObservationPeriodSeconds,
 			"scope":                      "closed_synthetic_local_source_qa_fixture_only",
 			"review": map[string]any{
@@ -230,8 +233,8 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 				"rationale":   "The 14,400-second fixture window fits the full local QA population at one-second request timeout plus five-second process overhead; this is not provider policy.",
 			},
 		},
-		"synthetic_global_quota":   map[string]any{"scope_kind": "global", "scope_key": "actual-cli-synthetic-full-population", "max_concurrent": 32, "requests_per_window": 1000000, "window_seconds": 600, "minimum_interval_seconds": 0},
-		"synthetic_provider_quota": map[string]any{"scope_kind": "provider", "scope_key": "provider-local-source-qa-only", "max_concurrent": 32, "requests_per_window": 1000000, "window_seconds": 600, "minimum_interval_seconds": 0},
+		"g": map[string]any{"scope_kind": "global", "scope_key": "actual-cli-synthetic-full-population", "max_concurrent": 32, "requests_per_window": 1000000, "window_seconds": 600, "minimum_interval_seconds": 0},
+		"q": map[string]any{"scope_kind": "provider", "scope_key": "provider-local-source-qa-only", "max_concurrent": 32, "requests_per_window": 1000000, "window_seconds": 600, "minimum_interval_seconds": 0},
 	})
 	if err != nil {
 		t.Fatal("actual-CLI fixture runtime binding could not be encoded")
@@ -311,7 +314,7 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 		}
 		requestPath := fmt.Sprintf("/%s/%s/%s", pathPrefix, identity.SourceID, identity.OperationID)
 		ordinal := identityOrdinals[operationReadModelIdentityKey(identity.SourceID, identity.OperationID)]
-		docPath := fmt.Sprintf(actualCLIDocumentPrefix+"%05d.json", ordinal)
+		docPath := actualCLIDocumentPrefix + strconv.FormatInt(int64(ordinal), 36)
 		docRaw := actualCLIBuildDocument(identity, protocol, operationName, requestPath, method, captureRaw, captureSHA)
 		shapeKey := identity.SourceID + "/" + protocol
 		if !validatedDocumentShapes[shapeKey] {
@@ -438,8 +441,8 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 				"limits":                            map[string]any{"request_budget": 1, "timeout_ms": actualCLIFixtureRequestTimeoutMS, "max_request_bytes": 4096, "max_response_bytes": 16384, "evidence_refs": []operationPlanEvidenceRef{policyRef(profile, "request/limits")}},
 				"response_assertion":                responseAssertion,
 			}
-			quotaEvidence := []operationPlanEvidenceRef{runtimeRef("#/synthetic_global_quota")}
-			quotaProviderEvidence := []operationPlanEvidenceRef{runtimeRef("#/synthetic_provider_quota")}
+			quotaEvidence := []operationPlanEvidenceRef{runtimeRef("#/g")}
+			quotaProviderEvidence := []operationPlanEvidenceRef{runtimeRef("#/q")}
 			operationIdentity := map[string]any{"operation_id": identity.OperationID, "protocol": protocol, "operation_name": operationName, "registered_endpoint": map[string]any{"host": actualCLIFixtureProviderIP, "port": actualCLIFixturePort, "path": fmt.Sprintf("/%s/%s/%s", route, identity.SourceID, identity.OperationID)}}
 			if identity.DatasetID != "" {
 				operationIdentity["dataset_id"] = identity.DatasetID
@@ -452,7 +455,7 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 				"source_binding":     map[string]any{"source_id": identity.SourceID, "provider": identity.Provider, "adapter_id": identity.AdapterID, "inventory_status": identity.InventoryStatus, "inventory_unknown": identity.InventoryUnknown, "test_only": false},
 				"operation_identity": operationIdentity,
 				"request_plan":       map[string]any{"status": "complete", "evidence_refs": profileEvidence, "request_contract": contract},
-				"runtime_binding": map[string]any{"status": "bound", "observation_period_seconds": actualCLIFixtureObservationPeriodSeconds, "evidence_refs": []operationPlanEvidenceRef{runtimeRef("#/reviewed_observation_period")}, "quota_policies": []any{
+				"runtime_binding": map[string]any{"status": "bound", "observation_period_seconds": actualCLIFixtureObservationPeriodSeconds, "evidence_refs": []operationPlanEvidenceRef{runtimeRef("#/p")}, "quota_policies": []any{
 					map[string]any{"scope_kind": "global", "scope_key": globalQuotaKey, "scope_sha256": globalQuotaSHA, "max_concurrent": 32, "requests_per_window": 1000000, "window_seconds": int64(600), "minimum_interval_seconds": int64(0), "evidence_refs": quotaEvidence},
 					map[string]any{"scope_kind": "provider", "scope_key": providerQuotaKey, "scope_sha256": providerQuotaSHA, "max_concurrent": 32, "requests_per_window": 1000000, "window_seconds": int64(600), "minimum_interval_seconds": int64(0), "evidence_refs": quotaProviderEvidence},
 				}},
@@ -485,7 +488,7 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 		artifacts = append(artifacts, artifact)
 	}
 	artifacts = append(artifacts, newArtifacts...)
-	const indexPath = "reports/operation-observation-plan/index.json"
+	const indexPath = actualCLIPlanIndexPath
 	var generation operationObservationPlanGenerationInputs
 	if json.Unmarshal(basePlan.state.index.GenerationInputs, &generation) != nil {
 		t.Fatal("actual-CLI fixture base generation inputs could not be decoded")
@@ -531,7 +534,7 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 	if len(artifacts) > 32000 {
 		t.Fatalf("actual-CLI fixture has %d release artifact refs, above the 32,000 ceiling", len(artifacts))
 	}
-	manifest := actualCLIManifest{SchemaVersion: "datapan.release-manifest.v1", GeneratedAt: actualCLIFixtureTimestamp, DatapanVersion: actualCLIExpectedVersion, Provider: "datapan-registry", SourceRegistry: "data/data-go-kr.registry.json", OutputDir: ".", ArtifactCount: len(artifacts), Artifacts: artifacts}
+	manifest := actualCLIManifest{SchemaVersion: "datapan.release-manifest.v1", GeneratedAt: actualCLIFixtureTimestamp, DatapanVersion: actualCLIExpectedVersion, Provider: "datapan-registry", SourceRegistry: actualCLISourceRegistryPath, OutputDir: ".", ArtifactCount: len(artifacts), Artifacts: artifacts}
 	manifestRaw, err := json.Marshal(manifest)
 	if err != nil {
 		t.Fatal("actual-CLI fixture release manifest could not be encoded")
@@ -559,6 +562,23 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 	counts := plan.Counts()
 	if counts.KnownOperations != 12666 || counts.RequestPlansComplete != 12666 || counts.RuntimeBindingsBound != 12666 || counts.Admitted != 12666 || counts.InventoryUnknownScopes != 4 || plan.ExecutableOperations() != 12666 {
 		t.Fatalf("production loader did not admit the exact source-QA population: known=%d complete=%d bound=%d admitted=%d unknown_scopes=%d executable=%d", counts.KnownOperations, counts.RequestPlansComplete, counts.RuntimeBindingsBound, counts.Admitted, counts.InventoryUnknownScopes, plan.ExecutableOperations())
+	}
+	for path, kind := range map[string]string{
+		actualCLIPlanIndexPath: "operation_observation_plan",
+		actualCLIPolicyPath:    "operation_observation_policy",
+		"schemas/datapan.operation-observation-plan.v1.schema.json":   "schema",
+		"schemas/datapan.operation-observation-policy.v1.schema.json": "schema",
+		"schemas/datapan.operation-response-assertion.v2.schema.json": "schema",
+		"schemas/datapan.operation-document-evidence.v1.schema.json":  "schema",
+		"schemas/datapan.operation-document-evidence.v2.schema.json":  "schema",
+	} {
+		artifact, ok := plan.state.manifest[path]
+		if !ok || artifact.Kind != kind {
+			t.Fatalf("loader-only source-QA static CLI artifact path %q is missing or has kind %q, expected %q", path, artifact.Kind, kind)
+		}
+	}
+	if _, ok := plan.state.manifest[actualCLISourceRegistryPath]; !ok {
+		t.Fatal("loader-only source-QA fixture manifest is missing the canonical CLI source-registry artifact")
 	}
 	transportCounts := map[string]int{}
 	for _, shardRef := range plan.state.index.Shards {
@@ -588,6 +608,10 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 			if err := json.Unmarshal(request.RequestContract, &contract); err != nil {
 				t.Fatal("loader-only source-QA assertion reference check could not decode the request contract")
 			}
+			allRefs, err := actualCLICollectEvidenceRefs(rawRecord)
+			if err != nil {
+				t.Fatal("loader-only source-QA fixture could not scan operation evidence references")
+			}
 			assertionPath := actualCLIAssertionPrefix + record.OperationID + ".json"
 			expectedAssertionRef := assertionPath + "#/assertion"
 			if contract.ResponseAssertion.AssertionRef != expectedAssertionRef {
@@ -601,6 +625,29 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 			}
 			if assertionBindings != 1 {
 				t.Fatalf("loader-only source-QA fixture has %d canonical assertion evidence bindings for %s/%s", assertionBindings, record.SourceID, record.OperationID)
+			}
+			policyBindings := 0
+			for _, ref := range allRefs {
+				switch ref.EvidenceKind {
+				case "reviewed_policy":
+					if ref.ArtifactPath == assertionPath {
+						if ref.JSONPointer != "#/assertion" && ref.JSONPointer != "#/review" {
+							t.Fatalf("loader-only source-QA fixture has a non-canonical assertion evidence pointer for %s/%s", record.SourceID, record.OperationID)
+						}
+						continue
+					}
+					if ref.ArtifactPath != actualCLIPolicyPath || !strings.HasPrefix(ref.JSONPointer, "#/profiles/") {
+						t.Fatalf("loader-only source-QA fixture has a non-canonical reviewed-policy reference for %s/%s", record.SourceID, record.OperationID)
+					}
+					policyBindings++
+				case "operation_document":
+					if !strings.HasPrefix(ref.ArtifactPath, actualCLIDocumentPrefix) {
+						t.Fatalf("loader-only source-QA fixture has a non-fixture operation-document path for %s/%s", record.SourceID, record.OperationID)
+					}
+				}
+			}
+			if policyBindings == 0 {
+				t.Fatalf("loader-only source-QA fixture has no canonical reviewed-policy binding for %s/%s", record.SourceID, record.OperationID)
 			}
 			artifact, ok := plan.state.manifest[assertionPath]
 			if !ok || artifact.Kind != "operation_response_assertion" {
@@ -892,7 +939,37 @@ func actualCLIAssertionBranch(id, classification, protocol string, success bool,
 }
 
 func actualCLIReview() map[string]any {
-	return map[string]any{"review_ref": "https://example.invalid/synthetic-local-source-qa", "reviewed_by": "Datapan Health synthetic fixture", "rationale": "Synthetic local source-QA fixture only; no provider truth or provider response claim."}
+	return map[string]any{"review_ref": "https://example.invalid/q", "reviewed_by": "synthetic QA", "rationale": "Synthetic QA; no provider truth or response claims."}
+}
+
+func actualCLICollectEvidenceRefs(raw json.RawMessage) ([]operationPlanEvidenceRef, error) {
+	var root any
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return nil, err
+	}
+	refs := make([]operationPlanEvidenceRef, 0, 16)
+	var walk func(any)
+	walk = func(value any) {
+		switch current := value.(type) {
+		case map[string]any:
+			path, hasPath := current["artifact_path"].(string)
+			sha, hasSHA := current["sha256"].(string)
+			pointer, hasPointer := current["json_pointer"].(string)
+			kind, hasKind := current["evidence_kind"].(string)
+			if hasPath && hasSHA && hasPointer && hasKind {
+				refs = append(refs, operationPlanEvidenceRef{ArtifactPath: path, SHA256: sha, JSONPointer: pointer, EvidenceKind: kind})
+			}
+			for _, child := range current {
+				walk(child)
+			}
+		case []any:
+			for _, child := range current {
+				walk(child)
+			}
+		}
+	}
+	walk(root)
+	return refs, nil
 }
 
 func actualCLIWriteFile(root, relative string, raw []byte) error {
