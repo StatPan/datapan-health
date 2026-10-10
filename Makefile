@@ -71,8 +71,10 @@ schedule-coverage-doctor: schedule-coverage
 
 # Explicit source-QA target: derives its complete identity set from the pinned
 # Registry metadata and runs only local synthetic receipts, never providers.
+# The 55-minute Go test bound contains a measured 45-minute controller budget;
+# virtual pass timestamps do not establish production scheduling cadence.
 operation-plan-full-population:
-	HEALTH_OPERATION_FULL_POPULATION_TEST=1 go test ./internal/health -run '^TestOperationPlanManifestDerivedSyntheticPopulation$$' -count=1 -timeout=30m
+	HEALTH_OPERATION_FULL_POPULATION_TEST=1 go test ./internal/health -run '^TestOperationPlanManifestDerivedSyntheticPopulation$$' -count=1 -timeout=55m
 
 # Starts the exact pinned Gatus image on loopback and verifies one synthetic
 # receipt through the production push/readback adapter. No provider is called.

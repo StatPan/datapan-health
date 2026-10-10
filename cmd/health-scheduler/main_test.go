@@ -123,6 +123,26 @@ func TestOperationPlanReadinessIsSeparateAndDisabledDefaultDoesNotChangeLegacyCa
 	}
 }
 
+func TestOperationPlanCLISourcePinAcceptsOnlyReviewedEquivalentSources(t *testing.T) {
+	for _, sourceSHA := range []string{
+		"a6414063bb69495b00b752b3a6c35bb0b52e14d5",
+		"c1806c8d3b1a8f1cd9674cc73ff57d1ceec38cb2",
+	} {
+		if !operationPlanCLISourceAllowed(sourceSHA) {
+			t.Errorf("reviewed CLI source SHA %q was rejected", sourceSHA)
+		}
+	}
+	for _, sourceSHA := range []string{
+		"a6414063bb69495b00b752b3a6c35bb0b52e14d4", // one-character near match
+		"1111111111111111111111111111111111111111", // arbitrary full-length SHA
+		"c1806c8d3b1a8f1cd9674cc73ff57d1ceec38cb",  // truncated SHA
+	} {
+		if operationPlanCLISourceAllowed(sourceSHA) {
+			t.Errorf("unreviewed CLI source SHA %q was accepted", sourceSHA)
+		}
+	}
+}
+
 func TestOperationPlanActivationWithoutPinBlocksLegacyAndReportsGenericReadiness(t *testing.T) {
 	config, err := health.LoadCanaryConfig("../../config/canaries.json")
 	if err != nil {

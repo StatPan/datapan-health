@@ -13,7 +13,18 @@ import (
 	"github.com/StatPan/datapan-health/internal/runtimebundle"
 )
 
-const operationPlanRequiredCLISourceSHA = "c1806c8d3b1a8f1cd9674cc73ff57d1ceec38cb2"
+var operationPlanAllowedCLISourceSHAs = map[string]struct{}{
+	"a6414063bb69495b00b752b3a6c35bb0b52e14d5": {}, // merged CLI release source
+	"c1806c8d3b1a8f1cd9674cc73ff57d1ceec38cb2": {}, // reviewed source tree with the same tree hash
+}
+
+func operationPlanCLISourceAllowed(sourceSHA string) bool {
+	if len(sourceSHA) != 40 {
+		return false
+	}
+	_, ok := operationPlanAllowedCLISourceSHAs[strings.ToLower(sourceSHA)]
+	return ok
+}
 
 var errOperationPlanPathUnavailable = errors.New("operation-plan runtime path is unavailable")
 
@@ -64,7 +75,7 @@ func loadOperationPlanControl(configPath string, config health.CanaryConfig, leg
 
 	lockPath := strings.TrimSpace(os.Getenv("RUNTIME_DEPENDENCY_LOCK"))
 	lock, err := runtimebundle.ReadLock(lockPath)
-	if err != nil || lock.CLI.SourceSHA != operationPlanRequiredCLISourceSHA || legacyRunner.Path == "" || !filepath.IsAbs(legacyRunner.Path) {
+	if err != nil || !operationPlanCLISourceAllowed(lock.CLI.SourceSHA) || legacyRunner.Path == "" || !filepath.IsAbs(legacyRunner.Path) {
 		return control.failRuntime(verifiedRuntime, "cli_artifact_unavailable")
 	}
 	if runtimebundle.VerifyLocal(lock, runtime.GOARCH, filepath.Dir(legacyRunner.Path)) != nil {

@@ -265,8 +265,8 @@ func TestOperationPlanWorkerArchivesCanceledChildReceiptBeforeGatusReadback(t *t
 	var quotaLocks []*os.File
 	select {
 	case quotaLocks = <-quotaLockHeld:
-	case <-time.After(operationPlanPreDispatchCleanupTimeout + maxOperationPlanProbeDeadline + operationPlanPostChildCommitTimeout):
-		t.Fatalf("synthetic child was not reached within the bounded pre-dispatch and execution windows: result=%#v err=%v", result, err)
+	default:
+		t.Fatalf("synthetic child returned without acquiring the test quota lock: result=%#v err=%v", result, err)
 	}
 	maximumCommitTime := operationPlanPreDispatchCleanupTimeout + maxOperationPlanProbeDeadline + operationPlanPostChildCommitTimeout
 	if err == nil || time.Since(startedAt) > maximumCommitTime || result.AttemptState != "observed" || result.DeliveryState != "not_ready" || !result.RequestStarted || result.ReceiptSHA256 == "" || ctx.Err() == nil {

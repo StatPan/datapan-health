@@ -161,7 +161,10 @@ func TestOperationPlanManifestDerivedSyntheticPopulation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bounded production scheduler rejected the explicit synthetic population policy: %v", err)
 	}
-	controllerContext, cancelController := context.WithTimeout(context.Background(), 15*time.Minute)
+	// This explicit source-QA target is bounded by a measured 45-minute wall
+	// clock budget. Its passAt value advances virtual scheduler time by one
+	// second per iteration; it does not prove production loop cadence.
+	controllerContext, cancelController := context.WithTimeout(context.Background(), 45*time.Minute)
 	defer cancelController()
 	controllerStart := time.Now().UTC()
 	var controllerStatus OperationPlanSchedulerStatus

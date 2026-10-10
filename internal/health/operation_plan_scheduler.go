@@ -15,6 +15,7 @@ const (
 	operationPlanSchedulerMaximumConcurrency = 32
 	operationPlanSchedulerMaximumScanBudget  = 256
 	operationPlanSchedulerPassInterval       = time.Second
+	operationPlanSchedulerScanTimeout        = 2 * time.Second
 	operationPlanDeliveryTimeout             = 15 * time.Second
 )
 
@@ -49,6 +50,11 @@ type OperationPlanSchedulerStatus struct {
 	RequiredConcurrency             int       `json:"required_concurrency"`
 	CapacityFeasible                bool      `json:"capacity_feasible"`
 	CapacityFailureScopes           int       `json:"capacity_failure_scopes"`
+	EvidenceSweepAt                 time.Time `json:"evidence_sweep_at,omitempty"`
+	EvidenceCheckedOperations       int       `json:"evidence_checked_operations"`
+	EvidenceCurrentOperations       int       `json:"evidence_current_operations"`
+	EvidenceMissingOperations       int       `json:"evidence_missing_operations"`
+	EvidenceValidUntil              time.Time `json:"evidence_valid_until,omitempty"`
 	LastPassAt                      time.Time `json:"last_pass_at,omitempty"`
 	LastPassAgeSeconds              int64     `json:"last_pass_age_seconds,omitempty"`
 	LastErrorReason                 string    `json:"last_error_reason,omitempty"`
@@ -80,6 +86,11 @@ type operationPlanScopeDemand struct {
 	concurrentLoad float64
 }
 
+type operationPlanReadinessEvidence struct {
+	Proven     bool
+	ValidUntil time.Time
+}
+
 type OperationPlanScheduler struct {
 	worker        *OperationPlanWorker
 	targets       []OperationPlanWorkerTarget
@@ -99,6 +110,15 @@ type OperationPlanScheduler struct {
 	lastPass              time.Time
 	lastErrorReason       string
 	lastErrorAt           time.Time
+	errorEpoch            uint64
+	evidenceSweepAt       time.Time
+	evidenceChecked       int
+	evidenceCurrent       int
+	evidenceMissing       int
+	evidenceValidUntil    time.Time
+	evidenceScanCursor    int
+	evidenceSweepEpoch    uint64
+	evidenceStaging       []operationPlanReadinessEvidence
 	passes                uint64
 	executionTasksStarted uint64
 	requestStarts         uint64
@@ -163,15 +183,24 @@ func (scheduler *OperationPlanScheduler) ProcessDue(ctx context.Context, now tim
 	if !scheduler.capacity.Feasible {
 		scheduler.recordFailure(now, "capacity_infeasible")
 	}
+	scanCtx, cancelScan := context.WithTimeout(ctx, operationPlanSchedulerScanTimeout)
+	defer cancelScan()
 
 	deliveryScanned, deliveryStarted := 0, 0
 	for deliveryScanned < scheduler.scanBudget && deliveryScanned < len(scheduler.targets) && deliveryStarted < scheduler.maxDeliveries {
+		if scanCtx.Err() != nil {
+			scheduler.recordFailure(now, "attempt_store_unavailable")
+			return errOperationPlanSchedulerUnavailable
+		}
 		index := (scheduler.deliveryCursor + deliveryScanned) % len(scheduler.targets)
 		target := scheduler.targets[index]
 		deliveryScanned++
-		pending, err := scheduler.worker.attempts.PendingDeliveriesContext(ctx, target.Record.SourceID, target.Record.OperationID)
+		pending, err := scheduler.worker.attempts.PendingDeliveriesContext(scanCtx, target.Record.SourceID, target.Record.OperationID)
 		if err != nil {
 			scheduler.addDeliveryScanFailure()
+			if scanCtx.Err() != nil {
+				return errOperationPlanSchedulerUnavailable
+			}
 			continue
 		}
 		if len(pending) == 0 {
@@ -193,16 +222,27 @@ func (scheduler *OperationPlanScheduler) ProcessDue(ctx context.Context, now tim
 	if len(scheduler.targets) > 0 {
 		scheduler.deliveryCursor = (scheduler.deliveryCursor + deliveryScanned) % len(scheduler.targets)
 	}
+	if scanCtx.Err() != nil {
+		scheduler.recordFailure(now, "attempt_store_unavailable")
+		return errOperationPlanSchedulerUnavailable
+	}
 
 	if scheduler.capacity.Feasible {
 		executionScanned, executionStarted := 0, 0
 		for executionScanned < scheduler.scanBudget && executionScanned < len(scheduler.targets) && executionStarted < scheduler.maxStarts {
+			if scanCtx.Err() != nil {
+				scheduler.recordFailure(now, "attempt_store_unavailable")
+				return errOperationPlanSchedulerUnavailable
+			}
 			index := (scheduler.executionCursor + executionScanned) % len(scheduler.targets)
 			target := scheduler.targets[index]
 			executionScanned++
-			latest, found, err := scheduler.worker.attempts.LatestContext(ctx, target.Record.SourceID, target.Record.OperationID)
+			latest, found, err := scheduler.worker.attempts.LatestContext(scanCtx, target.Record.SourceID, target.Record.OperationID)
 			if err != nil {
 				scheduler.addIdentityScanFailure()
+				if scanCtx.Err() != nil {
+					return errOperationPlanSchedulerUnavailable
+				}
 				continue
 			}
 			if found && (!operationPlanTargetDue(target, latest, now) || latest.State == "claimed" && now.Before(latest.LeaseExpiresAt)) {
@@ -221,7 +261,140 @@ func (scheduler *OperationPlanScheduler) ProcessDue(ctx context.Context, now tim
 			scheduler.executionCursor = (scheduler.executionCursor + executionScanned) % len(scheduler.targets)
 		}
 	}
+	if scanCtx.Err() != nil {
+		scheduler.recordFailure(now, "attempt_store_unavailable")
+		return errOperationPlanSchedulerUnavailable
+	}
+	if err := scheduler.advanceEvidenceSweep(scanCtx, now); err != nil {
+		scheduler.addIdentityScanFailure()
+		return errOperationPlanSchedulerUnavailable
+	}
 	return nil
+}
+
+// advanceEvidenceSweep checks a finite slice of the exact admitted set on
+// each pass. Readiness publishes only a complete sweep; HTTP status reads the
+// cached counts and earliest expiration in constant time.
+func (scheduler *OperationPlanScheduler) advanceEvidenceSweep(ctx context.Context, now time.Time) error {
+	if scheduler == nil || ctx == nil || ctx.Err() != nil || now.IsZero() || len(scheduler.targets) == 0 {
+		return errOperationPlanSchedulerUnavailable
+	}
+	if scheduler.evidenceScanCursor == 0 {
+		scheduler.evidenceStaging = make([]operationPlanReadinessEvidence, len(scheduler.targets))
+		scheduler.mu.Lock()
+		scheduler.evidenceSweepEpoch = scheduler.errorEpoch
+		scheduler.mu.Unlock()
+	}
+	end := scheduler.evidenceScanCursor + operationPlanSchedulerMaximumScanBudget
+	if end > len(scheduler.targets) {
+		end = len(scheduler.targets)
+	}
+	for index := scheduler.evidenceScanCursor; index < end; index++ {
+		if ctx.Err() != nil {
+			scheduler.resetEvidenceSweep()
+			return errOperationPlanSchedulerUnavailable
+		}
+		target := scheduler.targets[index]
+		latest, found, err := scheduler.worker.attempts.LatestSnapshotContext(ctx, target.Record.SourceID, target.Record.OperationID)
+		if err != nil {
+			scheduler.resetEvidenceSweep()
+			return errOperationPlanSchedulerUnavailable
+		}
+		if !found {
+			continue
+		}
+		evidence, err := scheduler.operationEvidenceForTarget(ctx, target, latest)
+		if err != nil {
+			scheduler.resetEvidenceSweep()
+			return errOperationPlanSchedulerUnavailable
+		}
+		scheduler.evidenceStaging[index] = evidence
+	}
+	scheduler.evidenceScanCursor = end
+	if end < len(scheduler.targets) {
+		return nil
+	}
+
+	current, missing := 0, 0
+	var validUntil time.Time
+	for _, evidence := range scheduler.evidenceStaging {
+		if evidence.Proven && now.Before(evidence.ValidUntil) {
+			current++
+		} else {
+			missing++
+		}
+		if !evidence.ValidUntil.IsZero() && (validUntil.IsZero() || evidence.ValidUntil.Before(validUntil)) {
+			validUntil = evidence.ValidUntil
+		}
+	}
+	scheduler.mu.Lock()
+	scheduler.evidenceSweepAt = now.UTC()
+	scheduler.evidenceChecked = len(scheduler.targets)
+	scheduler.evidenceCurrent = current
+	scheduler.evidenceMissing = missing
+	scheduler.evidenceValidUntil = validUntil
+	if current == len(scheduler.targets) && scheduler.errorEpoch == scheduler.evidenceSweepEpoch {
+		scheduler.lastErrorReason = ""
+		scheduler.lastErrorAt = time.Time{}
+	}
+	scheduler.mu.Unlock()
+	scheduler.evidenceScanCursor = 0
+	scheduler.evidenceStaging = nil
+	return nil
+}
+
+func (scheduler *OperationPlanScheduler) resetEvidenceSweep() {
+	scheduler.evidenceScanCursor = 0
+	scheduler.evidenceStaging = nil
+}
+
+func (scheduler *OperationPlanScheduler) operationEvidenceForTarget(ctx context.Context, target OperationPlanWorkerTarget, latest OperationStoredAttempt) (operationPlanReadinessEvidence, error) {
+	plan := scheduler.worker.runtime.Plan
+	expected := OperationAttemptBinding{
+		SourceID: target.Record.SourceID, OperationID: target.Record.OperationID,
+		RegistryRevision: plan.RegistryRevision(), ReleaseManifestSHA: plan.binding.ReleaseManifestSHA256,
+		IndexSHA: plan.IndexSHA256(), ShardSHA: target.ShardSHA256,
+		GatusKey: target.GatusEndpointKey, ObservationPeriod: target.Record.ObservationPeriod,
+	}
+	if latest.Binding != expected || latest.State != "observed" || latest.Result == nil || !latest.ReceiptValidated || latest.RequestStarted == nil || !*latest.RequestStarted {
+		return operationPlanReadinessEvidence{}, nil
+	}
+	result := *latest.Result
+	if !validOperationObservationResult(result) || result.ReceiptSHA != latest.ReceiptSHA256 || result.HistoryRecordID == "" || !sha256Pattern.MatchString(result.HistoryRecordSHA256) || result.ObservedAt.Before(latest.StartedAt) || result.ObservedAt.After(latest.FinishedAt) || result.ReceivedAt.Before(result.ObservedAt) || result.ReceivedAt.After(latest.FinishedAt) {
+		return operationPlanReadinessEvidence{}, nil
+	}
+	identity := OperationHistoryIdentity{
+		SourceID: expected.SourceID, OperationID: expected.OperationID, AttemptID: latest.AttemptID,
+		Generation: latest.Generation, RegistryRevision: expected.RegistryRevision,
+		ReleaseManifestSHA256: expected.ReleaseManifestSHA, IndexSHA256: expected.IndexSHA,
+		ShardSHA256: expected.ShardSHA,
+	}
+	verifier, ok := scheduler.worker.history.(OperationHistoryReferenceVerifier)
+	if !ok || verifier.VerifyStoredRecordReference(ctx, identity, result.HistoryRecordID, result.HistoryRecordSHA256) != nil {
+		return operationPlanReadinessEvidence{}, errOperationPlanSchedulerUnavailable
+	}
+	validUntil := result.ObservedAt.Add(target.Record.ObservationPeriod)
+	if validUntil.IsZero() {
+		return operationPlanReadinessEvidence{}, nil
+	}
+	if !operationPlanDeliveryEvidenceValid(latest) {
+		return operationPlanReadinessEvidence{}, nil
+	}
+	return operationPlanReadinessEvidence{Proven: true, ValidUntil: validUntil}, nil
+}
+
+func operationPlanDeliveryEvidenceValid(attempt OperationStoredAttempt) bool {
+	if attempt.Result == nil || !validOperationObservationResult(*attempt.Result) {
+		return false
+	}
+	if attempt.Result.State == "indeterminate" && attempt.Result.Category == "response_semantics_unestablished" {
+		return attempt.DeliveryState == "not_applicable" && attempt.DeliveryAckAt.IsZero() && attempt.GatusReceivedAt.IsZero() && attempt.GatusResultState == ""
+	}
+	wantState := "unhealthy"
+	if attempt.Result.State == "healthy" {
+		wantState = "healthy"
+	}
+	return attempt.DeliveryState == "readback_verified" && !attempt.GatusReceivedAt.IsZero() && !attempt.GatusReceivedAt.Before(attempt.DeliveryAckAt) && attempt.GatusResultState == wantState
 }
 
 func operationPlanTargetDue(target OperationPlanWorkerTarget, latest OperationStoredAttempt, now time.Time) bool {
@@ -272,8 +445,7 @@ func (scheduler *OperationPlanScheduler) finishExecution(result OperationPlanWor
 	defer scheduler.mu.Unlock()
 	if err != nil {
 		scheduler.executionFailures++
-		scheduler.lastErrorReason = "execution_unavailable"
-		scheduler.lastErrorAt = time.Now().UTC()
+		scheduler.latchErrorLocked("execution_unavailable", time.Now().UTC())
 		return
 	}
 	if result.RequestStarted {
@@ -298,8 +470,7 @@ func (scheduler *OperationPlanScheduler) finishDelivery(ctx context.Context, att
 	defer scheduler.mu.Unlock()
 	if err != nil || !found {
 		scheduler.deliveryFailures++
-		scheduler.lastErrorReason = "delivery_state_unavailable"
-		scheduler.lastErrorAt = time.Now().UTC()
+		scheduler.latchErrorLocked("delivery_state_unavailable", time.Now().UTC())
 		return
 	}
 	switch stored.DeliveryState {
@@ -311,12 +482,10 @@ func (scheduler *OperationPlanScheduler) finishDelivery(ctx context.Context, att
 		// A push/readback error is not a provider failure. The durable outbox
 		// remains available for the next bounded pass.
 		scheduler.deliveryFailures++
-		scheduler.lastErrorReason = "delivery_unavailable"
-		scheduler.lastErrorAt = time.Now().UTC()
+		scheduler.latchErrorLocked("delivery_unavailable", time.Now().UTC())
 	default:
 		scheduler.deliveryFailures++
-		scheduler.lastErrorReason = "delivery_state_invalid"
-		scheduler.lastErrorAt = time.Now().UTC()
+		scheduler.latchErrorLocked("delivery_state_invalid", time.Now().UTC())
 	}
 }
 
@@ -336,8 +505,13 @@ func (scheduler *OperationPlanScheduler) recordPassIfDue(now time.Time) bool {
 func (scheduler *OperationPlanScheduler) recordFailure(now time.Time, reason string) {
 	scheduler.mu.Lock()
 	defer scheduler.mu.Unlock()
+	scheduler.latchErrorLocked(reason, now.UTC())
+}
+
+func (scheduler *OperationPlanScheduler) latchErrorLocked(reason string, at time.Time) {
 	scheduler.lastErrorReason = reason
-	scheduler.lastErrorAt = now.UTC()
+	scheduler.lastErrorAt = at.UTC()
+	scheduler.errorEpoch++
 }
 
 func (scheduler *OperationPlanScheduler) addExecutionTaskStarted() {
@@ -355,16 +529,14 @@ func (scheduler *OperationPlanScheduler) addDeliveryTaskStarted() {
 func (scheduler *OperationPlanScheduler) addDeliveryScanFailure() {
 	scheduler.mu.Lock()
 	scheduler.deliveryScanErrors++
-	scheduler.lastErrorReason = "delivery_store_unavailable"
-	scheduler.lastErrorAt = time.Now().UTC()
+	scheduler.latchErrorLocked("delivery_store_unavailable", time.Now().UTC())
 	scheduler.mu.Unlock()
 }
 
 func (scheduler *OperationPlanScheduler) addIdentityScanFailure() {
 	scheduler.mu.Lock()
 	scheduler.identityScanErrors++
-	scheduler.lastErrorReason = "attempt_store_unavailable"
-	scheduler.lastErrorAt = time.Now().UTC()
+	scheduler.latchErrorLocked("attempt_store_unavailable", time.Now().UTC())
 	scheduler.mu.Unlock()
 }
 
@@ -387,6 +559,11 @@ func (scheduler *OperationPlanScheduler) Status(at time.Time) OperationPlanSched
 	status.CapacityFeasible = scheduler.capacity.Feasible
 	scheduler.mu.Lock()
 	status.ActiveWork = scheduler.activeCount
+	status.EvidenceSweepAt = scheduler.evidenceSweepAt
+	status.EvidenceCheckedOperations = scheduler.evidenceChecked
+	status.EvidenceCurrentOperations = scheduler.evidenceCurrent
+	status.EvidenceMissingOperations = scheduler.evidenceMissing
+	status.EvidenceValidUntil = scheduler.evidenceValidUntil
 	status.LastPassAt = scheduler.lastPass
 	status.LastErrorReason = scheduler.lastErrorReason
 	status.LastErrorAt = scheduler.lastErrorAt
@@ -409,10 +586,6 @@ func (scheduler *OperationPlanScheduler) Status(at time.Time) OperationPlanSched
 	if !status.LastPassAt.IsZero() && !at.Before(status.LastPassAt) {
 		status.LastPassAgeSeconds = int64(at.Sub(status.LastPassAt) / time.Second)
 	}
-	if status.LastErrorReason != "" && (status.LastErrorAt.IsZero() || at.Before(status.LastErrorAt) || at.Sub(status.LastErrorAt) > 30*time.Second) {
-		status.LastErrorReason = ""
-		status.LastErrorAt = time.Time{}
-	}
 	switch {
 	case status.AdmittedOperations == 0:
 		status.Reason = "zero_admitted_operations"
@@ -420,8 +593,18 @@ func (scheduler *OperationPlanScheduler) Status(at time.Time) OperationPlanSched
 		status.Reason = "capacity_infeasible"
 	case status.PassesSinceStart == 0 || status.LastPassAgeSeconds > 3:
 		status.Reason = "scheduler_loop_stale"
-	case status.LastErrorReason != "" && !status.LastErrorAt.IsZero() && !at.Before(status.LastErrorAt) && at.Sub(status.LastErrorAt) <= 30*time.Second:
+	case status.LastErrorReason != "":
 		status.Reason = status.LastErrorReason
+	case status.EvidenceSweepAt.IsZero() || status.EvidenceCheckedOperations != status.AdmittedOperations:
+		status.Reason = "awaiting_initial_evidence_sweep"
+	case status.EvidenceCurrentOperations != status.AdmittedOperations:
+		if !status.EvidenceValidUntil.IsZero() && !at.Before(status.EvidenceValidUntil) {
+			status.Reason = "operation_observations_stale"
+		} else {
+			status.Reason = "operation_observations_incomplete"
+		}
+	case status.EvidenceValidUntil.IsZero() || !at.Before(status.EvidenceValidUntil):
+		status.Reason = "operation_observations_stale"
 	default:
 		status.State = "ready"
 		status.Ready = true

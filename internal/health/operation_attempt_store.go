@@ -812,6 +812,38 @@ func (store *OperationAttemptStore) Latest(sourceID, operationID string) (Operat
 	return store.LatestContext(context.Background(), sourceID, operationID)
 }
 
+// LatestSnapshotContext reads the last atomically replaced identity file
+// without taking the writer flock. Attempt state is written with an atomic
+// rename, so this returns either the previous complete state or the next
+// complete state. It is intended for bounded read-only readiness sweeps;
+// callers still need a finite context and must not treat a missing file as
+// evidence of a healthy observation.
+func (store *OperationAttemptStore) LatestSnapshotContext(ctx context.Context, sourceID, operationID string) (OperationStoredAttempt, bool, error) {
+	if store == nil || ctx == nil || ctx.Err() != nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 {
+		return OperationStoredAttempt{}, false, ErrOperationAttemptUnavailable
+	}
+	state, found, err := store.readState(sourceID, operationID)
+	if err != nil || !found {
+		if ctx.Err() != nil {
+			return OperationStoredAttempt{}, false, ErrOperationAttemptUnavailable
+		}
+		return OperationStoredAttempt{}, false, err
+	}
+	if ctx.Err() != nil || len(state.Attempts) == 0 {
+		return OperationStoredAttempt{}, false, ErrOperationAttemptUnavailable
+	}
+	latest := state.Attempts[len(state.Attempts)-1]
+	if latest.RequestStarted != nil {
+		requestStarted := *latest.RequestStarted
+		latest.RequestStarted = &requestStarted
+	}
+	if latest.Result != nil {
+		result := *latest.Result
+		latest.Result = &result
+	}
+	return latest, true, nil
+}
+
 func (store *OperationAttemptStore) LatestContext(ctx context.Context, sourceID, operationID string) (OperationStoredAttempt, bool, error) {
 	if store == nil || ctx == nil || ctx.Err() != nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 {
 		return OperationStoredAttempt{}, false, ErrOperationAttemptUnavailable

@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -45,9 +46,110 @@ func TestOperationPlanSchedulerRunsOneBoundedLocalAttemptThenIndependentDelivery
 	if err != nil || !found || latest.DeliveryState != "readback_verified" || latest.Result == nil || gatus.pushes != 1 || gatus.readbacks != 1 {
 		t.Fatalf("scheduler did not advance only the independent Gatus outbox: latest=%#v found=%t push=%d readback=%d err=%v", latest, found, gatus.pushes, gatus.readbacks, err)
 	}
+	scheduler.recordFailure(started.Add(2*time.Second), "delivery_unavailable")
+	if status := scheduler.Status(started.Add(40 * time.Second)); status.Ready || status.LastErrorReason != "delivery_unavailable" {
+		t.Fatalf("unresolved pipeline error expired into false readiness: %#v", status)
+	}
+	if err := scheduler.ProcessDue(context.Background(), started.Add(2*time.Second)); err != nil {
+		t.Fatal("bounded evidence sweep failed:", err)
+	}
 	status := scheduler.Status(time.Now().UTC())
-	if !status.Ready || status.State != "ready" || status.KnownOperations != worker.runtime.Plan.Counts().KnownOperations || status.AdmittedOperations != 1 || status.ExecutionTasksStartedSinceStart != 1 || status.RequestStartsSinceStart != 1 || status.ObservationsSinceStart != 1 || status.ReadbacksSinceStart != 1 || !status.CapacityFeasible {
+	if !status.Ready || status.State != "ready" || status.EvidenceCheckedOperations != 1 || status.EvidenceCurrentOperations != 1 || status.EvidenceMissingOperations != 0 || status.EvidenceSweepAt.IsZero() || status.KnownOperations != worker.runtime.Plan.Counts().KnownOperations || status.AdmittedOperations != 1 || status.ExecutionTasksStartedSinceStart != 1 || status.RequestStartsSinceStart != 1 || status.ObservationsSinceStart != 1 || status.ReadbacksSinceStart != 1 || !status.CapacityFeasible {
 		t.Fatalf("scheduler readiness/counters do not describe the one admitted synthetic operation: %#v", status)
+	}
+}
+
+func TestOperationPlanDeliveryEvidenceTreatsProviderFailureAndObservationOnlyAsPipelineEvidence(t *testing.T) {
+	now := time.Now().UTC()
+	tests := []struct {
+		name    string
+		attempt OperationStoredAttempt
+		want    bool
+	}{
+		{
+			name:    "healthy readback",
+			attempt: OperationStoredAttempt{Result: &OperationObservationResult{State: "healthy", Category: "healthy", ObservedAt: now, ReceiptSHA: strings.Repeat("a", 64)}, DeliveryState: "readback_verified", DeliveryAckAt: now, GatusReceivedAt: now.Add(time.Second), GatusResultState: "healthy"},
+			want:    true,
+		},
+		{
+			name:    "provider failure readback remains observer evidence",
+			attempt: OperationStoredAttempt{Result: &OperationObservationResult{State: "unhealthy", Category: "response_http_failure", HTTPStatus: 503, ObservedAt: now, ReceiptSHA: strings.Repeat("a", 64)}, DeliveryState: "readback_verified", DeliveryAckAt: now, GatusReceivedAt: now.Add(time.Second), GatusResultState: "unhealthy"},
+			want:    true,
+		},
+		{
+			name:    "2xx without reviewed semantics is not applicable",
+			attempt: OperationStoredAttempt{Result: &OperationObservationResult{State: "indeterminate", Category: "response_semantics_unestablished", HTTPStatus: 200, ObservedAt: now, ReceiptSHA: strings.Repeat("a", 64), HistoryRecordID: "synthetic-history-record", HistoryRecordSHA256: strings.Repeat("b", 64)}, DeliveryState: "not_applicable"},
+			want:    true,
+		},
+		{
+			name:    "missing Gatus evidence",
+			attempt: OperationStoredAttempt{Result: &OperationObservationResult{State: "healthy", Category: "healthy", ObservedAt: now, ReceiptSHA: strings.Repeat("a", 64)}, DeliveryState: "pending"},
+			want:    false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := operationPlanDeliveryEvidenceValid(test.attempt); got != test.want {
+				t.Fatalf("delivery evidence validity = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestOperationPlanSchedulerStoreLockCannotBlockControllerPassOrLaunchProvider(t *testing.T) {
+	worker, attempts, _, _, target := newOperationPlanSchedulerTestWorker(t)
+	called := make(chan struct{}, 1)
+	worker.runner = schedulerCalledReceiptExecutor{called: called}
+	scheduler, err := NewOperationPlanScheduler(OperationPlanSchedulerConfig{
+		Worker: worker, MaxConcurrent: 1, MaxStartsPerPass: 1, MaxDeliveriesPerPass: 1,
+		CandidateScanPerPass: 2, DeliveryLease: time.Minute,
+	})
+	if err != nil {
+		t.Fatal("local synthetic plan could not construct a bounded scheduler:", err)
+	}
+	lock, err := os.OpenFile(attempts.root+"/.operation-attempt.lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		_ = lock.Close()
+		t.Fatal(err)
+	}
+	started := time.Now().UTC()
+	passDone := make(chan error, 1)
+	go func() { passDone <- scheduler.ProcessDue(context.Background(), started) }()
+	select {
+	case err := <-passDone:
+		if err == nil {
+			t.Fatal("controller pass ignored the held attempt-store lock")
+		}
+	case <-time.After(operationPlanSchedulerScanTimeout + time.Second):
+		t.Fatal("controller pass remained blocked on the attempt-store lock")
+	}
+	select {
+	case <-called:
+		t.Fatal("provider executor ran while the bounded store scan was unavailable")
+	default:
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); err != nil {
+		_ = lock.Close()
+		t.Fatal(err)
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := scheduler.ProcessDue(context.Background(), started.Add(3*time.Second)); err != nil {
+		t.Fatal("controller did not recover after the attempt-store lock was released:", err)
+	}
+	scheduler.Wait()
+	select {
+	case <-called:
+	default:
+		t.Fatal("provider executor was not reached after the bounded scan recovered")
+	}
+	latest, found, err := attempts.Latest(target.Record.SourceID, target.Record.OperationID)
+	if err != nil || !found || latest.State != "observed" {
+		t.Fatalf("recovered bounded pass did not persist one local attempt: found=%t state=%q err=%v", found, latest.State, err)
 	}
 }
 
@@ -155,6 +257,16 @@ func (schedulerSyntheticReceiptExecutor) Run(ctx context.Context, expected Opera
 		return OperationPlanProbeResult{}, -1, err
 	}
 	return result, 0, nil
+}
+
+type schedulerCalledReceiptExecutor struct{ called chan<- struct{} }
+
+func (executor schedulerCalledReceiptExecutor) Run(ctx context.Context, expected OperationPlanProbeExpectation, deadline time.Time) (OperationPlanProbeResult, int, error) {
+	select {
+	case executor.called <- struct{}{}:
+	default:
+	}
+	return (schedulerSyntheticReceiptExecutor{}).Run(ctx, expected, deadline)
 }
 
 type schedulerSyntheticGatus struct {
