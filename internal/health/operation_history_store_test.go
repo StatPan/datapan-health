@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,7 +15,9 @@ import (
 	"time"
 )
 
-type fixtureOperationHistoryValidator struct{}
+type fixtureOperationHistoryValidator struct {
+	calls *int
+}
 
 type fixtureOperationHistoryPublisher struct {
 	readback OperationHistoryPublicationReadback
@@ -27,13 +30,17 @@ func (publisher *fixtureOperationHistoryPublisher) PublishAndReadback(_ context.
 	return publisher.readback, publisher.err
 }
 
-func (fixtureOperationHistoryValidator) ValidateStoredOperationHistoryRecord(_ context.Context, candidate OperationHistoryRecord) (OperationHistoryRecord, error) {
+func (validator fixtureOperationHistoryValidator) ValidateStoredOperationHistoryRecord(_ context.Context, candidate OperationHistoryRecord) (OperationHistoryRecord, error) {
+	if validator.calls != nil {
+		*validator.calls = *validator.calls + 1
+	}
 	if candidate.ReceiptSchemaURI != "https://schemas.datapan.dev/datapan.health-operation-receipt.v1.schema.json" || candidate.ReceiptSchemaVersion != "datapan.health-operation-receipt.v1" || validateOperationHistoryRecordFields(candidate) != nil {
 		return OperationHistoryRecord{}, ErrOperationHistoryCorrupt
 	}
 	var receipt struct {
 		SchemaVersion string `json:"schema_version"`
 		State         string `json:"state"`
+		Padding       string `json:"padding,omitempty"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(string(candidate.ReceiptBytes)))
 	decoder.DisallowUnknownFields()
@@ -48,8 +55,20 @@ func (fixtureOperationHistoryValidator) ValidateStoredOperationHistoryRecord(_ c
 }
 
 func fixtureOperationHistoryRecord(t *testing.T, identity OperationHistoryIdentity, state string) OperationHistoryRecord {
+	return fixtureOperationHistoryRecordWithSize(t, identity, state, 0)
+}
+
+func fixtureOperationHistoryRecordWithSize(t *testing.T, identity OperationHistoryIdentity, state string, receiptBytes int) OperationHistoryRecord {
 	t.Helper()
-	receipt := []byte(`{"schema_version":"fixture.v1","state":"` + state + `"}` + "\n")
+	receipt := []byte(`{"schema_version":"fixture.v1","state":"` + state + `"}`)
+	if receiptBytes > 0 {
+		padding := receiptBytes - len(receipt) - 1
+		if padding < 0 || receiptBytes > MaxOperationHistoryReceiptBytes {
+			t.Fatalf("invalid fixture receipt target size %d", receiptBytes)
+		}
+		receipt = append(receipt, strings.Repeat(" ", padding)...)
+	}
+	receipt = append(receipt, '\n')
 	digest := sha256.Sum256(receipt)
 	record, err := newValidatedOperationHistoryRecord(OperationHistoryRecord{
 		SchemaVersion:        OperationHistoryRecordSchemaVersion,
@@ -145,10 +164,16 @@ func TestOperationHistoryStoreReserveAppendRestartAndIdempotency(t *testing.T) {
 	if err != nil || usage.RecordCount != 1 || usage.ReservationCount != 0 || usage.UsedBytes <= 0 || usage.ReservedBytes != 0 {
 		t.Fatalf("appended usage: %#v err=%v", usage, err)
 	}
+	if err := removePrivateFile(store.pendingSequencePath(1)); err != nil {
+		t.Fatalf("remove derived sequence index to model interrupted append: %v", err)
+	}
 
 	store, err = OpenOperationHistoryStore(root, MaxOperationHistoryReservedBytes*3+operationHistoryPublicationHeadroom, fixtureOperationHistoryValidator{})
 	if err != nil {
 		t.Fatalf("reopen store: %v", err)
+	}
+	if _, found, err := store.readPendingSequenceIndex(1); err != nil || !found {
+		t.Fatalf("recovery did not rebuild missing sequence index: found=%v err=%v", found, err)
 	}
 	duplicate, err := store.AppendValidated(context.Background(), token, record)
 	if err != nil || duplicate.RecordID != ref.RecordID || duplicate.SHA256 != ref.SHA256 || !duplicate.AppendedAt.Equal(ref.AppendedAt) {
@@ -409,6 +434,84 @@ func TestOperationHistoryPublicationCheckpointRecoversPartialCleanupAndFencesSta
 	}
 }
 
+func TestOperationHistoryPublicationReplayRetainsRebuildMarkerUntilUsageIsDurable(t *testing.T) {
+	root := t.TempDir()
+	maxBytes := MaxOperationHistoryReservedBytes*4 + operationHistoryPublicationHeadroom
+	store, err := OpenOperationHistoryStore(root, maxBytes, fixtureOperationHistoryValidator{})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	identity := fixtureOperationHistoryIdentity("00000000-0000-4000-8000-000000000029")
+	identity.Generation = 10
+	record := fixtureOperationHistoryRecord(t, identity, "healthy")
+	token, err := store.Reserve(context.Background(), identity)
+	if err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	if _, err := store.AppendValidated(context.Background(), token, record); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	batch, err := store.PendingOperationHistoryBatch(context.Background())
+	if err != nil || len(batch.Records) != 1 {
+		t.Fatalf("pending batch: %#v err=%v", batch, err)
+	}
+	batch.ManifestSHA256 = strings.Repeat("a", 64)
+	batch.RecordsSHA256 = strings.Repeat("b", 64)
+	confirmation, err := newVerifiedOperationHistoryPublicationConfirmation(batch, OperationHistoryPublicationReadback{
+		DatasetRepo:     "StatPan/datapan-health-operation-history",
+		Revision:        strings.Repeat("f", 40),
+		ManifestSHA256:  batch.ManifestSHA256,
+		RecordsSHA256:   batch.RecordsSHA256,
+		RecordSetSHA256: batch.RecordSetSHA,
+		VerifiedAt:      time.Date(2026, 10, 7, 1, 1, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("seal verified publication: %v", err)
+	}
+	transaction := operationHistoryPublicationTransaction{
+		SchemaVersion: OperationHistoryStoreSchemaVersion,
+		BatchID:       batch.BatchID,
+		RecordSetSHA:  batch.RecordSetSHA,
+		Confirmation:  confirmation,
+		Records:       operationHistoryBatchRefs(batch.Records),
+	}
+	transaction.IndexChanges, err = store.operationHistoryIndexChangesLocked(context.Background(), transaction.Records)
+	if err != nil {
+		t.Fatalf("snapshot index changes: %v", err)
+	}
+	transaction.TransactionSHA = operationHistoryPublicationTransactionDigest(transaction)
+	if err := writePrivateJSONAtomic(store.publicationTransactionPath(), transaction); err != nil {
+		t.Fatalf("persist publication transaction: %v", err)
+	}
+	oldUsage, err := store.readUsage()
+	if err != nil || oldUsage.VerifiedPublicationCount != 0 || oldUsage.RecordCount != 1 {
+		t.Fatalf("pre-replay usage: %#v err=%v", oldUsage, err)
+	}
+
+	// Force the rebuild-marker write to fail. Replay must not remove its own
+	// durable transaction before a general rebuild marker protects old usage.
+	if err := os.Mkdir(store.transactionPath(), 0o700); err != nil {
+		t.Fatalf("create marker-write failure: %v", err)
+	}
+	if err := store.rebuildUsageLocked(context.Background()); !errors.Is(err, ErrOperationHistoryUnavailable) {
+		t.Fatalf("rebuild without marker error=%v, want unavailable", err)
+	}
+	if _, err := os.Stat(store.publicationTransactionPath()); err != nil {
+		t.Fatalf("publication transaction was removed before rebuild marker became durable: %v", err)
+	}
+	if usage, err := store.readUsage(); err != nil || usage.VerifiedPublicationCount != 0 || usage.RecordCount != 1 {
+		t.Fatalf("failed marker write changed the old usage snapshot: %#v err=%v", usage, err)
+	}
+	if err := os.Remove(store.transactionPath()); err != nil {
+		t.Fatalf("remove marker-write failure: %v", err)
+	}
+
+	usage, err := store.ensureUsageLocked(context.Background())
+	if err != nil || usage.AcceptedRecordCount != 1 || usage.RecordCount != 0 || usage.VerifiedPublicationCount != 1 || usage.OperationKeyCount != 1 {
+		t.Fatalf("recovered publication usage: %#v err=%v", usage, err)
+	}
+}
+
 func TestOperationHistoryPublicationAcknowledgeCompactsVerifiedPrefix(t *testing.T) {
 	root := t.TempDir()
 	maxBytes := MaxOperationHistoryReservedBytes*4 + operationHistoryPublicationHeadroom
@@ -505,13 +608,163 @@ func TestOperationHistoryPublishPathRequiresExactReadbackAndRetainsFailedBatch(t
 	if err != nil || usage.RecordCount != 1 || usage.VerifiedPublicationCount != 0 || publisher.calls != 1 {
 		t.Fatalf("failed publication must retain local record: usage=%#v calls=%d err=%v", usage, publisher.calls, err)
 	}
+	nextIdentity := identity
+	nextIdentity.AttemptID = "00000000-0000-4000-8000-000000000032"
+	nextIdentity.Generation++
+	nextRecord := fixtureOperationHistoryRecord(t, nextIdentity, "unhealthy")
+	nextToken, err := store.Reserve(context.Background(), nextIdentity)
+	if err != nil {
+		t.Fatalf("reserve after failed publication: %v", err)
+	}
+	if _, err := store.AppendValidated(context.Background(), nextToken, nextRecord); err != nil {
+		t.Fatalf("append after failed publication: %v", err)
+	}
+	store, err = OpenOperationHistoryStore(root, MaxOperationHistoryReservedBytes*4+operationHistoryPublicationHeadroom, fixtureOperationHistoryValidator{})
+	if err != nil {
+		t.Fatalf("reopen frozen retry batch: %v", err)
+	}
+	frozen, err := store.PendingOperationHistoryBatch(context.Background())
+	if err != nil || !sameOperationHistoryBatch(batch, frozen) || len(frozen.Records) != 1 {
+		t.Fatalf("new appends changed frozen retry batch: batch=%#v frozen=%#v err=%v", batch, frozen, err)
+	}
 	readback.RecordSetSHA256 = batch.RecordSetSHA
 	publisher = &fixtureOperationHistoryPublisher{readback: readback}
 	if published, err := store.PublishPendingOperationHistoryBatch(context.Background(), publisher); err != nil || !published {
 		t.Fatalf("exact readback should advance checkpoint: published=%v err=%v", published, err)
 	}
 	usage, err = store.Usage(context.Background())
-	if err != nil || usage.RecordCount != 0 || usage.VerifiedPublicationCount != 1 || publisher.calls != 1 {
+	if err != nil || usage.RecordCount != 1 || usage.VerifiedPublicationCount != 1 || publisher.calls != 1 {
 		t.Fatalf("verified publication usage: %#v calls=%d err=%v", usage, publisher.calls, err)
+	}
+	remaining, err := store.PendingOperationHistoryBatch(context.Background())
+	if err != nil || len(remaining.Records) != 1 || remaining.Records[0].RecordID != operationHistoryIdentityIDMust(nextIdentity) {
+		t.Fatalf("next batch did not advance to the later append: %#v err=%v", remaining, err)
+	}
+}
+
+func TestOperationHistoryPendingBatchLoadsOnlyFirst256BodiesFromMaximumStore(t *testing.T) {
+	validationCalls := 0
+	store, err := OpenOperationHistoryStore(t.TempDir(), maxOperationHistoryStoreBytes, fixtureOperationHistoryValidator{calls: &validationCalls})
+	if err != nil {
+		t.Fatalf("open maximum store: %v", err)
+	}
+	for generation := 1; generation <= MaxOperationHistoryBatchRecords+44; generation++ {
+		identity := fixtureOperationHistoryIdentity(fmt.Sprintf("%08x-0000-4000-8000-%012x", generation, generation))
+		identity.Generation = uint64(generation)
+		record := fixtureOperationHistoryRecord(t, identity, "healthy")
+		token, err := store.Reserve(context.Background(), identity)
+		if err != nil {
+			t.Fatalf("reserve generation %d: %v", generation, err)
+		}
+		if _, err := store.AppendValidated(context.Background(), token, record); err != nil {
+			t.Fatalf("append generation %d: %v", generation, err)
+		}
+	}
+	before := validationCalls
+	batch, err := store.PendingOperationHistoryBatch(context.Background())
+	if err != nil || len(batch.Records) != MaxOperationHistoryBatchRecords {
+		t.Fatalf("bounded pending batch records=%d err=%v", len(batch.Records), err)
+	}
+	if validationCalls-before != MaxOperationHistoryBatchRecords {
+		t.Fatalf("pending selection validated %d bodies for a %d-record batch", validationCalls-before, len(batch.Records))
+	}
+	if batch.Records[0].Sequence != 1 || batch.Records[len(batch.Records)-1].Sequence != MaxOperationHistoryBatchRecords {
+		t.Fatalf("pending batch did not select the first contiguous prefix: first=%d last=%d", batch.Records[0].Sequence, batch.Records[len(batch.Records)-1].Sequence)
+	}
+}
+
+func TestOperationHistoryAcknowledgeDoesNotRevalidateRemainingBacklog(t *testing.T) {
+	root := t.TempDir()
+	validationCalls := 0
+	store, err := OpenOperationHistoryStore(root, maxOperationHistoryStoreBytes, fixtureOperationHistoryValidator{calls: &validationCalls})
+	if err != nil {
+		t.Fatalf("open maximum store: %v", err)
+	}
+	for generation := 1; generation <= MaxOperationHistoryBatchRecords+44; generation++ {
+		identity := fixtureOperationHistoryIdentity(fmt.Sprintf("%08x-0000-4000-8000-%012x", generation, generation))
+		identity.Generation = uint64(generation)
+		record := fixtureOperationHistoryRecord(t, identity, "healthy")
+		token, err := store.Reserve(context.Background(), identity)
+		if err != nil {
+			t.Fatalf("reserve generation %d: %v", generation, err)
+		}
+		if _, err := store.AppendValidated(context.Background(), token, record); err != nil {
+			t.Fatalf("append generation %d: %v", generation, err)
+		}
+	}
+	batch, err := store.PendingOperationHistoryBatch(context.Background())
+	if err != nil || len(batch.Records) != MaxOperationHistoryBatchRecords {
+		t.Fatalf("pending batch records=%d err=%v", len(batch.Records), err)
+	}
+	batch.ManifestSHA256 = strings.Repeat("a", 64)
+	batch.RecordsSHA256 = strings.Repeat("b", 64)
+	confirmation, err := newVerifiedOperationHistoryPublicationConfirmation(batch, OperationHistoryPublicationReadback{
+		DatasetRepo:     "StatPan/datapan-health-operation-history",
+		Revision:        strings.Repeat("f", 40),
+		ManifestSHA256:  batch.ManifestSHA256,
+		RecordsSHA256:   batch.RecordsSHA256,
+		RecordSetSHA256: batch.RecordSetSHA,
+		VerifiedAt:      time.Date(2026, 10, 7, 1, 2, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("seal verified publication: %v", err)
+	}
+	validationCalls = 0
+	if err := store.AcknowledgeOperationHistoryBatch(context.Background(), batch, confirmation); err != nil {
+		t.Fatalf("acknowledge verified publication: %v", err)
+	}
+	if validationCalls != 2*MaxOperationHistoryBatchRecords {
+		t.Fatalf("acknowledgement validated %d records; want only batch load and transaction verification for %d records", validationCalls, MaxOperationHistoryBatchRecords)
+	}
+	usage, err := store.Usage(context.Background())
+	if err != nil || usage.RecordCount != 44 || usage.VerifiedPublicationCount != MaxOperationHistoryBatchRecords || usage.AcceptedRecordCount != MaxOperationHistoryBatchRecords+44 {
+		t.Fatalf("bounded acknowledgement usage: %#v err=%v", usage, err)
+	}
+	reopened, err := OpenOperationHistoryStore(root, maxOperationHistoryStoreBytes, fixtureOperationHistoryValidator{})
+	if err != nil {
+		t.Fatalf("reopen acknowledged archive: %v", err)
+	}
+	rebuiltUsage, err := reopened.Usage(context.Background())
+	if err != nil || rebuiltUsage.UsedBytes != usage.UsedBytes || rebuiltUsage.RecordCount != usage.RecordCount || rebuiltUsage.VerifiedPublicationCount != usage.VerifiedPublicationCount {
+		t.Fatalf("incremental usage differs from recovery rebuild: incremental=%#v rebuilt=%#v err=%v", usage, rebuiltUsage, err)
+	}
+}
+
+func TestOperationHistoryPendingBatchStopsAtEightMiBBeforeLoadingLaterBodies(t *testing.T) {
+	validationCalls := 0
+	store, err := OpenOperationHistoryStore(t.TempDir(), maxOperationHistoryStoreBytes, fixtureOperationHistoryValidator{calls: &validationCalls})
+	if err != nil {
+		t.Fatalf("open maximum store: %v", err)
+	}
+	for generation := 1; generation <= 110; generation++ {
+		identity := fixtureOperationHistoryIdentity(fmt.Sprintf("%08x-0000-4000-8000-%012x", generation, generation))
+		identity.Generation = uint64(generation)
+		record := fixtureOperationHistoryRecordWithSize(t, identity, "healthy", MaxOperationHistoryReceiptBytes)
+		token, err := store.Reserve(context.Background(), identity)
+		if err != nil {
+			t.Fatalf("reserve generation %d: %v", generation, err)
+		}
+		if _, err := store.AppendValidated(context.Background(), token, record); err != nil {
+			t.Fatalf("append generation %d: %v", generation, err)
+		}
+	}
+	before := validationCalls
+	batch, err := store.PendingOperationHistoryBatch(context.Background())
+	if err != nil || len(batch.Records) == 0 || len(batch.Records) >= 110 {
+		t.Fatalf("8 MiB cap did not bound pending batch: records=%d err=%v", len(batch.Records), err)
+	}
+	if validationCalls-before != len(batch.Records) {
+		t.Fatalf("pending selection validated %d bodies for a %d-record batch", validationCalls-before, len(batch.Records))
+	}
+	var total int
+	for _, item := range batch.Records {
+		encoded, err := json.Marshal(item.Record)
+		if err != nil {
+			t.Fatalf("marshal selected record: %v", err)
+		}
+		total += len(encoded) + 1
+	}
+	if total > MaxOperationHistoryBatchBytes {
+		t.Fatalf("pending batch exceeded 8 MiB: %d bytes", total)
 	}
 }
