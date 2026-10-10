@@ -77,7 +77,7 @@ const publicStatusHTMLTemplate = `<!doctype html>
     header{padding:12px 0 20px}
     nav{display:flex;flex-wrap:wrap;gap:8px 20px;border-bottom:1px solid #d6deea;padding:0 0 14px;margin:0 0 24px}
     a{color:#145bb8;text-underline-offset:3px}
-    a:focus-visible,button:focus-visible,input:focus-visible{outline:3px solid #145bb8;outline-offset:3px;border-radius:4px}
+    a:focus-visible,button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid #145bb8;outline-offset:3px;border-radius:4px}
     h1{font-size:clamp(1.6rem,5vw,2.1rem);line-height:1.25;margin:0 0 10px;overflow-wrap:anywhere}
     h2{font-size:1.2rem;line-height:1.35;margin:0 0 12px}
     h3{font-size:1.05rem;line-height:1.4;margin:0 0 8px;overflow-wrap:anywhere}
@@ -1358,6 +1358,8 @@ func publicOperationAttemptLabel(state string, requestStarted *bool, executionBl
 		switch executionBlockReason {
 		case "quota_capacity":
 			return "검사 요청 전 보류 · 검사 용량 여유 대기"
+		case "quota_window_draining":
+			return "검사 요청 전 보류 · 이전 할당 요청 처리 대기"
 		case "history_capacity":
 			return "검사 요청 전 보류 · 결과 저장 공간 확인 필요"
 		case "child_unavailable":
@@ -1551,6 +1553,8 @@ func publicSelfReadinessReason(reason string) string {
 		return "검사 결과 기록을 확인할 수 없습니다. 검사 실행 로그와 기록 생성을 확인하세요."
 	case "receipt_storage_unavailable":
 		return "검사 결과 저장 위치를 사용할 수 없습니다. 저장소 상태와 권한을 확인하세요."
+	case "operation_plan_unavailable":
+		return "전체 검사 계획을 확인할 수 없습니다. 등록 기능 계획, 실행 가능 수량, 최근 관측 기록을 확인하세요."
 	default:
 		return "관제 상태를 확인할 수 없습니다. 검사 일정과 결과 전달을 확인하세요."
 	}

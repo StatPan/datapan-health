@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -95,6 +96,78 @@ func TestOperationPlanGatusDeliveryUsesBoundedPerKeyPushAndReadback(t *testing.T
 	}
 	if err := store.RecordGatusReadback(binding.SourceID, binding.OperationID, claim.AttemptID, claim.Generation, readbackAt, state); err != nil {
 		t.Fatalf("verified GET completion must satisfy the durable ACK ordering: %v", err)
+	}
+}
+
+type orderedOperationPlanGatusClient struct {
+	now       time.Time
+	pushed    []string
+	readbacks []string
+}
+
+func (client *orderedOperationPlanGatusClient) Push(_ context.Context, _ string, result OperationObservationResult) (time.Time, error) {
+	client.pushed = append(client.pushed, result.ReceiptSHA)
+	return client.now, nil
+}
+
+func (client *orderedOperationPlanGatusClient) Readback(_ context.Context, _ string, result OperationObservationResult, acknowledgedAt time.Time) (time.Time, string, error) {
+	client.readbacks = append(client.readbacks, result.ReceiptSHA)
+	return acknowledgedAt.Add(time.Millisecond), result.State, nil
+}
+
+func TestOperationPlanWorkerDeliversOlderRetainedAttemptBeforeNewerObservation(t *testing.T) {
+	store, err := OpenOperationAttemptStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := testOperationAttemptBinding()
+	startedA := time.Date(2026, 10, 7, 8, 0, 0, 0, time.UTC)
+	claimA, err := store.BeginAttempt(binding, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", startedA, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultA := OperationObservationResult{State: "healthy", Category: "healthy", ObservedAt: startedA.Add(time.Second), ReceivedAt: startedA.Add(2 * time.Second), ReceiptSHA: strings.Repeat("a", 64), LatencyMS: 25}
+	if err := store.CompleteAttempt(claimA, resultA, startedA.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	startedB := startedA.Add(binding.ObservationPeriod)
+	claimB, err := store.BeginAttempt(binding, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", startedB, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultB := OperationObservationResult{State: "unhealthy", Category: "provider_failure", ObservedAt: startedB.Add(time.Second), ReceivedAt: startedB.Add(2 * time.Second), ReceiptSHA: strings.Repeat("b", 64), LatencyMS: 30}
+	if err := store.CompleteAttempt(claimB, resultB, startedB.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	gatus := &orderedOperationPlanGatusClient{now: startedB.Add(4 * time.Second)}
+	worker := &OperationPlanWorker{attempts: store, gatus: gatus}
+	ctx := context.Background()
+	if err := worker.DeliverOne(ctx, binding.SourceID, binding.OperationID, claimB.AttemptID, claimB.Generation, startedB.Add(4*time.Second), time.Minute); !errors.Is(err, ErrOperationAttemptDelivery) {
+		t.Fatalf("newer delivery overtook an older undelivered observation: %v", err)
+	}
+	if len(gatus.pushed) != 0 || len(gatus.readbacks) != 0 {
+		t.Fatalf("blocked newer delivery reached Gatus: pushes=%v readbacks=%v", gatus.pushed, gatus.readbacks)
+	}
+
+	gatus.now = startedB.Add(5 * time.Second)
+	if err := worker.DeliverOne(ctx, binding.SourceID, binding.OperationID, claimA.AttemptID, claimA.Generation, startedB.Add(5*time.Second), time.Minute); err != nil {
+		t.Fatalf("newer claim stranded delivery of an older retained attempt: %v", err)
+	}
+	gatus.now = startedB.Add(7 * time.Second)
+	if err := worker.DeliverOne(ctx, binding.SourceID, binding.OperationID, claimB.AttemptID, claimB.Generation, startedB.Add(7*time.Second), time.Minute); err != nil {
+		t.Fatalf("newer result could not follow completed older delivery: %v", err)
+	}
+	want := []string{resultA.ReceiptSHA, resultB.ReceiptSHA}
+	if fmt.Sprint(gatus.pushed) != fmt.Sprint(want) || fmt.Sprint(gatus.readbacks) != fmt.Sprint(want) {
+		t.Fatalf("Gatus delivery order differs from provider-observation order: pushed=%v readbacks=%v want=%v", gatus.pushed, gatus.readbacks, want)
+	}
+	for _, claim := range []OperationAttemptClaim{claimA, claimB} {
+		stored, found, err := store.GetAttempt(binding.SourceID, binding.OperationID, claim.AttemptID, claim.Generation)
+		if err != nil || !found || stored.DeliveryState != "readback_verified" {
+			t.Fatalf("attempt delivery was not durably read back: attempt=%s stored=%#v found=%t err=%v", claim.AttemptID, stored, found, err)
+		}
 	}
 }
 

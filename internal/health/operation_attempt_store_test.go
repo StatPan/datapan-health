@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -69,6 +70,96 @@ func TestOperationAttemptRequiresStoreIssuedHistoryAppendProof(t *testing.T) {
 	}
 	if err := store.CompleteAttemptFromValidatedHistory(context.Background(), claim, record, validRef, validator, startedAt.Add(2*time.Minute)); err != nil {
 		t.Fatalf("store-issued archive reference did not authorize validated receipt: %v", err)
+	}
+}
+
+func TestOperationAttemptQuotaWindowRetryIsPersistedBoundedAndFenced(t *testing.T) {
+	root := t.TempDir()
+	store, err := OpenOperationAttemptStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := testOperationAttemptBinding()
+	binding.ObservationPeriod = 4 * time.Hour
+	started := time.Date(2026, 10, 7, 8, 30, 0, 0, time.UTC)
+	claim, err := store.BeginAttempt(binding, strings.Repeat("a", 64), started, 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := started.Add(time.Second)
+	if err := store.recordPreDispatchDeferredEvidenceContext(context.Background(), claim, operationAttemptReasonQuotaWindowDrain, operationAttemptDeferredStageQuota, operationAttemptDeferredCategoryWindow, finished); err != nil {
+		t.Fatal(err)
+	}
+	latest, found, err := store.Latest(binding.SourceID, binding.OperationID)
+	if err != nil || !found {
+		t.Fatalf("read durable retry evidence: found=%t err=%v", found, err)
+	}
+	if operationAttemptDueForBinding(latest, binding, finished.Add(operationAttemptDeferredRetryDelay-time.Nanosecond)) || !operationAttemptDueForBinding(latest, binding, finished.Add(operationAttemptDeferredRetryDelay)) {
+		t.Fatal("retry was not withheld until the exact persisted 30-second boundary")
+	}
+	for name, mutate := range map[string]func(*OperationStoredAttempt){
+		"binding changed": func(attempt *OperationStoredAttempt) { attempt.Binding.IndexSHA = strings.Repeat("f", 64) },
+		"request started": func(attempt *OperationStoredAttempt) {
+			startedRequest := true
+			attempt.RequestStarted = &startedRequest
+		},
+		"request status unknown": func(attempt *OperationStoredAttempt) { attempt.RequestStarted = nil },
+		"category changed":       func(attempt *OperationStoredAttempt) { attempt.DeferredCategory = "policy_transition" },
+		"future finish":          func(attempt *OperationStoredAttempt) { attempt.FinishedAt = finished.Add(time.Second) },
+		"finish before start":    func(attempt *OperationStoredAttempt) { attempt.FinishedAt = started.Add(-time.Nanosecond) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := latest
+			mutate(&candidate)
+			if operationAttemptDueForBinding(candidate, binding, finished.Add(operationAttemptDeferredRetryDelay)) {
+				t.Fatal("malformed or differently bound deferred state received retry authority")
+			}
+		})
+	}
+
+	reopened, err := OpenOperationAttemptStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reopened.BeginAttempt(binding, strings.Repeat("b", 64), finished.Add(operationAttemptDeferredRetryDelay-time.Nanosecond), time.Minute); !errors.Is(err, ErrOperationAttemptNotDue) {
+		t.Fatalf("reopened attempt store allowed a pre-boundary retry: %v", err)
+	}
+	otherProcess, err := OpenOperationAttemptStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retryAt := finished.Add(operationAttemptDeferredRetryDelay)
+	start := make(chan struct{})
+	type beginResult struct {
+		claim OperationAttemptClaim
+		err   error
+	}
+	results := make(chan beginResult, 2)
+	for index, instance := range []*OperationAttemptStore{reopened, otherProcess} {
+		attemptID := strings.Repeat([]string{"c", "d"}[index], 64)
+		go func(instance *OperationAttemptStore, attemptID string) {
+			<-start
+			next, beginErr := instance.BeginAttempt(binding, attemptID, retryAt, time.Minute)
+			results <- beginResult{claim: next, err: beginErr}
+		}(instance, attemptID)
+	}
+	close(start)
+	var successes, held int
+	for range 2 {
+		result := <-results
+		if result.err == nil {
+			successes++
+			if result.claim.Generation <= claim.Generation {
+				t.Fatalf("retry generation did not advance beyond the deferred claim: %#v", result.claim)
+			}
+		} else if errors.Is(result.err, ErrOperationAttemptHeld) {
+			held++
+		} else {
+			t.Fatalf("unexpected competing retry error: %v", result.err)
+		}
+	}
+	if successes != 1 || held != 1 {
+		t.Fatalf("persisted retry gate did not fence competing stores: success=%d held=%d", successes, held)
 	}
 }
 
@@ -199,6 +290,232 @@ func TestOperationAttemptDeliveryFenceSerializesGatusWithoutBlockingProviderAtte
 	}
 	if _, err := store.BeginAttempt(binding, strings.Repeat("6", 64), dueAt.Add(binding.ObservationPeriod), time.Minute); err != nil {
 		t.Fatalf("next attempt was not released after readback and cadence: %v", err)
+	}
+}
+
+func TestOperationAttemptCandidateSnapshotsAreLockFreeAtomicAndFailClosed(t *testing.T) {
+	root := t.TempDir()
+	store, err := OpenOperationAttemptStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := testOperationAttemptBinding()
+	missing, found, err := store.LatestSnapshotContext(context.Background(), binding.SourceID, binding.OperationID)
+	if err != nil || found || missing.State != "" {
+		t.Fatalf("missing attempt snapshot was treated as present evidence: latest=%#v found=%t err=%v", missing, found, err)
+	}
+	missingPending, err := store.PendingDeliveriesSnapshotContext(context.Background(), binding.SourceID, binding.OperationID)
+	if err != nil || len(missingPending) != 0 {
+		t.Fatalf("missing outbox snapshot was not a safe empty candidate set: pending=%#v err=%v", missingPending, err)
+	}
+
+	started := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+	claim, err := store.BeginAttempt(binding, strings.Repeat("1", 64), started, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := OperationObservationResult{State: "healthy", Category: "healthy", ObservedAt: started.Add(time.Second), ReceiptSHA: strings.Repeat("2", 64), LatencyMS: 100}
+	if err := store.CompleteAttempt(claim, result, started.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	lock, err := os.OpenFile(filepath.Join(root, ".operation-attempt.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		_ = lock.Close()
+		t.Fatal(err)
+	}
+	unlock := func() {
+		_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+		_ = lock.Close()
+	}
+	defer unlock()
+	type snapshotResult struct {
+		latest     OperationStoredAttempt
+		found      bool
+		pending    []OperationStoredAttempt
+		err        error
+		pendingErr error
+	}
+	readDone := make(chan snapshotResult, 1)
+	go func() {
+		latest, latestFound, latestErr := store.LatestSnapshotContext(context.Background(), binding.SourceID, binding.OperationID)
+		pending, pendingErr := store.PendingDeliveriesSnapshotContext(context.Background(), binding.SourceID, binding.OperationID)
+		readDone <- snapshotResult{latest: latest, found: latestFound, pending: pending, err: latestErr, pendingErr: pendingErr}
+	}()
+	var snapshot snapshotResult
+	select {
+	case snapshot = <-readDone:
+	case <-time.After(250 * time.Millisecond):
+		unlock()
+		t.Fatal("read-only candidate snapshots waited for the writer flock")
+	}
+	if snapshot.err != nil || !snapshot.found || snapshot.latest.State != "observed" || snapshot.pendingErr != nil || len(snapshot.pending) != 1 || snapshot.pending[0].DeliveryState != "not_ready" {
+		t.Fatalf("lock-free snapshot did not return the complete validated state: latest=%#v found=%t pending=%#v errors=%v/%v", snapshot.latest, snapshot.found, snapshot.pending, snapshot.err, snapshot.pendingErr)
+	}
+	if snapshot.latest.Result == nil || snapshot.pending[0].Result == nil {
+		t.Fatal("snapshot lost the validated result payload")
+	}
+	snapshot.latest.Result.State = "mutated"
+	snapshot.pending[0].Result.Category = "mutated"
+	latest, found, err := store.LatestSnapshotContext(context.Background(), binding.SourceID, binding.OperationID)
+	if err != nil || !found || latest.Result == nil || latest.Result.State != "healthy" || latest.Result.Category != "healthy" {
+		t.Fatalf("snapshot mutation escaped into stored state: latest=%#v found=%t err=%v", latest, found, err)
+	}
+	unlock()
+
+	path := store.statePath(binding.SourceID, binding.OperationID)
+	writerStarted := make(chan struct{})
+	var writerStartedOnce sync.Once
+	writerDone := make(chan error, 1)
+	go func() {
+		for index := 0; index < 32; index++ {
+			stateName := "healthy"
+			category := "healthy"
+			if index%2 == 1 {
+				stateName = "unhealthy"
+				category = "provider_failure"
+			}
+			err := store.withStoreLock(func() error {
+				state, stateFound, err := store.readState(binding.SourceID, binding.OperationID)
+				if err != nil || !stateFound || len(state.Attempts) == 0 || state.Attempts[len(state.Attempts)-1].Result == nil {
+					return ErrOperationAttemptUnavailable
+				}
+				state.Attempts[len(state.Attempts)-1].Result.State = stateName
+				state.Attempts[len(state.Attempts)-1].Result.Category = category
+				state.Generation++
+				return store.writeState(state)
+			})
+			writerStartedOnce.Do(func() { close(writerStarted) })
+			if err != nil {
+				writerDone <- err
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+		writerDone <- nil
+	}()
+	<-writerStarted
+	concurrentReads := 0
+	writerComplete := false
+	var snapshotErr error
+	for !writerComplete && snapshotErr == nil {
+		select {
+		case err := <-writerDone:
+			writerComplete = true
+			snapshotErr = err
+		default:
+			latest, found, err := store.LatestSnapshotContext(context.Background(), binding.SourceID, binding.OperationID)
+			if err != nil || !found || latest.Result == nil {
+				snapshotErr = fmt.Errorf("atomic snapshot read failed during replacement: found=%t err=%v", found, err)
+			} else if !((latest.Result.State == "healthy" && latest.Result.Category == "healthy") || (latest.Result.State == "unhealthy" && latest.Result.Category == "provider_failure")) {
+				snapshotErr = fmt.Errorf("snapshot observed a partial state between atomic replacements: %#v", latest.Result)
+			} else {
+				concurrentReads++
+			}
+		}
+	}
+	if !writerComplete {
+		if err := <-writerDone; err != nil {
+			snapshotErr = errors.Join(snapshotErr, fmt.Errorf("atomically replace fixture state: %w", err))
+		}
+	} else if snapshotErr != nil {
+		snapshotErr = fmt.Errorf("atomically replace fixture state: %w", snapshotErr)
+	}
+	if snapshotErr != nil {
+		t.Fatal(snapshotErr)
+	}
+	if concurrentReads == 0 {
+		t.Fatal("atomic rename writer completed without an overlapping lock-free snapshot read")
+	}
+
+	validBytes, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, contents := range map[string][]byte{
+		"corrupt":        []byte("{"),
+		"wrong identity": []byte(strings.ReplaceAll(string(validBytes), `"source_id":"synthetic_test"`, `"source_id":"other_source"`)),
+		"oversized":      make([]byte, maxOperationAttemptStateBytes+1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := os.WriteFile(path, contents, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := store.LatestSnapshotContext(context.Background(), binding.SourceID, binding.OperationID); !errors.Is(err, ErrOperationAttemptUnavailable) {
+				t.Fatalf("snapshot accepted %s attempt state: %v", name, err)
+			}
+			if _, err := store.PendingDeliveriesSnapshotContext(context.Background(), binding.SourceID, binding.OperationID); !errors.Is(err, ErrOperationAttemptUnavailable) {
+				t.Fatalf("outbox snapshot accepted %s attempt state: %v", name, err)
+			}
+		})
+		if err := os.WriteFile(path, validBytes, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestOperationAttemptStaleSnapshotCandidatesRemainFencedByLockedMutations(t *testing.T) {
+	store, err := OpenOperationAttemptStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := testOperationAttemptBinding()
+	started := time.Date(2026, 10, 11, 13, 0, 0, 0, time.UTC)
+	first, err := store.BeginAttempt(binding, strings.Repeat("1", 64), started, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstFinished := started.Add(2 * time.Second)
+	if err := store.CompleteAttempt(first, OperationObservationResult{State: "healthy", Category: "healthy", ObservedAt: started.Add(time.Second), ReceiptSHA: strings.Repeat("2", 64), LatencyMS: 100}, firstFinished); err != nil {
+		t.Fatal(err)
+	}
+
+	dueAt := started.Add(binding.ObservationPeriod)
+	staleLatest, found, err := store.LatestSnapshotContext(context.Background(), binding.SourceID, binding.OperationID)
+	if err != nil || !found || staleLatest.Generation != first.Generation || !operationAttemptDueForBinding(staleLatest, binding, dueAt) {
+		t.Fatalf("fixture did not produce a due immutable candidate: latest=%#v found=%t err=%v", staleLatest, found, err)
+	}
+	staleDelivery, err := store.PendingDeliveriesSnapshotContext(context.Background(), binding.SourceID, binding.OperationID)
+	if err != nil || len(staleDelivery) != 1 || staleDelivery[0].Generation != first.Generation {
+		t.Fatalf("fixture did not produce an outbox candidate snapshot: pending=%#v err=%v", staleDelivery, err)
+	}
+
+	second, err := store.BeginAttempt(binding, strings.Repeat("3", 64), dueAt, time.Minute)
+	if err != nil {
+		t.Fatalf("locked attempt mutation rejected the due candidate: %v", err)
+	}
+	secondFinished := dueAt.Add(2 * time.Second)
+	if err := store.CompleteAttempt(second, OperationObservationResult{State: "unhealthy", Category: "provider_failure", ObservedAt: dueAt.Add(time.Second), ReceiptSHA: strings.Repeat("4", 64), LatencyMS: 120}, secondFinished); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BeginAttempt(binding, strings.Repeat("5", 64), dueAt, time.Minute); !errors.Is(err, ErrOperationAttemptNotDue) {
+		t.Fatalf("stale snapshot launched a duplicate provider attempt after a newer locked completion: %v", err)
+	}
+	latest, found, err := store.LatestSnapshotContext(context.Background(), binding.SourceID, binding.OperationID)
+	if err != nil || !found || latest.Generation != second.Generation || latest.AttemptID != second.AttemptID {
+		t.Fatalf("stale attempt candidate changed the authoritative generation: latest=%#v found=%t err=%v", latest, found, err)
+	}
+
+	delivery, err := store.ClaimDelivery(binding.SourceID, binding.OperationID, staleDelivery[0].AttemptID, staleDelivery[0].Generation, dueAt.Add(3*time.Second), time.Minute)
+	if err != nil {
+		t.Fatalf("current locked delivery claim rejected the exact older outbox row: %v", err)
+	}
+	ackAt := dueAt.Add(4 * time.Second)
+	if err := store.AcknowledgeDelivery(delivery, ackAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordGatusReadback(binding.SourceID, binding.OperationID, delivery.AttemptID, delivery.AttemptGeneration, ackAt.Add(time.Second), "healthy"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimDelivery(binding.SourceID, binding.OperationID, staleDelivery[0].AttemptID, staleDelivery[0].Generation, ackAt.Add(2*time.Second), time.Minute); !errors.Is(err, ErrOperationAttemptFenced) {
+		t.Fatalf("stale pending outbox candidate bypassed the locked readback fence: %v", err)
+	}
+	stored, found, err := store.GetAttempt(binding.SourceID, binding.OperationID, staleDelivery[0].AttemptID, staleDelivery[0].Generation)
+	if err != nil || !found || stored.DeliveryState != "readback_verified" || stored.DeliveryAttempts != 1 {
+		t.Fatalf("stale outbox candidate altered or duplicated the accepted delivery: %#v found=%t err=%v", stored, found, err)
 	}
 }
 

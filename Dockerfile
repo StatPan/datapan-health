@@ -7,6 +7,7 @@ ARG HF_IMAGE=python:3.13-slim-bookworm@sha256:fcbd8dfc2605ba7c2eca646846c5e892b2
 
 FROM --platform=$BUILDPLATFORM ${LIVE_GO_IMAGE} AS live-build
 ARG TARGETARCH
+ARG VCS_REF=unknown
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -17,7 +18,7 @@ COPY schemas ./schemas
 # The live processes must not pull archive's CGO/DuckDB or Python dependency
 # graph into their final image.
 RUN CGO_ENABLED=0 GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-runner ./cmd/health-runner \
- && CGO_ENABLED=0 GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-scheduler ./cmd/health-scheduler \
+ && CGO_ENABLED=0 GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags="-s -w -X main.healthBuildRevision=${VCS_REF}" -o /health-scheduler ./cmd/health-scheduler \
  && CGO_ENABLED=0 GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-public ./cmd/health-public \
  && CGO_ENABLED=0 GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-gatus-config ./cmd/health-gatus-config \
  && CGO_ENABLED=0 GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-runtime-dependencies ./cmd/health-runtime-dependencies \

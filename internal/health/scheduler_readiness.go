@@ -20,15 +20,16 @@ type CanaryProgress struct {
 }
 
 type SchedulerReadiness struct {
-	SchemaVersion      string           `json:"schema_version"`
-	Ready              bool             `json:"ready"`
-	State              string           `json:"state"`
-	Reason             string           `json:"reason"`
-	LastLoop           *time.Time       `json:"last_loop,omitempty"`
-	StateFailures      uint64           `json:"state_failures"`
-	Canaries           []CanaryProgress `json:"canaries"`
-	PublicReadback     string           `json:"public_readback"`
-	DeploymentIdentity string           `json:"deployment_identity"`
+	SchemaVersion      string                            `json:"schema_version"`
+	Ready              bool                              `json:"ready"`
+	State              string                            `json:"state"`
+	Reason             string                            `json:"reason"`
+	LastLoop           *time.Time                        `json:"last_loop,omitempty"`
+	StateFailures      uint64                            `json:"state_failures"`
+	Canaries           []CanaryProgress                  `json:"canaries"`
+	OperationPlan      *OperationPlanReadinessProjection `json:"operation_plan,omitempty"`
+	PublicReadback     string                            `json:"public_readback"`
+	DeploymentIdentity string                            `json:"deployment_identity"`
 }
 
 // Readiness is local progress evidence, deliberately distinct from immutable

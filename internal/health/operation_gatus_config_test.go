@@ -11,6 +11,28 @@ import (
 	"time"
 )
 
+func TestOperationGatusArtifactsRequireAnOrdinaryGatusExecutionTarget(t *testing.T) {
+	planRoot, binding, sourceSHA, operationIDs := writeGatusPlanFixture(t)
+	plan, err := LoadPinnedOperationObservationPlan(planRoot, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, canaries := gatusTestMetadata(sourceSHA, operationIDs)
+	base := []byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: receiver-only\n")
+	if gatusBaseHasExecutionTarget(base) {
+		t.Fatal("external receivers were incorrectly counted as a Gatus execution target")
+	}
+	if _, err := GenerateOperationGatusArtifacts(base, strings.Repeat("e", 64), canaries, metadata, &plan, nil, ""); err == nil {
+		t.Fatal("receiver-only base configuration was accepted even though pinned Gatus requires an endpoint or suite")
+	}
+	if gatusBaseHasExecutionTarget([]byte("endpoints: []\n")) {
+		t.Fatal("an empty standard endpoint list was accepted")
+	}
+	if !gatusBaseHasExecutionTarget([]byte("suites:\n  - name: local-suite\n    endpoints:\n      - name: local-health\n")) {
+		t.Fatal("a configured suite was not recognized as a Gatus execution target")
+	}
+}
+
 func TestOperationGatusArtifactsUseExactIdentityAndSuppressLegacyOverlap(t *testing.T) {
 	planRoot, binding, sourceSHA, operationIDs := writeGatusPlanFixture(t)
 	plan, err := LoadPinnedOperationObservationPlan(planRoot, binding)
@@ -37,7 +59,7 @@ func TestOperationGatusArtifactsUseExactIdentityAndSuppressLegacyOverlap(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := []byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\nexternal-endpoints:\n  - name: old-static-entry\n")
+	base := []byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: old-static-entry\n")
 	canarySHA := strings.Repeat("f", 64)
 	first, err := GenerateOperationGatusArtifacts(base, canarySHA, canaries, metadata, &plan, &activation, activationSHA)
 	if err != nil {
@@ -88,6 +110,74 @@ func TestOperationGatusArtifactsUseExactIdentityAndSuppressLegacyOverlap(t *test
 	}
 }
 
+func TestObservationOnlyGatusEndpointKeepsReceiverWithoutHeartbeatOrOutageAlert(t *testing.T) {
+	planRoot, binding, sourceSHA, operationIDs := writeGatusPlanFixtureWithObservationOnly(t, true)
+	plan, err := LoadPinnedOperationObservationPlan(planRoot, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, canaries := gatusTestMetadata(sourceSHA, operationIDs)
+	activationBytes, err := json.Marshal(OperationGatusActivation{
+		SchemaVersion:    OperationGatusActivationSchemaVersion,
+		RegistryRevision: plan.RegistryRevision(), IndexSHA256: plan.IndexSHA256(),
+		Operations: []OperationGatusActivationEntry{{SourceID: "data_go_kr", OperationID: operationIDs[0]}, {SourceID: "data_go_kr", OperationID: operationIDs[1]}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	activation, activationSHA, err := DecodeOperationGatusActivation(activationBytes, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := []byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: placeholder\n")
+	artifacts, err := GenerateOperationGatusArtifacts(base, strings.Repeat("e", 64), canaries, metadata, &plan, &activation, activationSHA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mapping OperationGatusIdentityMapping
+	if err := json.Unmarshal(artifacts.Mapping, &mapping); err != nil {
+		t.Fatal(err)
+	}
+	byID := make(map[string]OperationGatusIdentity, len(mapping.Operations))
+	for _, item := range mapping.Operations {
+		byID[item.RegistryOperationID] = item
+	}
+	observationOnly := byID[operationIDs[0]]
+	typed := byID[operationIDs[1]]
+	if observationOnly.ResponseAssertionKind != "observation_only" || !observationOnly.Active || !observationOnly.PlanActive || observationOnly.LegacyActive || typed.ResponseAssertionKind != "soap_fault_free" {
+		t.Fatalf("response assertion modes were not bound to exact target identities: observation=%#v typed=%#v", observationOnly, typed)
+	}
+	section := string(artifacts.Config[strings.Index(string(artifacts.Config), "external-endpoints:\n"):])
+	observationStart := strings.Index(section, "  - name: legacy-one\n")
+	if observationStart < 0 {
+		t.Fatal("observation-only receiver key/history was not retained")
+	}
+	observationEnd := strings.Index(section[observationStart+1:], "\n  - name:")
+	if observationEnd < 0 {
+		t.Fatal("typed external receiver was not emitted after the observation-only target")
+	}
+	observationSection := section[observationStart : observationStart+1+observationEnd]
+	if strings.Contains(observationSection, "heartbeat:") || strings.Contains(observationSection, "alerts:") || !strings.Contains(observationSection, "token:") {
+		t.Fatalf("observation-only target has a fabricated heartbeat/alert or lost its receiver: %s", observationSection)
+	}
+	typedStart := strings.Index(section, "  - name: registry-")
+	if typedStart < 0 || !strings.Contains(section[typedStart:], "heartbeat:") || !strings.Contains(section[typedStart:], "alerts:") {
+		t.Fatalf("typed assertion target lost its heartbeat or delivery alerts: %s", section[typedStart:])
+	}
+	if _, err := exactActivePlanTargets(plan, mapping); err != nil {
+		t.Fatalf("verified mode-bound map did not resolve active targets: %v", err)
+	}
+	for i := range mapping.Operations {
+		if mapping.Operations[i].RegistryOperationID == operationIDs[0] {
+			mapping.Operations[i].ResponseAssertionKind = "http_status"
+			break
+		}
+	}
+	if _, err := exactActivePlanTargets(plan, mapping); err == nil {
+		t.Fatal("runtime accepted an assertion mode changed independently of the immutable plan")
+	}
+}
+
 func TestOperationGatusInactivePlanKeepsLegacyTargetAndMapsStableKeys(t *testing.T) {
 	planRoot, binding, sourceSHA, operationIDs := writeGatusPlanFixture(t)
 	plan, err := LoadPinnedOperationObservationPlan(planRoot, binding)
@@ -103,7 +193,7 @@ func TestOperationGatusInactivePlanKeepsLegacyTargetAndMapsStableKeys(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := []byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: static\n")
+	base := []byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: static\n")
 	generated, err := GenerateOperationGatusArtifacts(base, strings.Repeat("e", 64), canaries, metadata, &plan, &activation, activationSHA)
 	if err != nil {
 		t.Fatal(err)
@@ -146,7 +236,7 @@ func TestOperationGatusActivationRejectsUnknownOrNoncanonicalTargets(t *testing.
 			t.Fatal(err)
 		}
 		metadata, canaries := gatusTestMetadata(sourceSHA, operationIDs)
-		_, err = GenerateOperationGatusArtifacts([]byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: static\n"), strings.Repeat("e", 64), canaries, metadata, &plan, &loaded, sha)
+		_, err = GenerateOperationGatusArtifacts([]byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: static\n"), strings.Repeat("e", 64), canaries, metadata, &plan, &loaded, sha)
 		if err == nil {
 			t.Fatal("unknown or unadmitted activation target was accepted")
 		}
@@ -172,7 +262,7 @@ func TestOperationGatusActivationDigestCannotBeReusedAfterMutation(t *testing.T)
 	}
 	activation.Operations[0].OperationID = operationIDs[1]
 	metadata, canaries := gatusTestMetadata(sourceSHA, operationIDs)
-	_, err = GenerateOperationGatusArtifacts([]byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: static\n"), strings.Repeat("e", 64), canaries, metadata, &plan, &activation, activationSHA)
+	_, err = GenerateOperationGatusArtifacts([]byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: static\n"), strings.Repeat("e", 64), canaries, metadata, &plan, &activation, activationSHA)
 	if err == nil {
 		t.Fatal("activation payload mutation was accepted under the original byte digest")
 	}
@@ -189,7 +279,7 @@ func TestOperationGatusRejectsDuplicateLegacyAndGeneratedReceiverKeys(t *testing
 			HealthOperationID: second.OperationID, RegistryAPIID: "api-1", RegistryOperationID: operationIDs[1], DatasetID: "api-1",
 			UpstreamOperationSeq: "2", OperationName: "Read", CLIOperationKey: strings.Repeat("a", 64),
 		}
-		_, err := GenerateOperationGatusArtifacts([]byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: static\n"), strings.Repeat("e", 64), canaries, metadata, nil, nil, "")
+		_, err := GenerateOperationGatusArtifacts([]byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: static\n"), strings.Repeat("e", 64), canaries, metadata, nil, nil, "")
 		if err == nil {
 			t.Fatal("two legacy identities were allowed to collapse onto one Gatus receiver key")
 		}
@@ -214,7 +304,7 @@ func TestOperationGatusRejectsDuplicateLegacyAndGeneratedReceiverKeys(t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = GenerateOperationGatusArtifacts([]byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: static\n"), strings.Repeat("e", 64), canaries, metadata, &plan, &activation, activationSHA)
+		_, err = GenerateOperationGatusArtifacts([]byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: static\n"), strings.Repeat("e", 64), canaries, metadata, &plan, &activation, activationSHA)
 		if err == nil {
 			t.Fatal("distinct legacy and Registry identities were allowed to share a Gatus receiver key")
 		}
@@ -238,7 +328,7 @@ func TestStableOperationGatusKeysRemainUniqueAcrossKnownScale(t *testing.T) {
 }
 
 func TestRenderOperationGatusConfigRejectsUnexpectedTopLevelAfterReceiverSection(t *testing.T) {
-	base := []byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: old\nnext-section:\n  key: value\n")
+	base := []byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: old\nnext-section:\n  key: value\n")
 	_, err := renderOperationGatusConfig(base, []operationGatusEndpoint{{key: "group_name", group: "group", name: "name", heartbeat: time.Minute}})
 	if err == nil {
 		t.Fatal("replacement silently discarded a following top-level Gatus section")
@@ -278,8 +368,24 @@ func hashOperationIDs(operationIDs []string) string {
 }
 
 func writeGatusPlanFixture(t *testing.T) (string, OperationObservationPlanBinding, string, []string) {
+	return writeGatusPlanFixtureWithObservationOnly(t, false)
+}
+
+func writeGatusPlanFixtureWithObservationOnly(t *testing.T, observationOnly bool) (string, OperationObservationPlanBinding, string, []string) {
+	return writeGatusPlanFixtureWithObservationPeriod(t, observationOnly, 3600)
+}
+
+func writeGatusPlanFixtureWithObservationPeriod(t *testing.T, observationOnly bool, observationPeriodSeconds int64) (string, OperationObservationPlanBinding, string, []string) {
+	return writeGatusPlanFixtureWithQuotaInterval(t, observationOnly, observationPeriodSeconds, -1)
+}
+
+func writeGatusPlanFixtureWithConcurrentQuota(t *testing.T, observationPeriodSeconds int64) (string, OperationObservationPlanBinding, string, []string) {
+	return writeGatusPlanFixtureWithQuotaInterval(t, false, observationPeriodSeconds, 0)
+}
+
+func writeGatusPlanFixtureWithQuotaInterval(t *testing.T, observationOnly bool, observationPeriodSeconds, credentialMinimumIntervalSeconds int64) (string, OperationObservationPlanBinding, string, []string) {
 	t.Helper()
-	root, binding, shardPath := writeSyntheticOperationObservationPlan(t, false)
+	root, binding, shardPath := writeSyntheticOperationObservationPlanVersion(t, false, strings.Repeat("a", 40), observationPeriodSeconds)
 	const oldSourcePath = "fixtures/operation-observation-plan/source.json"
 	const sourcePath = "data/data-go-kr.registry.json"
 	oldSource, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(oldSourcePath)))
@@ -315,9 +421,26 @@ func writeGatusPlanFixture(t *testing.T) (string, OperationObservationPlanBindin
 		}
 		requestContract := record["request_plan"].(map[string]any)["request_contract"].(map[string]any)
 		requestContract["transport"].(map[string]any)["authority"] = "operation_document"
+		if observationOnly && index == 0 {
+			assertion := requestContract["response_assertion"].(map[string]any)
+			assertion["kind"] = "observation_only"
+			assertion["empty_result_semantics"] = "not_applicable"
+			assertion["assertion_ref"] = "synthetic-observation-only"
+			delete(assertion, "expected_status_codes")
+		}
 		if index == 1 {
 			parameters := requestContract["parameters"].([]any)
 			parameters[0].(map[string]any)["qualified_name"] = map[string]any{"namespace": "urn:synthetic:request", "local_name": "RecordID"}
+		}
+		if credentialMinimumIntervalSeconds >= 0 {
+			runtimeBinding := record["runtime_binding"].(map[string]any)
+			quotaPolicies := runtimeBinding["quota_policies"].([]any)
+			for _, rawPolicy := range quotaPolicies {
+				policy := rawPolicy.(map[string]any)
+				if policy["scope_kind"] == "credential" {
+					policy["minimum_interval_seconds"] = credentialMinimumIntervalSeconds
+				}
+			}
 		}
 		rewriteGatusEvidence(record, oldSourcePath, sourcePath, sourceSHA, int64(len(oldSource)))
 		encoded, err := json.Marshal(record)
@@ -416,6 +539,9 @@ func rewriteGatusEvidence(node any, oldPath, newPath, sha string, size int64) {
 		for key, value := range typed {
 			if key == "artifact_path" && value == oldPath {
 				typed[key] = newPath
+				if _, ok := typed["sha256"]; ok {
+					typed["sha256"] = sha
+				}
 			}
 			if key == "evidence_kind" && value == "synthetic_fixture" {
 				typed[key] = "operation_document"

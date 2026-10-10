@@ -29,7 +29,7 @@ func TestVerifiedOperationPlanRuntimeRequiresExactGeneratedBundleAndBindsActiveT
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := []byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: placeholder\n")
+	base := []byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: placeholder\n")
 	canaryRaw := []byte("verified-canary-bytes-for-synthetic-fixture\n")
 	artifacts, err := GenerateOperationGatusArtifacts(base, digestOperationGatusBytes(canaryRaw), canaries, metadata, &plan, &activation, activationSHA)
 	if err != nil {
@@ -81,7 +81,7 @@ func TestVerifiedOperationPlanRuntimeRejectsActivationWithoutMatchingGeneratedBu
 		t.Fatal(err)
 	}
 	metadata, canaries := gatusTestMetadata(sourceSHA, operationIDs)
-	base := []byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: placeholder\n")
+	base := []byte("web:\n  port: 8080\nendpoints:\n  - name: local-health\n    url: http://127.0.0.1:8080/health\n    conditions:\n      - \"[STATUS] == 200\"\nexternal-endpoints:\n  - name: placeholder\n")
 	canaryRaw := []byte("verified-canary-bytes-for-synthetic-fixture\n")
 	artifacts, err := GenerateOperationGatusArtifacts(base, digestOperationGatusBytes(canaryRaw), canaries, metadata, &plan, nil, "")
 	if err != nil {

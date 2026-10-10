@@ -43,6 +43,10 @@ const (
 	operationAttemptReasonQuotaCapacity    = "quota_capacity"
 	operationAttemptReasonHistoryCapacity  = "history_capacity"
 	operationAttemptReasonChildUnavailable = "child_unavailable"
+	operationAttemptReasonQuotaWindowDrain = "quota_window_draining"
+	operationAttemptDeferredStageQuota     = "quota_acquire"
+	operationAttemptDeferredCategoryWindow = "window_draining"
+	operationAttemptDeferredRetryDelay     = 30 * time.Second
 )
 
 // OperationAttemptBinding is the immutable Registry identity chain for one
@@ -105,6 +109,8 @@ type OperationStoredAttempt struct {
 	ReceiptSHA256      string                      `json:"receipt_sha256,omitempty"`
 	RequestStarted     *bool                       `json:"request_started"`
 	BlockReason        string                      `json:"block_reason,omitempty"`
+	DeferredStage      string                      `json:"deferred_stage,omitempty"`
+	DeferredCategory   string                      `json:"deferred_category,omitempty"`
 	Result             *OperationObservationResult `json:"result,omitempty"`
 	DeliveryState      string                      `json:"delivery_state"`
 	DeliveryGeneration uint64                      `json:"delivery_generation"`
@@ -349,13 +355,19 @@ func operationAttemptFileStampAt(path string) (operationAttemptFileStamp, bool, 
 }
 
 func (store *OperationAttemptStore) BeginAttempt(binding OperationAttemptBinding, attemptID string, now time.Time, lease time.Duration) (OperationAttemptClaim, error) {
-	if store == nil || !validOperationAttemptBinding(binding) || !quotaAttemptIDPattern.MatchString(attemptID) || now.IsZero() || lease < time.Second || lease > maxOperationAttemptLease {
+	return store.BeginAttemptContext(context.Background(), binding, attemptID, now, lease)
+}
+
+// BeginAttemptContext bounds lock contention and state persistence to the
+// scheduler's pre-dispatch deadline.
+func (store *OperationAttemptStore) BeginAttemptContext(ctx context.Context, binding OperationAttemptBinding, attemptID string, now time.Time, lease time.Duration) (OperationAttemptClaim, error) {
+	if store == nil || ctx == nil || ctx.Err() != nil || !validOperationAttemptBinding(binding) || !quotaAttemptIDPattern.MatchString(attemptID) || now.IsZero() || lease < time.Second || lease > maxOperationAttemptLease {
 		return OperationAttemptClaim{}, ErrOperationAttemptUnavailable
 	}
 	now = now.UTC()
 	var claim OperationAttemptClaim
 	var resultErr error
-	if err := store.withStoreLock(func() error {
+	if err := store.withStoreLockContext(ctx, func() error {
 		state, found, err := store.readState(binding.SourceID, binding.OperationID)
 		if err != nil {
 			return err
@@ -378,12 +390,7 @@ func (store *OperationAttemptStore) BeginAttempt(binding OperationAttemptBinding
 				resultErr = ErrOperationAttemptAmbiguous
 				return nil
 			}
-			period := latest.Binding.ObservationPeriod
-			if binding.ObservationPeriod > period {
-				period = binding.ObservationPeriod
-			}
-			dueAt := latest.StartedAt.Add(period)
-			if now.Before(dueAt) {
+			if !operationAttemptDueForBinding(*latest, binding, now) {
 				return ErrOperationAttemptNotDue
 			}
 		}
@@ -417,14 +424,18 @@ func (store *OperationAttemptStore) BeginAttempt(binding OperationAttemptBinding
 }
 
 func (store *OperationAttemptStore) CompleteAttempt(claim OperationAttemptClaim, result OperationObservationResult, now time.Time) error {
-	if store == nil || !validOperationAttemptClaim(claim) || !validOperationObservationResult(result) || now.IsZero() {
+	return store.completeAttemptContext(context.Background(), claim, result, now)
+}
+
+func (store *OperationAttemptStore) completeAttemptContext(ctx context.Context, claim OperationAttemptClaim, result OperationObservationResult, now time.Time) error {
+	if store == nil || ctx == nil || ctx.Err() != nil || !validOperationAttemptClaim(claim) || !validOperationObservationResult(result) || now.IsZero() {
 		return ErrOperationAttemptUnavailable
 	}
 	if result.Category == "response_semantics_unestablished" && (!result.validatedHistoryRecord || result.HistoryRecordID == "" || !sha256Pattern.MatchString(result.HistoryRecordSHA256)) {
 		return ErrOperationAttemptUnavailable
 	}
 	now = now.UTC()
-	return store.transitionClaim(claim, now, func(state *operationAttemptState, attempt *OperationStoredAttempt) error {
+	return store.transitionClaimContext(ctx, claim, now, func(state *operationAttemptState, attempt *OperationStoredAttempt) error {
 		if !now.Before(attempt.LeaseExpiresAt) {
 			attempt.State = "unknown"
 			attempt.FinishedAt = now
@@ -466,15 +477,8 @@ func (store *OperationAttemptStore) CompleteAttempt(claim OperationAttemptClaim,
 // and requires the exact archive append reference before committing it to the
 // attempt ledger. A caller-supplied category string cannot bypass Gatus.
 func (store *OperationAttemptStore) CompleteAttemptFromValidatedHistory(ctx context.Context, claim OperationAttemptClaim, candidate OperationHistoryRecord, ref OperationHistoryRecordRef, validator OperationPlanProbeHistoryRecordValidator, now time.Time) error {
-	if store == nil || ctx == nil || ctx.Err() != nil || !validOperationAttemptClaim(claim) || validator == nil || now.IsZero() || ref.RecordID == "" || len(ref.RecordID) > 256 || ref.AppendedAt.IsZero() || ref.AppendedAt.After(now) {
-		return ErrOperationAttemptUnavailable
-	}
-	sealed, probeResult, err := validator.ValidateStoredOperationPlanProbeRecord(ctx, candidate)
-	if err != nil || sealed.Validate() != nil || !ref.MatchesValidatedRecord(sealed) || !sealed.Identity.MatchesOperationAttempt(claim) || !sealed.AttemptStartedAt.Equal(claim.StartedAt.UTC()) || sealed.ValidatedAt.After(ref.AppendedAt) {
-		return ErrOperationAttemptUnavailable
-	}
-	contentSHA, err := sealed.ContentSHA256()
-	if err != nil || ref.SHA256 != contentSHA {
+	sealed, probeResult, err := validateOperationAttemptHistoryResult(ctx, claim, candidate, ref, validator, now)
+	if err != nil {
 		return ErrOperationAttemptUnavailable
 	}
 	if !probeResult.RequestStarted || probeResult.ObservedAt.IsZero() {
@@ -492,7 +496,68 @@ func (store *OperationAttemptStore) CompleteAttemptFromValidatedHistory(ctx cont
 		ReceiptSHA: probeResult.ReceiptSHA256, LatencyMS: probeResult.Latency.Milliseconds(), HTTPStatus: probeResult.HTTPStatus,
 		HistoryRecordID: ref.RecordID, HistoryRecordSHA256: ref.SHA256, validatedHistoryRecord: true,
 	}
-	return store.CompleteAttempt(claim, result, now)
+	return store.completeAttemptContext(ctx, claim, result, now)
+}
+
+// RecordRequestStartedFromValidatedHistory records an ambiguous provider result
+// only after the exact safe receipt was revalidated and durably appended. It
+// never turns a request start into a provider response or success.
+func (store *OperationAttemptStore) RecordRequestStartedFromValidatedHistory(ctx context.Context, claim OperationAttemptClaim, candidate OperationHistoryRecord, ref OperationHistoryRecordRef, validator OperationPlanProbeHistoryRecordValidator, now time.Time) error {
+	if store == nil {
+		return ErrOperationAttemptUnavailable
+	}
+	_, probeResult, err := validateOperationAttemptHistoryResult(ctx, claim, candidate, ref, validator, now)
+	if err != nil || !probeResult.RequestStarted || !probeResult.ObservedAt.IsZero() || probeResult.Outcome != "indeterminate" {
+		return ErrOperationAttemptUnavailable
+	}
+	return store.recordRequestStartedWithoutObservationContext(ctx, claim, probeResult.ReceiptSHA256, now)
+}
+
+// RecordBlockedAttemptFromValidatedHistory accepts only a pinned child receipt
+// proving a local block before any provider request. The archive append proof
+// is required so this receipt remains recoverable after the small attempt ring
+// rotates.
+func (store *OperationAttemptStore) RecordBlockedAttemptFromValidatedHistory(ctx context.Context, claim OperationAttemptClaim, candidate OperationHistoryRecord, ref OperationHistoryRecordRef, validator OperationPlanProbeHistoryRecordValidator, now time.Time) error {
+	if store == nil {
+		return ErrOperationAttemptUnavailable
+	}
+	_, probeResult, err := validateOperationAttemptHistoryResult(ctx, claim, candidate, ref, validator, now)
+	if err != nil || probeResult.RequestStarted || !probeResult.ObservedAt.IsZero() || probeResult.Outcome != "blocked" {
+		return ErrOperationAttemptUnavailable
+	}
+	blockReason, ok := operationPlanProbeBlockedReason(probeResult.ReasonCode)
+	if !ok {
+		return ErrOperationAttemptUnavailable
+	}
+	return store.recordBlockedAttemptContext(ctx, claim, probeResult.ReceiptSHA256, blockReason, now)
+}
+
+func validateOperationAttemptHistoryResult(ctx context.Context, claim OperationAttemptClaim, candidate OperationHistoryRecord, ref OperationHistoryRecordRef, validator OperationPlanProbeHistoryRecordValidator, now time.Time) (OperationHistoryRecord, OperationPlanProbeResult, error) {
+	if ctx == nil || ctx.Err() != nil || !validOperationAttemptClaim(claim) || validator == nil || now.IsZero() || ref.RecordID == "" || len(ref.RecordID) > 256 || ref.AppendedAt.IsZero() || ref.AppendedAt.After(now) {
+		return OperationHistoryRecord{}, OperationPlanProbeResult{}, ErrOperationAttemptUnavailable
+	}
+	sealed, probeResult, err := validator.ValidateStoredOperationPlanProbeRecord(ctx, candidate)
+	if err != nil || sealed.Validate() != nil || !ref.MatchesValidatedRecord(sealed) || !sealed.Identity.MatchesOperationAttempt(claim) || !sealed.AttemptStartedAt.Equal(claim.StartedAt.UTC()) || sealed.ValidatedAt.After(ref.AppendedAt) || probeResult.ReceiptSHA256 != sealed.ReceiptSHA256 {
+		return OperationHistoryRecord{}, OperationPlanProbeResult{}, ErrOperationAttemptUnavailable
+	}
+	return sealed, probeResult, nil
+}
+
+func operationPlanProbeBlockedReason(reason string) (string, bool) {
+	switch reason {
+	case "credential_binding_unavailable", "credential_source_unavailable":
+		return "credential_unavailable", true
+	case "credential_binding_mismatch":
+		return "credential_mismatch", true
+	case "operation_plan_unsupported":
+		return "unsupported_contract", true
+	case "deadline_expired_before_request":
+		return "local_deadline", true
+	case "request_limit_exceeded":
+		return "child_validation_failed", true
+	default:
+		return "", false
+	}
 }
 
 func operationObservationClassification(result OperationPlanProbeResult) (string, string) {
@@ -521,11 +586,15 @@ func (identity OperationHistoryIdentity) MatchesOperationAttempt(claim Operation
 // RecordRequestStartedWithoutObservation records a validated child receipt
 // proving one provider request started when no provider response was observed.
 func (store *OperationAttemptStore) RecordRequestStartedWithoutObservation(claim OperationAttemptClaim, receiptSHA string, now time.Time) error {
-	if store == nil || !validOperationAttemptClaim(claim) || !sha256Pattern.MatchString(receiptSHA) || now.IsZero() {
+	return store.recordRequestStartedWithoutObservationContext(context.Background(), claim, receiptSHA, now)
+}
+
+func (store *OperationAttemptStore) recordRequestStartedWithoutObservationContext(ctx context.Context, claim OperationAttemptClaim, receiptSHA string, now time.Time) error {
+	if store == nil || ctx == nil || ctx.Err() != nil || !validOperationAttemptClaim(claim) || !sha256Pattern.MatchString(receiptSHA) || now.IsZero() {
 		return ErrOperationAttemptUnavailable
 	}
 	now = now.UTC()
-	return store.transitionClaim(claim, now, func(state *operationAttemptState, attempt *OperationStoredAttempt) error {
+	return store.transitionClaimContext(ctx, claim, now, func(state *operationAttemptState, attempt *OperationStoredAttempt) error {
 		if !now.Before(attempt.LeaseExpiresAt) {
 			attempt.State = "unknown"
 			attempt.FinishedAt = now
@@ -548,11 +617,15 @@ func (store *OperationAttemptStore) RecordRequestStartedWithoutObservation(claim
 // RecordBlockedAttempt persists a validated receipt proving no request was
 // dispatched. blockReason is a safe enum, never provider-controlled text.
 func (store *OperationAttemptStore) RecordBlockedAttempt(claim OperationAttemptClaim, receiptSHA, blockReason string, now time.Time) error {
-	if store == nil || !validOperationAttemptClaim(claim) || !sha256Pattern.MatchString(receiptSHA) || !validOperationAttemptBlockReason(blockReason) || now.IsZero() {
+	return store.recordBlockedAttemptContext(context.Background(), claim, receiptSHA, blockReason, now)
+}
+
+func (store *OperationAttemptStore) recordBlockedAttemptContext(ctx context.Context, claim OperationAttemptClaim, receiptSHA, blockReason string, now time.Time) error {
+	if store == nil || ctx == nil || ctx.Err() != nil || !validOperationAttemptClaim(claim) || !sha256Pattern.MatchString(receiptSHA) || !validOperationAttemptBlockReason(blockReason) || now.IsZero() {
 		return ErrOperationAttemptUnavailable
 	}
 	now = now.UTC()
-	return store.transitionClaim(claim, now, func(_ *operationAttemptState, attempt *OperationStoredAttempt) error {
+	return store.transitionClaimContext(ctx, claim, now, func(_ *operationAttemptState, attempt *OperationStoredAttempt) error {
 		if !now.Before(attempt.LeaseExpiresAt) {
 			attempt.State = "unknown"
 			attempt.FinishedAt = now
@@ -573,11 +646,19 @@ func (store *OperationAttemptStore) RecordBlockedAttempt(claim OperationAttemptC
 // durable claim but before invoking the CLI child. It carries no receipt and
 // proves only that this Health worker did not start the child request.
 func (store *OperationAttemptStore) RecordPreDispatchDeferred(claim OperationAttemptClaim, blockReason string, now time.Time) error {
-	if store == nil || !validOperationAttemptClaim(claim) || !validOperationAttemptDeferredReason(blockReason) || now.IsZero() {
+	return store.recordPreDispatchDeferredEvidenceContext(context.Background(), claim, blockReason, "", "", now)
+}
+
+func (store *OperationAttemptStore) recordPreDispatchDeferredContext(ctx context.Context, claim OperationAttemptClaim, blockReason string, now time.Time) error {
+	return store.recordPreDispatchDeferredEvidenceContext(ctx, claim, blockReason, "", "", now)
+}
+
+func (store *OperationAttemptStore) recordPreDispatchDeferredEvidenceContext(ctx context.Context, claim OperationAttemptClaim, blockReason, deferredStage, deferredCategory string, now time.Time) error {
+	if store == nil || ctx == nil || ctx.Err() != nil || !validOperationAttemptClaim(claim) || !validOperationAttemptDeferredReason(blockReason) || !validOperationAttemptDeferredEvidence(deferredStage, deferredCategory) || now.IsZero() {
 		return ErrOperationAttemptUnavailable
 	}
 	now = now.UTC()
-	return store.transitionClaim(claim, now, func(_ *operationAttemptState, attempt *OperationStoredAttempt) error {
+	return store.transitionClaimContext(ctx, claim, now, func(_ *operationAttemptState, attempt *OperationStoredAttempt) error {
 		if !now.Before(attempt.LeaseExpiresAt) {
 			attempt.State = "unknown"
 			attempt.FinishedAt = now
@@ -588,17 +669,68 @@ func (store *OperationAttemptStore) RecordPreDispatchDeferred(claim OperationAtt
 		attempt.ReceiptValidated = false
 		attempt.RequestStarted = &requestStarted
 		attempt.BlockReason = blockReason
+		attempt.DeferredStage = deferredStage
+		attempt.DeferredCategory = deferredCategory
 		attempt.FinishedAt = now
 		return nil
 	})
 }
 
+func operationAttemptDueForBinding(latest OperationStoredAttempt, binding OperationAttemptBinding, now time.Time) bool {
+	if now.IsZero() || latest.StartedAt.IsZero() || !validOperationAttemptBinding(binding) {
+		return false
+	}
+	if operationAttemptHasRetryableQuotaWindowDrain(latest, binding, now) {
+		return !now.Before(latest.FinishedAt.Add(operationAttemptDeferredRetryDelay))
+	}
+	period := latest.Binding.ObservationPeriod
+	if binding.ObservationPeriod > period {
+		period = binding.ObservationPeriod
+	}
+	return period > 0 && !now.Before(latest.StartedAt.Add(period))
+}
+
+func operationAttemptHasRetryableQuotaWindowDrain(latest OperationStoredAttempt, binding OperationAttemptBinding, now time.Time) bool {
+	return now.IsZero() == false && latest.Binding == binding && latest.State == "deferred" &&
+		latest.BlockReason == operationAttemptReasonQuotaWindowDrain &&
+		latest.DeferredStage == operationAttemptDeferredStageQuota &&
+		latest.DeferredCategory == operationAttemptDeferredCategoryWindow &&
+		latest.RequestStarted != nil && !*latest.RequestStarted && !latest.ReceiptValidated &&
+		latest.ReceiptSHA256 == "" && latest.Result == nil && latest.DeliveryState == "not_ready" &&
+		!latest.StartedAt.IsZero() && !latest.FinishedAt.IsZero() && !latest.FinishedAt.Before(latest.StartedAt) &&
+		!latest.LeaseExpiresAt.IsZero() && latest.FinishedAt.Before(latest.LeaseExpiresAt) && !latest.FinishedAt.After(now)
+}
+
+func validOperationAttemptDeferredEvidence(stage, category string) bool {
+	if stage == "" && category == "" {
+		return true // Older callers and stored records have no retry authority.
+	}
+	switch stage {
+	case "expectation", "history_reservation", operationAttemptDeferredStageQuota, "execution_deadline":
+	default:
+		return false
+	}
+	switch category {
+	case "validation", "capacity", "deadline", "lock", "io", "store_unavailable", "canceled", "unavailable", operationAttemptDeferredCategoryWindow, "policy_transition", "infeasible":
+	default:
+		return false
+	}
+	if category == "validation" && stage != "expectation" || category == "infeasible" && stage != "execution_deadline" || (category == operationAttemptDeferredCategoryWindow || category == "policy_transition") && stage != operationAttemptDeferredStageQuota {
+		return false
+	}
+	return true
+}
+
 func (store *OperationAttemptStore) FailAttempt(claim OperationAttemptClaim, now time.Time) error {
-	if store == nil || !validOperationAttemptClaim(claim) || now.IsZero() {
+	return store.failAttemptContext(context.Background(), claim, now)
+}
+
+func (store *OperationAttemptStore) failAttemptContext(ctx context.Context, claim OperationAttemptClaim, now time.Time) error {
+	if store == nil || ctx == nil || ctx.Err() != nil || !validOperationAttemptClaim(claim) || now.IsZero() {
 		return ErrOperationAttemptUnavailable
 	}
 	now = now.UTC()
-	return store.transitionClaim(claim, now, func(_ *operationAttemptState, attempt *OperationStoredAttempt) error {
+	return store.transitionClaimContext(ctx, claim, now, func(_ *operationAttemptState, attempt *OperationStoredAttempt) error {
 		attempt.State = "unknown"
 		attempt.FinishedAt = now
 		return nil
@@ -615,19 +747,25 @@ func validOperationAttemptBlockReason(value string) bool {
 }
 
 func validOperationAttemptDeferredReason(value string) bool {
-	return value == operationAttemptReasonQuotaCapacity || value == operationAttemptReasonHistoryCapacity || value == operationAttemptReasonChildUnavailable
+	return value == operationAttemptReasonQuotaCapacity || value == operationAttemptReasonHistoryCapacity || value == operationAttemptReasonChildUnavailable || value == operationAttemptReasonQuotaWindowDrain
 }
 
 // ClaimDelivery durably marks the summary pending before the HTTP request.
 // Reclaiming an expired pending delivery may create duplicate Gatus history;
 // it never repeats the provider operation.
 func (store *OperationAttemptStore) ClaimDelivery(sourceID, operationID, attemptID string, generation uint64, now time.Time, lease time.Duration) (OperationDeliveryClaim, error) {
-	if store == nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 || !quotaAttemptIDPattern.MatchString(attemptID) || generation == 0 || now.IsZero() || lease < time.Second || lease > maxOperationAttemptLease {
+	return store.ClaimDeliveryContext(context.Background(), sourceID, operationID, attemptID, generation, now, lease)
+}
+
+// ClaimDeliveryContext bounds outbox state mutation while waiting for the
+// shared filesystem lock. It never repeats the provider request.
+func (store *OperationAttemptStore) ClaimDeliveryContext(ctx context.Context, sourceID, operationID, attemptID string, generation uint64, now time.Time, lease time.Duration) (OperationDeliveryClaim, error) {
+	if store == nil || ctx == nil || ctx.Err() != nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 || !quotaAttemptIDPattern.MatchString(attemptID) || generation == 0 || now.IsZero() || lease < time.Second || lease > maxOperationAttemptLease {
 		return OperationDeliveryClaim{}, ErrOperationAttemptUnavailable
 	}
 	now = now.UTC()
 	var claim OperationDeliveryClaim
-	err := store.withStoreLock(func() error {
+	err := store.withStoreLockContext(ctx, func() error {
 		state, found, err := store.readState(sourceID, operationID)
 		if err != nil || !found {
 			return ErrOperationAttemptUnavailable
@@ -670,11 +808,15 @@ func (store *OperationAttemptStore) ClaimDelivery(sourceID, operationID, attempt
 }
 
 func (store *OperationAttemptStore) AcknowledgeDelivery(claim OperationDeliveryClaim, responseAt time.Time) error {
-	if store == nil || !validOperationDeliveryClaim(claim) || responseAt.IsZero() {
+	return store.AcknowledgeDeliveryContext(context.Background(), claim, responseAt)
+}
+
+func (store *OperationAttemptStore) AcknowledgeDeliveryContext(ctx context.Context, claim OperationDeliveryClaim, responseAt time.Time) error {
+	if store == nil || ctx == nil || ctx.Err() != nil || !validOperationDeliveryClaim(claim) || responseAt.IsZero() {
 		return ErrOperationAttemptUnavailable
 	}
 	responseAt = responseAt.UTC()
-	return store.withStoreLock(func() error {
+	return store.withStoreLockContext(ctx, func() error {
 		state, found, err := store.readState(claim.Binding.SourceID, claim.Binding.OperationID)
 		if err != nil || !found {
 			return ErrOperationAttemptUnavailable
@@ -693,11 +835,15 @@ func (store *OperationAttemptStore) AcknowledgeDelivery(claim OperationDeliveryC
 // RecordGatusReadback binds a per-key readback timestamp to a previously
 // accepted summary. It does not change the original provider observation time.
 func (store *OperationAttemptStore) RecordGatusReadback(sourceID, operationID, attemptID string, generation uint64, receivedAt time.Time, resultState string) error {
-	if store == nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || !quotaAttemptIDPattern.MatchString(attemptID) || generation == 0 || receivedAt.IsZero() || !validGatusResultState(resultState) {
+	return store.RecordGatusReadbackContext(context.Background(), sourceID, operationID, attemptID, generation, receivedAt, resultState)
+}
+
+func (store *OperationAttemptStore) RecordGatusReadbackContext(ctx context.Context, sourceID, operationID, attemptID string, generation uint64, receivedAt time.Time, resultState string) error {
+	if store == nil || ctx == nil || ctx.Err() != nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || !quotaAttemptIDPattern.MatchString(attemptID) || generation == 0 || receivedAt.IsZero() || !validGatusResultState(resultState) {
 		return ErrOperationAttemptUnavailable
 	}
 	receivedAt = receivedAt.UTC()
-	return store.withStoreLock(func() error {
+	return store.withStoreLockContext(ctx, func() error {
 		state, found, err := store.readState(sourceID, operationID)
 		if err != nil || !found {
 			return ErrOperationAttemptUnavailable
@@ -715,21 +861,127 @@ func (store *OperationAttemptStore) RecordGatusReadback(sourceID, operationID, a
 }
 
 func (store *OperationAttemptStore) Latest(sourceID, operationID string) (OperationStoredAttempt, bool, error) {
-	if store == nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 {
+	return store.LatestContext(context.Background(), sourceID, operationID)
+}
+
+// LatestSnapshotContext reads the last atomically replaced identity file
+// without taking the writer flock. Attempt state is written with an atomic
+// rename, so this returns either the previous complete state or the next
+// complete state. It is intended for bounded read-only readiness sweeps;
+// callers still need a finite context and must not treat a missing file as
+// evidence of a healthy observation.
+func (store *OperationAttemptStore) LatestSnapshotContext(ctx context.Context, sourceID, operationID string) (OperationStoredAttempt, bool, error) {
+	latest, _, found, _, err := store.LatestReadinessSnapshotContext(ctx, sourceID, operationID)
+	return latest, found, err
+}
+
+// LatestReadinessSnapshotContext returns the current attempt and newest
+// completed observation from the same atomically replaced identity file.
+// During an active claim the scheduler may continue to use a still-fresh
+// completed observation; terminal newer attempts are handled by the caller.
+func (store *OperationAttemptStore) LatestReadinessSnapshotContext(ctx context.Context, sourceID, operationID string) (latest, completed OperationStoredAttempt, latestFound, completedFound bool, err error) {
+	if store == nil || ctx == nil || ctx.Err() != nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 {
+		return OperationStoredAttempt{}, OperationStoredAttempt{}, false, false, ErrOperationAttemptUnavailable
+	}
+	state, found, err := store.readState(sourceID, operationID)
+	if err != nil || !found {
+		if ctx.Err() != nil {
+			return OperationStoredAttempt{}, OperationStoredAttempt{}, false, false, ErrOperationAttemptUnavailable
+		}
+		return OperationStoredAttempt{}, OperationStoredAttempt{}, false, false, err
+	}
+	if ctx.Err() != nil || len(state.Attempts) == 0 {
+		return OperationStoredAttempt{}, OperationStoredAttempt{}, false, false, ErrOperationAttemptUnavailable
+	}
+	latest = cloneOperationStoredAttempt(state.Attempts[len(state.Attempts)-1])
+	latestFound = true
+	for index := len(state.Attempts) - 1; index >= 0; index-- {
+		if state.Attempts[index].State == "observed" {
+			completed = cloneOperationStoredAttempt(state.Attempts[index])
+			completedFound = true
+			break
+		}
+	}
+	if ctx.Err() != nil {
+		return OperationStoredAttempt{}, OperationStoredAttempt{}, false, false, ErrOperationAttemptUnavailable
+	}
+	return latest, completed, latestFound, completedFound, nil
+}
+
+func cloneOperationStoredAttempt(attempt OperationStoredAttempt) OperationStoredAttempt {
+	if attempt.RequestStarted != nil {
+		requestStarted := *attempt.RequestStarted
+		attempt.RequestStarted = &requestStarted
+	}
+	if attempt.Result != nil {
+		result := *attempt.Result
+		attempt.Result = &result
+	}
+	return attempt
+}
+
+func (store *OperationAttemptStore) LatestContext(ctx context.Context, sourceID, operationID string) (OperationStoredAttempt, bool, error) {
+	if store == nil || ctx == nil || ctx.Err() != nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 {
 		return OperationStoredAttempt{}, false, ErrOperationAttemptUnavailable
 	}
 	var latest OperationStoredAttempt
 	var foundAttempt bool
-	err := store.withStoreLock(func() error {
+	err := store.withStoreLockContext(ctx, func() error {
 		state, found, err := store.readState(sourceID, operationID)
 		if err != nil || !found {
 			return err
 		}
 		latest = state.Attempts[len(state.Attempts)-1]
+		if latest.RequestStarted != nil {
+			requestStarted := *latest.RequestStarted
+			latest.RequestStarted = &requestStarted
+		}
+		if latest.Result != nil {
+			result := *latest.Result
+			latest.Result = &result
+		}
 		foundAttempt = true
 		return nil
 	})
 	return latest, foundAttempt, err
+}
+
+// GetAttempt returns one exact retained attempt without conflating it with the
+// latest provider attempt. Delivery and readback are independent outbox work:
+// a newer claim must not strand an older validated result. The returned value
+// is detached from the store's decoded state.
+func (store *OperationAttemptStore) GetAttempt(sourceID, operationID, attemptID string, generation uint64) (OperationStoredAttempt, bool, error) {
+	return store.GetAttemptContext(context.Background(), sourceID, operationID, attemptID, generation)
+}
+
+func (store *OperationAttemptStore) GetAttemptContext(ctx context.Context, sourceID, operationID, attemptID string, generation uint64) (OperationStoredAttempt, bool, error) {
+	if store == nil || ctx == nil || ctx.Err() != nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 || !quotaAttemptIDPattern.MatchString(attemptID) || generation == 0 {
+		return OperationStoredAttempt{}, false, ErrOperationAttemptUnavailable
+	}
+	var selected OperationStoredAttempt
+	var foundAttempt bool
+	err := store.withStoreLockContext(ctx, func() error {
+		state, found, err := store.readState(sourceID, operationID)
+		if err != nil || !found {
+			return err
+		}
+		attempt := findOperationAttempt(&state, attemptID, generation)
+		if attempt == nil {
+			return nil
+		}
+		selected = *attempt
+		if attempt.RequestStarted != nil {
+			requestStarted := *attempt.RequestStarted
+			selected.RequestStarted = &requestStarted
+		}
+		if attempt.Result != nil {
+			result := *attempt.Result
+			selected.Result = &result
+		}
+		foundAttempt = true
+		return nil
+	})
+	return selected, foundAttempt, err
 }
 
 // SnapshotReadModelAttempts returns one safe latest-state projection per
@@ -878,19 +1130,25 @@ func laterOperationAttemptTime(current time.Time, candidates ...time.Time) time.
 
 // PendingDeliveries returns the bounded per-operation outbox entries. It may
 // include receipts from older scheduled observations when Gatus is down; a
-// caller retries these independently from any new provider attempt.
+// caller retries these independently from any new provider attempt. An
+// acknowledged receipt is included for readback-only recovery; DeliverOne
+// will not push it again.
 func (store *OperationAttemptStore) PendingDeliveries(sourceID, operationID string) ([]OperationStoredAttempt, error) {
-	if store == nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 {
+	return store.PendingDeliveriesContext(context.Background(), sourceID, operationID)
+}
+
+func (store *OperationAttemptStore) PendingDeliveriesContext(ctx context.Context, sourceID, operationID string) ([]OperationStoredAttempt, error) {
+	if store == nil || ctx == nil || ctx.Err() != nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 {
 		return nil, ErrOperationAttemptUnavailable
 	}
 	var pending []OperationStoredAttempt
-	err := store.withStoreLock(func() error {
+	err := store.withStoreLockContext(ctx, func() error {
 		state, found, err := store.readState(sourceID, operationID)
 		if err != nil || !found {
 			return err
 		}
 		for _, attempt := range state.Attempts {
-			if attempt.State == "observed" && attempt.DeliveryState == "not_ready" || attempt.State == "observed" && attempt.DeliveryState == "pending" {
+			if attempt.State == "observed" && (attempt.DeliveryState == "not_ready" || attempt.DeliveryState == "pending" || attempt.DeliveryState == "acknowledged") {
 				pending = append(pending, attempt)
 			}
 		}
@@ -899,8 +1157,46 @@ func (store *OperationAttemptStore) PendingDeliveries(sourceID, operationID stri
 	return pending, err
 }
 
+// PendingDeliveriesSnapshotContext discovers bounded outbox candidates from
+// one validated atomic-rename snapshot without taking the writer flock. The
+// returned rows are stale candidates by design: DeliverOne re-reads the exact
+// attempt and its generation under the authoritative store lock before it
+// claims a push or performs readback.
+func (store *OperationAttemptStore) PendingDeliveriesSnapshotContext(ctx context.Context, sourceID, operationID string) ([]OperationStoredAttempt, error) {
+	if store == nil || ctx == nil || ctx.Err() != nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 {
+		return nil, ErrOperationAttemptUnavailable
+	}
+	state, found, err := store.readState(sourceID, operationID)
+	if err != nil || ctx.Err() != nil {
+		return nil, ErrOperationAttemptUnavailable
+	}
+	if !found {
+		return nil, nil
+	}
+	pending := make([]OperationStoredAttempt, 0, len(state.Attempts))
+	for _, attempt := range state.Attempts {
+		if ctx.Err() != nil {
+			return nil, ErrOperationAttemptUnavailable
+		}
+		if attempt.State == "observed" && (attempt.DeliveryState == "not_ready" || attempt.DeliveryState == "pending" || attempt.DeliveryState == "acknowledged") {
+			pending = append(pending, cloneOperationStoredAttempt(attempt))
+		}
+	}
+	if ctx.Err() != nil {
+		return nil, ErrOperationAttemptUnavailable
+	}
+	return pending, nil
+}
+
 func (store *OperationAttemptStore) transitionClaim(claim OperationAttemptClaim, now time.Time, apply func(*operationAttemptState, *OperationStoredAttempt) error) error {
-	return store.withStoreLock(func() error {
+	return store.transitionClaimContext(context.Background(), claim, now, apply)
+}
+
+func (store *OperationAttemptStore) transitionClaimContext(ctx context.Context, claim OperationAttemptClaim, now time.Time, apply func(*operationAttemptState, *OperationStoredAttempt) error) error {
+	if ctx == nil || ctx.Err() != nil {
+		return ErrOperationAttemptUnavailable
+	}
+	return store.withStoreLockContext(ctx, func() error {
 		state, found, err := store.readState(claim.Binding.SourceID, claim.Binding.OperationID)
 		if err != nil || !found {
 			return ErrOperationAttemptUnavailable
@@ -979,7 +1275,11 @@ func (store *OperationAttemptStore) writeState(state operationAttemptState) erro
 }
 
 func (store *OperationAttemptStore) withStoreLock(apply func() error) error {
-	if store == nil || store.readOnly {
+	return store.withStoreLockContext(context.Background(), apply)
+}
+
+func (store *OperationAttemptStore) withStoreLockContext(ctx context.Context, apply func() error) error {
+	if store == nil || store.readOnly || ctx == nil || ctx.Err() != nil {
 		return ErrOperationAttemptUnavailable
 	}
 	lock, err := os.OpenFile(filepath.Join(store.root, ".operation-attempt.lock"), os.O_CREATE|os.O_RDWR, 0o600)
@@ -987,7 +1287,7 @@ func (store *OperationAttemptStore) withStoreLock(apply func() error) error {
 		return ErrOperationAttemptUnavailable
 	}
 	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+	if err := flockExclusiveContext(ctx, lock); err != nil {
 		return ErrOperationAttemptUnavailable
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
@@ -1050,7 +1350,7 @@ func validOperationAttemptState(state operationAttemptState, sourceID, operation
 		}
 		previousGeneration = attempt.Generation
 		if attempt.State == "claimed" {
-			if !attempt.FinishedAt.IsZero() || attempt.DeliveryState != "not_ready" || attempt.ReceiptValidated || attempt.RequestStarted != nil || attempt.Result != nil || attempt.ReceiptSHA256 != "" || attempt.BlockReason != "" {
+			if !attempt.FinishedAt.IsZero() || attempt.DeliveryState != "not_ready" || attempt.ReceiptValidated || attempt.RequestStarted != nil || attempt.Result != nil || attempt.ReceiptSHA256 != "" || attempt.BlockReason != "" || attempt.DeferredStage != "" || attempt.DeferredCategory != "" {
 				return false
 			}
 		} else if attempt.FinishedAt.IsZero() || attempt.FinishedAt.Before(attempt.StartedAt) {
@@ -1058,23 +1358,23 @@ func validOperationAttemptState(state operationAttemptState, sourceID, operation
 		}
 		switch attempt.State {
 		case "observed":
-			if attempt.Result == nil || !validOperationObservationResult(*attempt.Result) || attempt.Result.ReceivedAt.IsZero() || attempt.FinishedAt.Before(attempt.Result.ReceivedAt) || !attempt.ReceiptValidated || attempt.RequestStarted == nil || !*attempt.RequestStarted || attempt.ReceiptSHA256 != attempt.Result.ReceiptSHA || attempt.BlockReason != "" {
+			if attempt.Result == nil || !validOperationObservationResult(*attempt.Result) || attempt.Result.ReceivedAt.IsZero() || attempt.FinishedAt.Before(attempt.Result.ReceivedAt) || !attempt.ReceiptValidated || attempt.RequestStarted == nil || !*attempt.RequestStarted || attempt.ReceiptSHA256 != attempt.Result.ReceiptSHA || attempt.BlockReason != "" || attempt.DeferredStage != "" || attempt.DeferredCategory != "" {
 				return false
 			}
 		case "request_started":
-			if attempt.Result != nil || !attempt.ReceiptValidated || attempt.RequestStarted == nil || !*attempt.RequestStarted || !sha256Pattern.MatchString(attempt.ReceiptSHA256) || attempt.BlockReason != "" {
+			if attempt.Result != nil || !attempt.ReceiptValidated || attempt.RequestStarted == nil || !*attempt.RequestStarted || !sha256Pattern.MatchString(attempt.ReceiptSHA256) || attempt.BlockReason != "" || attempt.DeferredStage != "" || attempt.DeferredCategory != "" {
 				return false
 			}
 		case "failed":
-			if attempt.Result != nil || !attempt.ReceiptValidated || attempt.RequestStarted == nil || *attempt.RequestStarted || !sha256Pattern.MatchString(attempt.ReceiptSHA256) || !validOperationAttemptBlockReason(attempt.BlockReason) {
+			if attempt.Result != nil || !attempt.ReceiptValidated || attempt.RequestStarted == nil || *attempt.RequestStarted || !sha256Pattern.MatchString(attempt.ReceiptSHA256) || !validOperationAttemptBlockReason(attempt.BlockReason) || attempt.DeferredStage != "" || attempt.DeferredCategory != "" {
 				return false
 			}
 		case "deferred":
-			if attempt.Result != nil || attempt.ReceiptValidated || attempt.RequestStarted == nil || *attempt.RequestStarted || attempt.ReceiptSHA256 != "" || !validOperationAttemptDeferredReason(attempt.BlockReason) || attempt.DeliveryState != "not_ready" {
+			if attempt.Result != nil || attempt.ReceiptValidated || attempt.RequestStarted == nil || *attempt.RequestStarted || attempt.ReceiptSHA256 != "" || !validOperationAttemptDeferredReason(attempt.BlockReason) || !validOperationAttemptDeferredEvidence(attempt.DeferredStage, attempt.DeferredCategory) || attempt.DeliveryState != "not_ready" {
 				return false
 			}
 		case "unknown":
-			if attempt.Result != nil || attempt.ReceiptValidated || attempt.RequestStarted != nil || attempt.ReceiptSHA256 != "" || attempt.BlockReason != "" || attempt.DeliveryState != "not_ready" {
+			if attempt.Result != nil || attempt.ReceiptValidated || attempt.RequestStarted != nil || attempt.ReceiptSHA256 != "" || attempt.BlockReason != "" || attempt.DeferredStage != "" || attempt.DeferredCategory != "" || attempt.DeliveryState != "not_ready" {
 				return false
 			}
 		}
