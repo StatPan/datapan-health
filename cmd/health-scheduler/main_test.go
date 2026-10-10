@@ -126,16 +126,19 @@ func TestOperationPlanReadinessIsSeparateAndDisabledDefaultDoesNotChangeLegacyCa
 
 func TestOperationPlanCLISourcePinAcceptsOnlyReviewedEquivalentSources(t *testing.T) {
 	for _, sourceSHA := range []string{
-		"acf060e71e2329b6a04ad4ab0abf669fbbfe9dac",
-		"668efcb5254df2bc4bcaac9ef405d1bfaea1a0d9",
+		"d4226321c1a4c6c7aa091753dc6f03f4ab04cddd",
+		"1153f733b1cf45e73c953bb9091322b23f08eeb0",
 	} {
 		if !operationPlanCLISourceAllowed(sourceSHA) {
 			t.Errorf("reviewed CLI source SHA %q was rejected", sourceSHA)
 		}
 	}
 	for _, sourceSHA := range []string{
-		"acf060e71e2329b6a04ad4ab0abf669fbbfe9da0",     // one-character near match
+		"acf060e71e2329b6a04ad4ab0abf669fbbfe9dac",     // before source-qualified plan selection
+		"668efcb5254df2bc4bcaac9ef405d1bfaea1a0d9",     // reviewed before source-qualified plan selection
+		"d4226321c1a4c6c7aa091753dc6f03f4ab04cddf",     // one-character near match
 		"1111111111111111111111111111111111111111",     // arbitrary full-length SHA
+		"1153f733b1cf45e73c953bb9091322b23f08eeb",      // truncated reviewed SHA
 		"668efcb5254df2bc4bcaac9ef405d1bfaea1a0d"[:39], // truncated SHA
 		"89d1164ac8c910e18e50fc1c3a3961977c4d4f2e",     // pre-fix merged CLI source
 		"752e995c1fc030e139cac90e3796e69884365383",     // pre-fix reviewed CLI source
