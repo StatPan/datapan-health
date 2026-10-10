@@ -127,6 +127,12 @@ func (s *SchedulerHealthSelfReadinessSource) Snapshot(ctx context.Context) (Heal
 	var validUntil *time.Time
 	if report.Ready {
 		validUntil = readinessValidUntil(report, s.canaries)
+		if report.OperationPlan != nil && report.OperationPlan.LastPassAt != nil {
+			value := report.OperationPlan.LastPassAt.Add(3 * time.Second).UTC()
+			if validUntil == nil || value.Before(*validUntil) {
+				validUntil = &value
+			}
+		}
 		if report.OperationPlan != nil && report.OperationPlan.EvidenceValidUntil != nil && (validUntil == nil || report.OperationPlan.EvidenceValidUntil.Before(*validUntil)) {
 			value := report.OperationPlan.EvidenceValidUntil.UTC()
 			validUntil = &value

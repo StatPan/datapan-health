@@ -151,7 +151,7 @@ func TestSchedulerHealthSelfReadinessUsesVerifiedOwnershipForTransferredCanaries
 		t.Fatalf("validReport rejected fixture projection: binding=%+v projection=%+v canaries=%+v", binding, base.OperationPlan, base.Canaries)
 	}
 	value, err := source.Snapshot(context.Background())
-	if err != nil || !value.Ready || value.ValidUntil == nil || !value.ValidUntil.Equal(base.LastLoop.Add(schedulerLoopMaxAge)) {
+	if err != nil || !value.Ready || value.ValidUntil == nil || !value.ValidUntil.Equal(lastPass.Add(3*time.Second)) {
 		t.Fatalf("all-transferred-canary report did not preserve the exact plan evidence boundary: value=%+v err=%v", value, err)
 	}
 
@@ -207,6 +207,63 @@ func TestSchedulerHealthSelfReadinessUsesVerifiedOwnershipForTransferredCanaries
 	wrongConfig.Canaries[0].OperationID = "dpr-op-99999999"
 	if _, err := NewSchedulerHealthSelfReadinessSourceWithOperationPlanBinding("http://scheduler:8081/status", wrongConfig, time.Second, binding); err == nil {
 		t.Fatal("binding accepted a different original canary identity set")
+	}
+}
+
+func TestSchedulerHealthSelfReadinessCacheExpiresAtPlanPassFreshness(t *testing.T) {
+	binding, config := selfReadinessOperationPlanBindingFixture(t, true, false)
+	now := time.Now().UTC().Truncate(time.Second)
+	var clockMu sync.Mutex
+	clock := now
+	currentTime := func() time.Time { clockMu.Lock(); defer clockMu.Unlock(); return clock }
+	setTime := func(value time.Time) { clockMu.Lock(); clock = value; clockMu.Unlock() }
+	report := readySelfReadinessDocument(t, config, now)
+	report.Canaries = []CanaryProgress{}
+	lastPass, sweep, evidenceValidUntil := now.Add(-2900*time.Millisecond), now.Add(-3*time.Second), now.Add(time.Minute)
+	report.OperationPlan = &OperationPlanReadinessProjection{
+		SchemaVersion: "datapan.health-operation-plan-readiness.v1", Ready: true,
+		RegistryRevision: binding.registryRevision, ReleaseManifestSHA256: binding.releaseManifestSHA256,
+		IndexSHA256: binding.indexSHA256, ActivationSHA256: binding.activationSHA256,
+		CanaryConfigSHA256: binding.canaryConfigSHA256, IdentityMappingSHA256: binding.identityMappingSHA256,
+		RuntimePinSHA256: binding.runtimePinSHA256,
+		KnownOperations:  binding.knownOperations, AdmittedOperations: binding.admitted,
+		CapacityFeasible: true, LastPassAt: &lastPass, EvidenceSweepAt: &sweep,
+		EvidenceCheckedOperations: binding.admitted, EvidenceCurrentOperations: binding.admitted,
+		EvidenceValidUntil: &evidenceValidUntil, SuppressedLegacyCanaries: append([]string(nil), binding.suppressed...),
+	}
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(encoded)
+	}))
+	defer server.Close()
+	source, err := NewSchedulerHealthSelfReadinessSourceWithOperationPlanBinding(server.URL+"/status", config, time.Second, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.now = currentTime
+	cached, err := NewCachedHealthSelfReadinessSource(source, 30*time.Second, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cached.now = currentTime
+	value, err := cached.Snapshot(context.Background())
+	expectedExpiry := lastPass.Add(3 * time.Second)
+	if err != nil || !value.Ready || value.ValidUntil == nil || !value.ValidUntil.Equal(expectedExpiry) {
+		t.Fatalf("cached plan readiness omitted the pass freshness boundary: value=%+v err=%v", value, err)
+	}
+	setTime(expectedExpiry.Add(time.Millisecond))
+	if value, err := cached.Snapshot(context.Background()); err == nil || value.Ready || err.Error() != errHealthSelfReadinessUnavailable.Error() {
+		t.Fatalf("cache served plan readiness beyond the pass freshness boundary: value=%+v err=%v", value, err)
+	}
+	if requests.Load() != 2 {
+		t.Fatalf("expired plan cache did not refresh from the source: requests=%d", requests.Load())
 	}
 }
 

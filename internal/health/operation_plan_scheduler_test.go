@@ -97,6 +97,42 @@ func TestOperationPlanWorkerOwnsAnImmutableVerifiedRuntimeSnapshot(t *testing.T)
 	}
 }
 
+func TestOperationPlanWorkerRuntimeIdentitySealBindsEveryField(t *testing.T) {
+	worker, _, _, _, _, _ := newOperationPlanSchedulerTestWorker(t)
+	base := worker.runtimeIdentity
+	baseSeal := operationPlanWorkerRuntimeIdentitySeal(base)
+	if baseSeal == "" {
+		t.Fatal("valid worker runtime identity did not produce a seal")
+	}
+	mutations := []struct {
+		name   string
+		mutate func(*operationPlanWorkerRuntimeIdentity)
+	}{
+		{"verification seal", func(v *operationPlanWorkerRuntimeIdentity) { v.verificationSeal = strings.Repeat("f", 64) }},
+		{"registry revision", func(v *operationPlanWorkerRuntimeIdentity) { v.registryRevision += "-changed" }},
+		{"release manifest", func(v *operationPlanWorkerRuntimeIdentity) { v.releaseManifestSHA256 = strings.Repeat("f", 64) }},
+		{"index", func(v *operationPlanWorkerRuntimeIdentity) { v.indexSHA256 = strings.Repeat("f", 64) }},
+		{"activation", func(v *operationPlanWorkerRuntimeIdentity) { v.activationSHA256 = strings.Repeat("f", 64) }},
+		{"canary config", func(v *operationPlanWorkerRuntimeIdentity) { v.canaryConfigSHA256 = strings.Repeat("f", 64) }},
+		{"identity mapping", func(v *operationPlanWorkerRuntimeIdentity) { v.identityMappingSHA256 = strings.Repeat("f", 64) }},
+		{"runtime pin", func(v *operationPlanWorkerRuntimeIdentity) { v.runtimePinSHA256 = strings.Repeat("f", 64) }},
+		{"known count", func(v *operationPlanWorkerRuntimeIdentity) { v.knownOperations++ }},
+		{"admitted count", func(v *operationPlanWorkerRuntimeIdentity) { v.admittedOperations-- }},
+		{"suppressed identities", func(v *operationPlanWorkerRuntimeIdentity) { v.suppressedLegacy = []string{"dpr-op-99999999"} }},
+	}
+	for _, test := range mutations {
+		t.Run(test.name, func(t *testing.T) {
+			mutated := base
+			mutated.suppressedLegacy = append([]string(nil), base.suppressedLegacy...)
+			test.mutate(&mutated)
+			mutatedSeal := operationPlanWorkerRuntimeIdentitySeal(mutated)
+			if mutatedSeal == "" || mutatedSeal == baseSeal {
+				t.Fatalf("valid identity mutation did not produce a distinct seal: %q", mutatedSeal)
+			}
+		})
+	}
+}
+
 func BenchmarkOperationPlanSchedulerStatusPopulation(b *testing.B) {
 	for _, population := range []int{1, 12666} {
 		b.Run(fmt.Sprintf("admitted=%d", population), func(b *testing.B) {

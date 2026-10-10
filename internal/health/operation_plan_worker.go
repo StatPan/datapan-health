@@ -321,7 +321,27 @@ func operationPlanWorkerRuntimeIdentitySeal(identity operationPlanWorkerRuntimeI
 		len(identity.suppressedLegacy) > 100 || !isSortedUniqueOperationPlanIDs(identity.suppressedLegacy) {
 		return ""
 	}
-	raw, err := json.Marshal(identity)
+	wire := struct {
+		VerificationSeal      string   `json:"verification_seal"`
+		RegistryRevision      string   `json:"registry_revision"`
+		ReleaseManifestSHA256 string   `json:"release_manifest_sha256"`
+		IndexSHA256           string   `json:"index_sha256"`
+		ActivationSHA256      string   `json:"activation_sha256"`
+		CanaryConfigSHA256    string   `json:"canary_config_sha256"`
+		IdentityMappingSHA256 string   `json:"identity_mapping_sha256"`
+		RuntimePinSHA256      string   `json:"runtime_pin_sha256"`
+		KnownOperations       int      `json:"known_operations"`
+		AdmittedOperations    int      `json:"admitted_operations"`
+		SuppressedLegacy      []string `json:"suppressed_legacy"`
+	}{
+		VerificationSeal: identity.verificationSeal, RegistryRevision: identity.registryRevision,
+		ReleaseManifestSHA256: identity.releaseManifestSHA256, IndexSHA256: identity.indexSHA256,
+		ActivationSHA256: identity.activationSHA256, CanaryConfigSHA256: identity.canaryConfigSHA256,
+		IdentityMappingSHA256: identity.identityMappingSHA256, RuntimePinSHA256: identity.runtimePinSHA256,
+		KnownOperations: identity.knownOperations, AdmittedOperations: identity.admittedOperations,
+		SuppressedLegacy: identity.suppressedLegacy,
+	}
+	raw, err := json.Marshal(wire)
 	if err != nil || len(raw) == 0 {
 		return ""
 	}
