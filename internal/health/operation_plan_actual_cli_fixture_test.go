@@ -12,19 +12,24 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/StatPan/datapan-health/internal/runtimebundle"
 	"github.com/StatPan/datapan-health/schemas"
 )
 
 const (
-	actualCLIPolicyPath         = "p.json"
-	actualCLIRuntimeBindingPath = "r.json"
-	actualCLISourceCapturePath  = "c.txt"
-	actualCLIAssertionPrefix    = "e/a/"
-	actualCLIDocumentPrefix     = "e/d/"
-	actualCLIFixtureProviderIP  = "45.77.0.2"
-	actualCLIFixturePort        = 8080
+	actualCLIPolicyPath                      = "p.json"
+	actualCLIRuntimeBindingPath              = "r.json"
+	actualCLISourceCapturePath               = "c.txt"
+	actualCLIAssertionPrefix                 = "e/a/"
+	actualCLIDocumentPrefix                  = "e/d/"
+	actualCLIFixtureProviderIP               = "45.77.0.2"
+	actualCLIFixturePort                     = 8080
+	actualCLIFixtureRequestTimeoutMS         = int64(1000)
+	actualCLIFixtureProcessOverheadSeconds   = int64(5)
+	actualCLIFixtureConcurrencyLimit         = int64(8)
+	actualCLIFixtureObservationPeriodSeconds = int64(14400)
 )
 
 const actualCLIFixtureTimestamp = "2026-10-10T00:00:00Z"
@@ -207,8 +212,17 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 	addArtifact(actualCLISourceCapturePath, "source", "text/plain", captureRaw)
 	captureSHA := digest(captureRaw)
 	runtimeRaw, err := json.Marshal(map[string]any{
-		"schema_version":           "datapan.health-actual-cli-synthetic-runtime-binding.v1",
-		"fixture_scope":            "synthetic local source-QA only",
+		"schema_version": "datapan.health-actual-cli-synthetic-runtime-binding.v1",
+		"fixture_scope":  "synthetic local source-QA only",
+		"reviewed_observation_period": map[string]any{
+			"observation_period_seconds": actualCLIFixtureObservationPeriodSeconds,
+			"scope":                      "closed_synthetic_local_source_qa_fixture_only",
+			"review": map[string]any{
+				"review_ref":  "https://example.invalid/synthetic-local-source-qa",
+				"reviewed_by": "Datapan Health synthetic fixture",
+				"rationale":   "The 14,400-second fixture window fits the full local QA population at one-second request timeout plus five-second process overhead; this is not provider policy.",
+			},
+		},
 		"synthetic_global_quota":   map[string]any{"scope_kind": "global", "scope_key": "actual-cli-synthetic-full-population", "max_concurrent": 32, "requests_per_window": 1000000, "window_seconds": 600, "minimum_interval_seconds": 0},
 		"synthetic_provider_quota": map[string]any{"scope_kind": "provider", "scope_key": "provider-local-source-qa-only", "max_concurrent": 32, "requests_per_window": 1000000, "window_seconds": 600, "minimum_interval_seconds": 0},
 	})
@@ -406,7 +420,7 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 				"parameter_inventory_evidence_refs": []operationPlanEvidenceRef{docRef(doc, "#/parameters")},
 				"parameters":                        []any{},
 				"authentication":                    map[string]any{"requirement": "none", "mechanism": "none", "placement": "none", "credential_reference_required": false, "evidence_refs": []operationPlanEvidenceRef{policyRef(profile, "selector/authentication")}},
-				"limits":                            map[string]any{"request_budget": 1, "timeout_ms": 1000, "max_request_bytes": 4096, "max_response_bytes": 16384, "evidence_refs": []operationPlanEvidenceRef{policyRef(profile, "request/limits")}},
+				"limits":                            map[string]any{"request_budget": 1, "timeout_ms": actualCLIFixtureRequestTimeoutMS, "max_request_bytes": 4096, "max_response_bytes": 16384, "evidence_refs": []operationPlanEvidenceRef{policyRef(profile, "request/limits")}},
 				"response_assertion":                responseAssertion,
 			}
 			quotaEvidence := []operationPlanEvidenceRef{runtimeRef("#/synthetic_global_quota")}
@@ -423,7 +437,7 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 				"source_binding":     map[string]any{"source_id": identity.SourceID, "provider": identity.Provider, "adapter_id": identity.AdapterID, "inventory_status": identity.InventoryStatus, "inventory_unknown": identity.InventoryUnknown, "test_only": false},
 				"operation_identity": operationIdentity,
 				"request_plan":       map[string]any{"status": "complete", "evidence_refs": profileEvidence, "request_contract": contract},
-				"runtime_binding": map[string]any{"status": "bound", "observation_period_seconds": 3600, "evidence_refs": []operationPlanEvidenceRef{runtimeRef("#/fixture_scope")}, "quota_policies": []any{
+				"runtime_binding": map[string]any{"status": "bound", "observation_period_seconds": actualCLIFixtureObservationPeriodSeconds, "evidence_refs": []operationPlanEvidenceRef{runtimeRef("#/reviewed_observation_period")}, "quota_policies": []any{
 					map[string]any{"scope_kind": "global", "scope_key": globalQuotaKey, "scope_sha256": globalQuotaSHA, "max_concurrent": 32, "requests_per_window": 1000000, "window_seconds": int64(600), "minimum_interval_seconds": int64(0), "evidence_refs": quotaEvidence},
 					map[string]any{"scope_kind": "provider", "scope_key": providerQuotaKey, "scope_sha256": providerQuotaSHA, "max_concurrent": 32, "requests_per_window": 1000000, "window_seconds": int64(600), "minimum_interval_seconds": int64(0), "evidence_refs": quotaProviderEvidence},
 				}},
@@ -539,11 +553,21 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 		}
 		for _, record := range records {
 			transportCounts[record.Protocol]++
+			if record.ObservationPeriod != time.Duration(actualCLIFixtureObservationPeriodSeconds)*time.Second || record.RequestTimeout != time.Duration(actualCLIFixtureRequestTimeoutMS)*time.Millisecond {
+				t.Fatalf("loader-only source-QA capacity assessment found an unbound per-operation period or timeout for %s/%s", record.SourceID, record.OperationID)
+			}
 		}
 	}
 	if transportCounts["REST"] != 12631 || transportCounts["SOAP"] != 35 {
 		t.Fatalf("synthetic source-QA transport assignment differs from fixture decisions: REST=%d SOAP=%d", transportCounts["REST"], transportCounts["SOAP"])
 	}
+	requestTimeoutSeconds := (actualCLIFixtureRequestTimeoutMS + 999) / 1000
+	serviceSeconds := requestTimeoutSeconds + actualCLIFixtureProcessOverheadSeconds
+	capacityConcurrency := (int64(counts.KnownOperations)*serviceSeconds + actualCLIFixtureObservationPeriodSeconds - 1) / actualCLIFixtureObservationPeriodSeconds
+	if capacityConcurrency > actualCLIFixtureConcurrencyLimit {
+		t.Fatalf("loader-only source-QA capacity assessment is infeasible: required_concurrency=%d configured_limit=%d period_seconds=%d", capacityConcurrency, actualCLIFixtureConcurrencyLimit, actualCLIFixtureObservationPeriodSeconds)
+	}
+	t.Logf("loader-only source-QA capacity assessment: identities=%d period_seconds=%d timeout_ms=%d process_overhead_seconds=%d required_concurrency=%d configured_limit=%d", counts.KnownOperations, actualCLIFixtureObservationPeriodSeconds, actualCLIFixtureRequestTimeoutMS, actualCLIFixtureProcessOverheadSeconds, capacityConcurrency, actualCLIFixtureConcurrencyLimit)
 	return plan
 }
 
@@ -586,7 +610,7 @@ func actualCLIProfile(id, source, provider, protocol, method string, response ma
 		"profile_id": id,
 		"selector":   map[string]any{"source_id": source, "provider": provider, "protocol": protocol, "effect": "read_only", "method": method, "authentication": map[string]any{"requirement": "none", "mechanism": "none", "placement": "none", "parameter_name": nil}},
 		"review":     review,
-		"request":    map[string]any{"parameter_strategies": []any{}, "omit_unmapped_optional_parameters": true, "limits": map[string]any{"request_budget": 1, "timeout_ms": 1000, "max_request_bytes": 4096, "max_response_bytes": 16384}, "response": response},
+		"request":    map[string]any{"parameter_strategies": []any{}, "omit_unmapped_optional_parameters": true, "limits": map[string]any{"request_budget": 1, "timeout_ms": actualCLIFixtureRequestTimeoutMS, "max_request_bytes": 4096, "max_response_bytes": 16384}, "response": response},
 	}
 }
 
