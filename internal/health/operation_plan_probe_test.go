@@ -1,14 +1,18 @@
 package health
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -182,6 +186,124 @@ func TestOperationPlanProbeRunnerUsesBoundedDirectChildAndCanonicalReceipt(t *te
 	workingDirectory, err := os.ReadFile(workingDirectoryLog)
 	if err != nil || filepath.Clean(strings.TrimSpace(string(workingDirectory))) != filepath.Clean(root) {
 		t.Fatalf("actual child did not use the installed plan root independent of the parent process CWD: cwd=%q err=%v", strings.TrimSpace(string(workingDirectory)), err)
+	}
+}
+
+func TestOperationPlanProbeRunnerFailureDiagnosticsStayRedactedAndPrivate(t *testing.T) {
+	t.Run("child error preserves worker and lower runner stage", func(t *testing.T) {
+		runner, expected := newOperationPlanProbeDiagnosticRunner(t, func(_ context.Context, _ *os.File, _ []string, _ []string, _ io.Writer, _ io.Writer) error {
+			return &os.PathError{Op: "open", Path: "/private/provider?token=secret", Err: syscall.EACCES}
+		})
+		_, _, runErr := runner.Run(context.Background(), expected, time.Now().UTC().Add(10*time.Second))
+		assertProbeFailureDetails(t, runErr, "child_start_or_wait", "io")
+		if runErr.Error() != errOperationPlanProbeUnavailable.Error() || !errors.Is(runErr, errOperationPlanProbeUnavailable) || !errors.Is(runErr, syscall.EACCES) {
+			t.Fatalf("probe wrapper changed fixed Error/errors.Is behavior: %v", runErr)
+		}
+
+		workerErr := newOperationPlanWorkerFailure("runner", runErr)
+		var workerFailure *operationPlanWorkerFailure
+		if !errors.As(workerErr, &workerFailure) || workerFailure.stage != "runner" || workerFailure.category != "io" || workerFailure.probeStage != "child_start_or_wait" || workerFailure.probeCategory != "io" || !errors.Is(workerErr, errOperationPlanWorkerUnavailable) || !errors.Is(workerErr, errOperationPlanProbeUnavailable) || !errors.Is(workerErr, syscall.EACCES) {
+			t.Fatalf("worker did not preserve both fixed diagnostic levels and causes: %#v (%v)", workerFailure, workerErr)
+		}
+		if strings.Contains(runErr.Error(), "private/provider") || strings.Contains(workerErr.Error(), "token=secret") {
+			t.Fatalf("probe error exposed private child details: %q / %q", runErr.Error(), workerErr.Error())
+		}
+
+		worker, _, _, _, _, _ := newOperationPlanSchedulerTestWorker(t)
+		scheduler, err := NewOperationPlanScheduler(OperationPlanSchedulerConfig{
+			Worker: worker, MaxConcurrent: 1, MaxStartsPerPass: 1, MaxDeliveriesPerPass: 1,
+			CandidateScanPerPass: 1, DeliveryLease: time.Minute,
+		})
+		if err != nil {
+			t.Fatal("could not construct local scheduler for diagnostic projection:", err)
+		}
+		scheduler.finishExecution("synthetic-identity", OperationPlanWorkerResult{AttemptState: "unknown"}, workerErr)
+		status := scheduler.Status(time.Now().UTC())
+		if status.LastErrorStage != "runner" || status.lastErrorCategory != "io" || status.probeFailureStageCounts["child_start_or_wait"] != 1 || status.probeFailureCategoryCounts["io"] != 1 {
+			t.Fatalf("bounded scheduler diagnostics omitted lower runner stage: %#v", status)
+		}
+		encoded, err := json.Marshal(status)
+		if err != nil {
+			t.Fatal("could not encode public scheduler status:", err)
+		}
+		if strings.Contains(string(encoded), "child_start_or_wait") || strings.Contains(string(encoded), "probe_failure_stage_counts") || strings.Contains(string(encoded), "private/provider") || strings.Contains(string(encoded), "token=secret") {
+			t.Fatalf("lower runner diagnostics or private cause escaped public JSON: %s", encoded)
+		}
+	})
+
+	t.Run("receipt validation has a fixed lower stage", func(t *testing.T) {
+		runner, expected := newOperationPlanProbeDiagnosticRunner(t, func(_ context.Context, _ *os.File, args []string, _ []string, stdout, _ io.Writer) error {
+			outputPath := operationPlanDiagnosticOutputPath(args)
+			if outputPath == "" {
+				return errors.New("private argument details")
+			}
+			invalid := []byte("{}\n")
+			if err := os.WriteFile(outputPath, invalid, 0o600); err != nil {
+				return err
+			}
+			_, _ = stdout.Write(invalid)
+			return nil
+		})
+		_, _, runErr := runner.Run(context.Background(), expected, time.Now().UTC().Add(10*time.Second))
+		assertProbeFailureDetails(t, runErr, "receipt_validation", "validation")
+		if runErr.Error() != errOperationPlanProbeUnavailable.Error() || strings.Contains(runErr.Error(), "private") {
+			t.Fatalf("invalid-receipt error was not fixed and redacted: %q", runErr.Error())
+		}
+	})
+
+	t.Run("output limit is distinguished without exposing output", func(t *testing.T) {
+		runner, expected := newOperationPlanProbeDiagnosticRunner(t, func(_ context.Context, _ *os.File, _ []string, _ []string, stdout, _ io.Writer) error {
+			_, _ = io.WriteString(stdout, strings.Repeat("response-row-secret", maxOperationPlanProbeReceiptBytes))
+			return nil
+		})
+		_, _, runErr := runner.Run(context.Background(), expected, time.Now().UTC().Add(10*time.Second))
+		assertProbeFailureDetails(t, runErr, "output_limit", "capacity")
+		if strings.Contains(runErr.Error(), "response-row-secret") {
+			t.Fatalf("output limit failure exposed child output: %q", runErr.Error())
+		}
+	})
+}
+
+func newOperationPlanProbeDiagnosticRunner(t *testing.T, child operationPlanProbeChildInvoker) (*OperationPlanProbeRunner, OperationPlanProbeExpectation) {
+	t.Helper()
+	root := t.TempDir()
+	binary := []byte("#!/bin/sh\nexit 0\n")
+	binaryPath := filepath.Join(root, "synthetic-cli")
+	if err := os.WriteFile(binaryPath, binary, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(binary)
+	credentialPath := filepath.Join(root, "bindings.json")
+	if err := os.WriteFile(credentialPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expected := testOperationPlanProbeExpectation(time.Now().UTC().Add(-time.Second))
+	expected.CLIBinarySHA256 = hex.EncodeToString(sum[:])
+	runner := &OperationPlanProbeRunner{
+		config: OperationPlanProbeConfig{
+			ExecutablePath: binaryPath, ExecutableSHA256: expected.CLIBinarySHA256, CLIVersion: expected.CLIVersion,
+			RegistryIndexPath:  filepath.Join(root, "reports", "operation-observation-plan", "index.json"),
+			CredentialBindings: credentialPath, ReceiptDirectory: filepath.Join(root, "receipts"),
+		},
+		childInvoker: child,
+	}
+	return runner, expected
+}
+
+func operationPlanDiagnosticOutputPath(args []string) string {
+	for index, arg := range args {
+		if arg == "--output" && index+1 < len(args) {
+			return args[index+1]
+		}
+	}
+	return ""
+}
+
+func assertProbeFailureDetails(t *testing.T, err error, expectedStage, expectedCategory string) {
+	t.Helper()
+	stage, category, ok := operationPlanProbeFailureDetails(err)
+	if !ok || stage != expectedStage || category != expectedCategory || !errors.Is(err, errOperationPlanProbeUnavailable) {
+		t.Fatalf("unexpected fixed probe diagnostic: stage=%q category=%q found=%t err=%v", stage, category, ok, err)
 	}
 }
 

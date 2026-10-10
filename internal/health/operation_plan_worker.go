@@ -18,9 +18,11 @@ var errOperationPlanWorkerUnavailable = errors.New("operation-plan worker is una
 // the cause private for errors.Is compatibility. Error remains the existing
 // fixed redacted message for callers that log errors.
 type operationPlanWorkerFailure struct {
-	stage    string
-	category string
-	cause    error
+	stage         string
+	category      string
+	probeStage    string
+	probeCategory string
+	cause         error
 }
 
 func (failure *operationPlanWorkerFailure) Error() string {
@@ -35,7 +37,14 @@ func newOperationPlanWorkerFailure(stage string, cause error) error {
 	if !validOperationPlanWorkerFailureStage(stage) {
 		stage = "unavailable"
 	}
-	return &operationPlanWorkerFailure{stage: stage, category: operationPlanWorkerFailureCategory(cause), cause: cause}
+	failure := &operationPlanWorkerFailure{stage: stage, category: operationPlanWorkerFailureCategory(cause), cause: cause}
+	if stage == "runner" {
+		failure.probeStage, failure.probeCategory, _ = operationPlanProbeFailureDetails(cause)
+		if validOperationPlanWorkerFailureCategory(failure.probeCategory) {
+			failure.category = failure.probeCategory
+		}
+	}
+	return failure
 }
 
 func validOperationPlanWorkerFailureStage(stage string) bool {

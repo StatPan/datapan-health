@@ -33,6 +33,90 @@ const (
 
 var errOperationPlanProbeUnavailable = errors.New("operation-plan probe is unavailable")
 
+// operationPlanProbeFailure carries a fixed lower-runner diagnostic while
+// preserving the existing redacted sentinel and errors.Is behavior. Its cause
+// stays private; callers must never format it into status or logs.
+type operationPlanProbeFailure struct {
+	stage    string
+	category string
+	cause    error
+}
+
+func (failure *operationPlanProbeFailure) Error() string {
+	return errOperationPlanProbeUnavailable.Error()
+}
+
+func (failure *operationPlanProbeFailure) Is(target error) bool {
+	return target == errOperationPlanProbeUnavailable || failure != nil && errors.Is(failure.cause, target)
+}
+
+func newOperationPlanProbeFailure(stage string, cause error) error {
+	return newOperationPlanProbeFailureWithCategory(stage, operationPlanProbeFailureCategory(cause), cause)
+}
+
+func newOperationPlanProbeFailureWithCategory(stage, category string, cause error) error {
+	if !validOperationPlanProbeFailureStage(stage) {
+		stage = "unavailable"
+	}
+	if !validOperationPlanProbeFailureCategory(category) {
+		category = "unavailable"
+	}
+	return &operationPlanProbeFailure{stage: stage, category: category, cause: cause}
+}
+
+func validOperationPlanProbeFailureStage(stage string) bool {
+	switch stage {
+	case "preflight", "executable", "credential_binding", "receipt_directory", "child_start_or_wait", "output_limit", "receipt_read", "stdout_receipt_match", "clock", "receipt_validation", "unavailable":
+		return true
+	default:
+		return false
+	}
+}
+
+func validOperationPlanProbeFailureCategory(category string) bool {
+	switch category {
+	case "deadline", "canceled", "capacity", "io", "validation", "unavailable":
+		return true
+	default:
+		return false
+	}
+}
+
+func operationPlanProbeFailureCategory(cause error) string {
+	if cause == nil {
+		return "unavailable"
+	}
+	if errors.Is(cause, context.DeadlineExceeded) {
+		return "deadline"
+	}
+	if errors.Is(cause, context.Canceled) {
+		return "canceled"
+	}
+	if errors.Is(cause, syscall.ENOSPC) || errors.Is(cause, syscall.EFBIG) {
+		return "capacity"
+	}
+	var pathError *os.PathError
+	var syscallError syscall.Errno
+	if errors.As(cause, &pathError) || errors.As(cause, &syscallError) {
+		return "io"
+	}
+	if errors.Is(cause, errOperationPlanProbeUnavailable) {
+		return "validation"
+	}
+	return "unavailable"
+}
+
+func operationPlanProbeFailureDetails(err error) (stage, category string, ok bool) {
+	var failure *operationPlanProbeFailure
+	if !errors.As(err, &failure) || failure == nil {
+		return "", "", false
+	}
+	if !validOperationPlanProbeFailureStage(failure.stage) || !validOperationPlanProbeFailureCategory(failure.category) {
+		return "unavailable", "unavailable", true
+	}
+	return failure.stage, failure.category, true
+}
+
 type operationPlanProbeReceipt struct {
 	SchemaVersion string                        `json:"schema_version"`
 	AttemptID     string                        `json:"attempt_id"`
@@ -237,29 +321,29 @@ func (runner *OperationPlanProbeRunner) VerifyExecutable() error {
 // match the full immutable release/index/shard/source/operation chain.
 func (runner *OperationPlanProbeRunner) Run(ctx context.Context, expectation OperationPlanProbeExpectation, deadline time.Time) (OperationPlanProbeResult, int, error) {
 	if runner == nil || !validOperationProbeExpectation(expectation, runner.config) || deadline.IsZero() || !deadline.After(time.Now()) || deadline.Sub(time.Now()) > maxOperationPlanProbeDeadline {
-		return OperationPlanProbeResult{}, -1, errOperationPlanProbeUnavailable
+		return OperationPlanProbeResult{}, -1, newOperationPlanProbeFailure("preflight", errOperationPlanProbeUnavailable)
 	}
 	executable, err := runner.openVerifiedExecutable()
 	if err != nil {
-		return OperationPlanProbeResult{}, -1, errOperationPlanProbeUnavailable
+		return OperationPlanProbeResult{}, -1, newOperationPlanProbeFailure("executable", err)
 	}
 	defer executable.Close()
 	if err := checkOperationCredentialBindingFile(runner.config.CredentialBindings); err != nil {
-		return OperationPlanProbeResult{}, -1, err
+		return OperationPlanProbeResult{}, -1, newOperationPlanProbeFailure("credential_binding", err)
 	}
 	if err := os.MkdirAll(runner.config.ReceiptDirectory, 0o700); err != nil {
-		return OperationPlanProbeResult{}, -1, errOperationPlanProbeUnavailable
+		return OperationPlanProbeResult{}, -1, newOperationPlanProbeFailure("receipt_directory", err)
 	}
 	if err := checkPrivateOperationDirectory(runner.config.ReceiptDirectory); err != nil {
-		return OperationPlanProbeResult{}, -1, err
+		return OperationPlanProbeResult{}, -1, newOperationPlanProbeFailure("receipt_directory", err)
 	}
 	outputDirectory, err := os.MkdirTemp(runner.config.ReceiptDirectory, ".attempt-")
 	if err != nil {
-		return OperationPlanProbeResult{}, -1, errOperationPlanProbeUnavailable
+		return OperationPlanProbeResult{}, -1, newOperationPlanProbeFailure("receipt_directory", err)
 	}
 	defer os.RemoveAll(outputDirectory)
 	if err := os.Chmod(outputDirectory, 0o700); err != nil {
-		return OperationPlanProbeResult{}, -1, errOperationPlanProbeUnavailable
+		return OperationPlanProbeResult{}, -1, newOperationPlanProbeFailure("receipt_directory", err)
 	}
 	outputPath := filepath.Join(outputDirectory, "receipt.json")
 	args := []string{
@@ -297,26 +381,29 @@ func (runner *OperationPlanProbeRunner) Run(ctx context.Context, expectation Ope
 	if runErr != nil {
 		var exit *exec.ExitError
 		if !errors.As(runErr, &exit) {
-			return OperationPlanProbeResult{}, -1, errOperationPlanProbeUnavailable
+			return OperationPlanProbeResult{}, -1, newOperationPlanProbeFailure("child_start_or_wait", runErr)
 		}
 		exitCode = exit.ExitCode()
 	}
 	if stdout.exceeded || stderr.exceeded {
-		return OperationPlanProbeResult{}, exitCode, errOperationPlanProbeUnavailable
+		return OperationPlanProbeResult{}, exitCode, newOperationPlanProbeFailureWithCategory("output_limit", "capacity", errOperationPlanProbeUnavailable)
 	}
 	receiptBytes, err := readOperationProbeReceiptFile(outputPath)
-	if err != nil || !bytes.Equal(stdout.data, receiptBytes) {
-		return OperationPlanProbeResult{}, exitCode, errOperationPlanProbeUnavailable
+	if err != nil {
+		return OperationPlanProbeResult{}, exitCode, newOperationPlanProbeFailure("receipt_read", err)
+	}
+	if !bytes.Equal(stdout.data, receiptBytes) {
+		return OperationPlanProbeResult{}, exitCode, newOperationPlanProbeFailure("stdout_receipt_match", errOperationPlanProbeUnavailable)
 	}
 	// Validate provider timestamps from the durable claim time, not a later
 	// point sampled after command setup. The child request can begin only after
 	// this claim already exists.
 	if started.Before(expectation.StartedAt.Add(-time.Second)) {
-		return OperationPlanProbeResult{}, exitCode, errOperationPlanProbeUnavailable
+		return OperationPlanProbeResult{}, exitCode, newOperationPlanProbeFailure("clock", errOperationPlanProbeUnavailable)
 	}
 	result, err := ValidateOperationPlanProbeReceipt(receiptBytes, expectation, expectation.StartedAt, receivedAt, exitCode)
 	if err != nil {
-		return OperationPlanProbeResult{}, exitCode, errOperationPlanProbeUnavailable
+		return OperationPlanProbeResult{}, exitCode, newOperationPlanProbeFailure("receipt_validation", err)
 	}
 	return result, exitCode, nil
 }

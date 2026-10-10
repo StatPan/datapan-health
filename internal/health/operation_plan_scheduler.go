@@ -145,6 +145,8 @@ type OperationPlanSchedulerStatus struct {
 	lastDiagnosticFailureCategory   string            `json:"-"`
 	failureStageCounts              map[string]uint64 `json:"-"`
 	failureCategoryCounts           map[string]uint64 `json:"-"`
+	probeFailureStageCounts         map[string]uint64 `json:"-"`
+	probeFailureCategoryCounts      map[string]uint64 `json:"-"`
 	lastPassElapsed                 time.Duration     `json:"-"`
 	lastPassDeliveryScanned         int               `json:"-"`
 	lastPassExecutionScanned        int               `json:"-"`
@@ -213,6 +215,8 @@ type OperationPlanScheduler struct {
 	lastDiagnosticFailureCategory string
 	failureStageCounts            map[string]uint64
 	failureCategoryCounts         map[string]uint64
+	probeFailureStageCounts       map[string]uint64
+	probeFailureCategoryCounts    map[string]uint64
 	lastPassElapsed               time.Duration
 	lastPassDeliveryScanned       int
 	lastPassExecutionScanned      int
@@ -715,6 +719,16 @@ func (scheduler *OperationPlanScheduler) finishExecution(identityKey string, res
 			} else {
 				scheduler.lastErrorCategory = "unavailable"
 			}
+			if validOperationPlanProbeFailureStage(failure.probeStage) && validOperationPlanProbeFailureCategory(failure.probeCategory) {
+				if scheduler.probeFailureStageCounts == nil {
+					scheduler.probeFailureStageCounts = make(map[string]uint64)
+				}
+				if scheduler.probeFailureCategoryCounts == nil {
+					scheduler.probeFailureCategoryCounts = make(map[string]uint64)
+				}
+				scheduler.probeFailureStageCounts[failure.probeStage]++
+				scheduler.probeFailureCategoryCounts[failure.probeCategory]++
+			}
 		} else {
 			scheduler.lastErrorStage = "unavailable"
 			scheduler.lastErrorCategory = operationPlanWorkerFailureCategory(err)
@@ -918,6 +932,8 @@ func (scheduler *OperationPlanScheduler) Status(at time.Time) OperationPlanSched
 	status.lastDiagnosticFailureCategory = scheduler.lastDiagnosticFailureCategory
 	status.failureStageCounts = cloneOperationPlanFailureCounts(scheduler.failureStageCounts)
 	status.failureCategoryCounts = cloneOperationPlanFailureCounts(scheduler.failureCategoryCounts)
+	status.probeFailureStageCounts = cloneOperationPlanFailureCounts(scheduler.probeFailureStageCounts)
+	status.probeFailureCategoryCounts = cloneOperationPlanFailureCounts(scheduler.probeFailureCategoryCounts)
 	status.lastPassElapsed = scheduler.lastPassElapsed
 	status.lastPassDeliveryScanned = scheduler.lastPassDeliveryScanned
 	status.lastPassExecutionScanned = scheduler.lastPassExecutionScanned

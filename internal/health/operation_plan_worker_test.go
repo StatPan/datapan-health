@@ -114,6 +114,16 @@ func (unavailableOperationPlanProbeExecutor) Run(context.Context, OperationPlanP
 	return OperationPlanProbeResult{}, -1, errOperationPlanProbeUnavailable
 }
 
+type fixedFailureOperationPlanProbeExecutor struct {
+	err   error
+	calls int
+}
+
+func (executor *fixedFailureOperationPlanProbeExecutor) Run(context.Context, OperationPlanProbeExpectation, time.Time) (OperationPlanProbeResult, int, error) {
+	executor.calls++
+	return OperationPlanProbeResult{}, -1, executor.err
+}
+
 type countingOperationPlanProbeExecutor struct{ calls int }
 
 func (executor *countingOperationPlanProbeExecutor) Run(context.Context, OperationPlanProbeExpectation, time.Time) (OperationPlanProbeResult, int, error) {
@@ -239,6 +249,41 @@ func TestOperationPlanWorkerDefersAndRetriesUnchangedQuotaWindowDrain(t *testing
 	claim, err := attempts.BeginAttempt(binding, strings.Repeat("b", 64), retryAt, time.Minute)
 	if err != nil || claim.Generation <= stored.Generation {
 		t.Fatalf("attempt store rejected the same-binding retry at the shared boundary: claim=%#v err=%v", claim, err)
+	}
+}
+
+func TestOperationPlanWorkerProbeDiagnosticsDoNotResolveAmbiguousAttempts(t *testing.T) {
+	worker, attempts, history, _, target, _ := newOperationPlanSchedulerTestWorker(t)
+	privateCause := &os.PathError{Op: "open", Path: "/private/response?token=secret", Err: syscall.EACCES}
+	executor := &fixedFailureOperationPlanProbeExecutor{err: newOperationPlanProbeFailure("child_start_or_wait", privateCause)}
+	worker.runner = executor
+	startedAt := time.Now().UTC()
+	result, runErr := worker.ExecuteOne(context.Background(), target.Record.SourceID, target.Record.OperationID, startedAt)
+	if runErr == nil || runErr.Error() != errOperationPlanWorkerUnavailable.Error() || result.AttemptState != "unknown" || result.RequestStarted || result.ReceiptSHA256 != "" {
+		t.Fatalf("runner diagnostic changed conservative unknown-attempt handling: result=%#v err=%v", result, runErr)
+	}
+	var failure *operationPlanWorkerFailure
+	if !errors.As(runErr, &failure) || failure.stage != "runner" || failure.category != "io" || failure.probeStage != "child_start_or_wait" || failure.probeCategory != "io" || !errors.Is(runErr, syscall.EACCES) {
+		t.Fatalf("worker lost bounded nested runner diagnostics or errors.Is: %#v (%v)", failure, runErr)
+	}
+	if strings.Contains(runErr.Error(), "private/response") || strings.Contains(runErr.Error(), "token=secret") {
+		t.Fatalf("worker error exposed private runner cause: %q", runErr.Error())
+	}
+	stored, found, err := attempts.Latest(target.Record.SourceID, target.Record.OperationID)
+	if err != nil || !found || stored.State != "unknown" || stored.Result != nil || stored.ReceiptSHA256 != "" || stored.Generation != result.Generation {
+		t.Fatalf("runner diagnostics altered the durable ambiguous attempt: stored=%#v found=%t err=%v", stored, found, err)
+	}
+	usage, err := history.Usage(context.Background())
+	if err != nil || usage.RecordCount != 0 || usage.ReservationCount != 1 {
+		t.Fatalf("runner diagnostic incorrectly released an ambiguous history reservation: usage=%#v err=%v", usage, err)
+	}
+
+	// A diagnostic code grants no retry authority. The exact same identity stays
+	// inside its pinned observation period, and the child is not invoked again.
+	retryResult, retryErr := worker.ExecuteOne(context.Background(), target.Record.SourceID, target.Record.OperationID, startedAt.Add(time.Second))
+	storedAfterRetry, foundAfterRetry, storeErr := attempts.Latest(target.Record.SourceID, target.Record.OperationID)
+	if retryErr == nil || !errors.Is(retryErr, errOperationPlanWorkerUnavailable) || retryResult.AttemptID != "" || !foundAfterRetry || storeErr != nil || storedAfterRetry.Generation != stored.Generation || executor.calls != 1 {
+		t.Fatalf("diagnostic code bypassed the normal observation cadence: result=%#v calls=%d err=%v", retryResult, executor.calls, retryErr)
 	}
 }
 
