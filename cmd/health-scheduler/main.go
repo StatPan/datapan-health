@@ -156,6 +156,13 @@ func healthSchedulerHandler(s *health.Scheduler, preflight func() string) http.H
 }
 
 func healthSchedulerHandlerWithOperationPlan(s *health.Scheduler, preflight func() string, operationPlanStatus func(time.Time) health.OperationPlanSchedulerStatus) http.Handler {
+	return healthSchedulerHandlerWithReadiness(s, s.Readiness, preflight, operationPlanStatus)
+}
+
+// healthSchedulerHandlerWithReadiness keeps route behavior testable with a
+// deterministic legacy readiness snapshot while production continues to use
+// Scheduler.Readiness directly.
+func healthSchedulerHandlerWithReadiness(s *health.Scheduler, readiness func(time.Time) health.SchedulerReadiness, preflight func() string, operationPlanStatus func(time.Time) health.OperationPlanSchedulerStatus) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -170,12 +177,7 @@ func healthSchedulerHandlerWithOperationPlan(s *health.Scheduler, preflight func
 				_, _ = w.Write([]byte("ok\n"))
 			}
 		case "/ready", "/status":
-			report := s.Readiness(time.Now().UTC())
-			if reason := preflight(); reason != "" {
-				report.Ready = false
-				report.State = "degraded"
-				report.Reason = reason
-			}
+			report, _ := canonicalSchedulerReadiness(readiness, preflight, operationPlanStatus, time.Now().UTC())
 			code := http.StatusOK
 			if !report.Ready {
 				code = http.StatusServiceUnavailable
@@ -226,7 +228,7 @@ func healthSchedulerHandlerWithOperationPlan(s *health.Scheduler, preflight func
 			}
 		case "/metrics":
 			m := s.Metrics()
-			report := s.Readiness(time.Now().UTC())
+			report, plan := canonicalSchedulerReadiness(readiness, preflight, operationPlanStatus, time.Now().UTC())
 			w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 			if r.Method == http.MethodHead {
 				return
@@ -240,12 +242,11 @@ func healthSchedulerHandlerWithOperationPlan(s *health.Scheduler, preflight func
 				delivered = m.LastCompleted.Unix()
 			}
 			ready := 0
-			if report.Ready && preflight() == "" {
+			if report.Ready {
 				ready = 1
 			}
 			_, _ = fmt.Fprintf(w, "datapan_health_scheduler_ready %d\ndatapan_health_scheduler_last_loop_timestamp_seconds %d\ndatapan_health_scheduler_last_delivery_timestamp_seconds %d\n", ready, loop, delivered)
-			if operationPlanStatus != nil {
-				plan := operationPlanStatus(time.Now().UTC())
+			if plan != nil {
 				planReady, planCapacity := 0, 0
 				if plan.Ready {
 					planReady = 1
@@ -266,6 +267,31 @@ func healthSchedulerHandlerWithOperationPlan(s *health.Scheduler, preflight func
 			http.NotFound(w, r)
 		}
 	})
+}
+
+// canonicalSchedulerReadiness takes one bounded snapshot of each local
+// readiness source for a request. The operation-plan lane can close readiness
+// while active, but it cannot make an unready legacy scheduler ready.
+func canonicalSchedulerReadiness(readiness func(time.Time) health.SchedulerReadiness, preflight func() string, operationPlanStatus func(time.Time) health.OperationPlanSchedulerStatus, now time.Time) (health.SchedulerReadiness, *health.OperationPlanSchedulerStatus) {
+	report := readiness(now)
+	if preflight != nil {
+		if reason := preflight(); reason != "" {
+			report.Ready = false
+			report.State = "degraded"
+			report.Reason = reason
+		}
+	}
+	var plan *health.OperationPlanSchedulerStatus
+	if operationPlanStatus != nil {
+		status := operationPlanStatus(now)
+		plan = &status
+		if status.State != "disabled" && !status.Ready {
+			report.Ready = false
+			report.State = "degraded"
+			report.Reason = "operation_plan_unavailable"
+		}
+	}
+	return report, plan
 }
 
 func env(key, fallback string) string {

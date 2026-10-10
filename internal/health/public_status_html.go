@@ -1419,6 +1419,8 @@ func publicSelfReadinessReason(reason string) string {
 		return "검사 실행에 필요한 구성 요소를 확인할 수 없습니다. 설치와 설정을 확인하세요."
 	case "delivery_failed":
 		return "검사 결과를 관제에 전달하지 못했습니다. 결과 전달 경로를 확인하세요."
+	case "operation_plan_unavailable":
+		return "전체 검사 계획의 최근 진행 상태를 확인할 수 없습니다. 검사 실행과 결과 기록을 확인하세요."
 	case "cli_receipt_missing", "receipt_unavailable", "receipt_contract":
 		return "검사 결과 기록을 확인할 수 없습니다. 검사 실행 로그와 기록 생성을 확인하세요."
 	case "receipt_storage_unavailable":

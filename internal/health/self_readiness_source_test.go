@@ -87,6 +87,27 @@ func TestSchedulerHealthSelfReadinessAcceptsBoundedDegradedStatus(t *testing.T) 
 	}
 }
 
+func TestSchedulerHealthSelfReadinessAcceptsOperationPlanUnavailableReason(t *testing.T) {
+	config, err := LoadCanaryConfig("../../config/canaries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	report := readySelfReadinessDocument(t, config, now)
+	report.Ready, report.State, report.Reason = false, "degraded", "operation_plan_unavailable"
+	server := readinessHTTPFixture(t, report, http.StatusServiceUnavailable, "application/json")
+	defer server.Close()
+	source, err := NewSchedulerHealthSelfReadinessSource(server.URL+"/status", config, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.now = func() time.Time { return now }
+	value, err := source.Snapshot(context.Background())
+	if err != nil || value.Ready || value.State != "degraded" || value.Reason != "operation_plan_unavailable" {
+		t.Fatalf("canonical operation-plan degradation was not projected safely: value=%+v err=%v", value, err)
+	}
+}
+
 func TestSchedulerHealthSelfReadinessRejectsInvalidReportsAndSources(t *testing.T) {
 	config, err := LoadCanaryConfig("../../config/canaries.json")
 	if err != nil {
@@ -271,6 +292,10 @@ func TestPublicHTMLReadinessDiagnosisAndHistoryAreAllowlisted(t *testing.T) {
 	projected = projectPublicHTMLReadiness(HealthSelfReadiness{}, false, now)
 	if projected.StatusLabel != "확인 실패" || !strings.Contains(projected.Summary, "API 기능 응답과 별개의 관제 문제") {
 		t.Fatalf("readiness failure was conflated: %+v", projected)
+	}
+	projected = projectPublicHTMLReadiness(HealthSelfReadiness{State: "degraded", Reason: "operation_plan_unavailable"}, true, now)
+	if projected.StatusLabel != "점검 필요" || !strings.Contains(projected.Summary, "전체 검사 계획") {
+		t.Fatalf("operation-plan readiness reason was not explained in Korean: %+v", projected)
 	}
 	status := PublicOperationStatus{ObservationState: "current", RawObservationState: "failed", IncidentState: "pending", Diagnosis: PublicDiagnosis{Code: "provider_outage", Determination: "observed", RecommendedActionIDs: []string{"check_provider_status", "https://secret.example"}}, History: []PublicResultHistoryPoint{{ReceivedAt: now.Add(-time.Minute), Success: true}, {ReceivedAt: now, Success: false}}}
 	row := addPublicStatusLabels(publicHTMLOperation{}, status, now, true)

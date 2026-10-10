@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestScheduleCoverageLifecycleFromSchedulerEnvironmentIsDryRunOnly(t *testing.T) {
@@ -142,6 +143,171 @@ func TestOperationPlanCLISourcePinAcceptsOnlyReviewedEquivalentSources(t *testin
 		}
 	}
 }
+
+func TestCanonicalReadinessCombinesLegacyAndOperationPlanWithoutPromotion(t *testing.T) {
+	now := time.Now().UTC()
+	legacyReady := health.SchedulerReadiness{Ready: true, State: "ready", Reason: "pipeline_current"}
+	planUnavailable := health.OperationPlanSchedulerStatus{State: "degraded", Ready: false, Reason: "private target https://internal.example/v1?token=secret"}
+	got, _ := canonicalSchedulerReadiness(func(time.Time) health.SchedulerReadiness { return legacyReady }, nil, func(time.Time) health.OperationPlanSchedulerStatus { return planUnavailable }, now)
+	if got.Ready || got.State != "degraded" || got.Reason != "operation_plan_unavailable" {
+		t.Fatalf("active unready plan did not close canonical readiness safely: %+v", got)
+	}
+
+	legacyUnready := health.SchedulerReadiness{Ready: false, State: "degraded", Reason: "delivery_stale"}
+	planReady := health.OperationPlanSchedulerStatus{State: "ready", Ready: true}
+	got, _ = canonicalSchedulerReadiness(func(time.Time) health.SchedulerReadiness { return legacyUnready }, nil, func(time.Time) health.OperationPlanSchedulerStatus { return planReady }, now)
+	if got.Ready || got.State != "degraded" || got.Reason != "delivery_stale" {
+		t.Fatalf("healthy operation-plan lane promoted stale legacy readiness: %+v", got)
+	}
+
+	planDisabled := health.OperationPlanSchedulerStatus{State: "disabled", Ready: false}
+	got, _ = canonicalSchedulerReadiness(func(time.Time) health.SchedulerReadiness { return legacyReady }, nil, func(time.Time) health.OperationPlanSchedulerStatus { return planDisabled }, now)
+	if !got.Ready || got.State != "ready" || got.Reason != "pipeline_current" {
+		t.Fatalf("disabled operation-plan lane changed healthy legacy readiness: %+v", got)
+	}
+}
+
+func TestDisabledOperationPlanKeepsHealthyLegacyHTTPRoutesReady(t *testing.T) {
+	config, err := health.LoadCanaryConfig("../../config/canaries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := health.NewScheduler(config, filepath.Join(t.TempDir(), "state.json"), health.CLIProcess{Path: "/missing-cli"}, health.AdapterProcess{Path: "/missing-adapter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyReady := health.SchedulerReadiness{Ready: true, State: "ready", Reason: "pipeline_current"}
+	planDisabled := health.OperationPlanSchedulerStatus{State: "disabled", Ready: false, Reason: "activation_not_configured"}
+	h := healthSchedulerHandlerWithReadiness(s, func(time.Time) health.SchedulerReadiness { return legacyReady }, func() string { return "" }, func(time.Time) health.OperationPlanSchedulerStatus { return planDisabled })
+	for _, path := range []string{"/ready", "/status"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != 200 {
+			t.Fatalf("disabled operation-plan lane changed %s: code=%d body=%s", path, w.Code, w.Body.String())
+		}
+		if path == "/status" {
+			var report health.SchedulerReadiness
+			if err := json.Unmarshal(w.Body.Bytes(), &report); err != nil || !report.Ready || report.Reason != "pipeline_current" {
+				t.Fatalf("disabled operation-plan lane changed legacy report: %+v err=%v", report, err)
+			}
+		}
+	}
+}
+
+func TestActiveOperationPlanUnavailableClosesCanonicalHTTPAndMetricOncePerRequest(t *testing.T) {
+	config, err := health.LoadCanaryConfig("../../config/canaries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := health.NewScheduler(config, filepath.Join(t.TempDir(), "state.json"), health.CLIProcess{Path: "/missing-cli"}, health.AdapterProcess{Path: "/missing-adapter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	legacyReady := health.SchedulerReadiness{SchemaVersion: "datapan.health-self-readiness.v1", Ready: true, State: "ready", Reason: "pipeline_current", LastLoop: timePointer(now.Add(-time.Second)), PublicReadback: "not_checked", DeploymentIdentity: "not_checked"}
+	for _, canary := range config.Canaries {
+		started, accepted := now.Add(-20*time.Second), now.Add(-10*time.Second)
+		delivered, observed := now.Add(-5*time.Second), now.Add(-15*time.Second)
+		legacyReady.Canaries = append(legacyReady.Canaries, health.CanaryProgress{OperationID: canary.OperationID, LastStarted: &started, LastAccepted: &accepted, LastDelivered: &delivered, OriginalObservedAt: &observed, State: "ready", Reason: "delivered"})
+	}
+	const privatePlanReason = "private target https://internal.example/v1?token=secret"
+	planUnavailable := health.OperationPlanSchedulerStatus{SchemaVersion: "datapan.health-operation-plan-scheduler-status.v1", State: "degraded", Ready: false, Reason: privatePlanReason}
+	callbackCalls := 0
+	h := healthSchedulerHandlerWithReadiness(s, func(time.Time) health.SchedulerReadiness { return legacyReady }, func() string { return "" }, func(time.Time) health.OperationPlanSchedulerStatus {
+		callbackCalls++
+		return planUnavailable
+	})
+	for _, path := range []string{"/status", "/ready", "/metrics"} {
+		before := callbackCalls
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if callbackCalls != before+1 {
+			t.Fatalf("%s sampled operation-plan state %d times", path, callbackCalls-before)
+		}
+		if w.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("%s changed no-store response policy", path)
+		}
+		if strings.Contains(w.Body.String(), privatePlanReason) || strings.Contains(w.Body.String(), "internal.example") || strings.Contains(w.Body.String(), "token=secret") {
+			t.Fatalf("%s exposed private operation-plan details: %s", path, w.Body.String())
+		}
+		switch path {
+		case "/status":
+			if w.Code != 503 {
+				t.Fatalf("%s status=%d body=%s", path, w.Code, w.Body.String())
+			}
+			if w.Header().Get("Content-Type") != "application/json" {
+				t.Fatalf("status content type=%q", w.Header().Get("Content-Type"))
+			}
+			var report health.SchedulerReadiness
+			if err := json.Unmarshal(w.Body.Bytes(), &report); err != nil || report.Ready || report.State != "degraded" || report.Reason != "operation_plan_unavailable" {
+				t.Fatalf("canonical status=%+v err=%v body=%s", report, err, w.Body.String())
+			}
+		case "/ready":
+			if w.Code != 503 {
+				t.Fatalf("%s status=%d body=%s", path, w.Code, w.Body.String())
+			}
+			if w.Body.String() != "not ready\n" {
+				t.Fatalf("unexpected ready body: %q", w.Body.String())
+			}
+		case "/metrics":
+			if w.Code != 200 {
+				t.Fatalf("metrics status=%d body=%s", w.Code, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), "datapan_health_scheduler_ready 0\n") {
+				t.Fatalf("main scheduler readiness metric stayed ready: %s", w.Body.String())
+			}
+		}
+	}
+	for _, test := range []struct {
+		path string
+		code int
+	}{{"/status", 503}, {"/ready", 503}, {"/metrics", 200}} {
+		before := callbackCalls
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("HEAD", test.path, nil))
+		if w.Code != test.code || w.Body.Len() != 0 || w.Header().Get("Cache-Control") != "no-store" || callbackCalls != before+1 {
+			t.Fatalf("HEAD %s changed status, body, cache, or callback behavior: code=%d body=%q cache=%q calls=%d", test.path, w.Code, w.Body.String(), w.Header().Get("Cache-Control"), callbackCalls-before)
+		}
+	}
+}
+
+func TestHealthyOperationPlanDoesNotPromoteStaleLegacyHTTPReadiness(t *testing.T) {
+	config, err := health.LoadCanaryConfig("../../config/canaries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := health.NewScheduler(config, filepath.Join(t.TempDir(), "state.json"), health.CLIProcess{Path: "/missing-cli"}, health.AdapterProcess{Path: "/missing-adapter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyStale := health.SchedulerReadiness{Ready: false, State: "degraded", Reason: "delivery_stale"}
+	planReady := health.OperationPlanSchedulerStatus{State: "ready", Ready: true}
+	h := healthSchedulerHandlerWithReadiness(s, func(time.Time) health.SchedulerReadiness { return legacyStale }, func() string { return "" }, func(time.Time) health.OperationPlanSchedulerStatus { return planReady })
+	for _, path := range []string{"/ready", "/status", "/metrics"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if path == "/metrics" {
+			if w.Code != 200 {
+				t.Fatalf("metrics returned status %d", w.Code)
+			}
+			if !strings.Contains(w.Body.String(), "datapan_health_scheduler_ready 0\n") {
+				t.Fatalf("legacy failure was promoted by the new lane: %s", w.Body.String())
+			}
+			continue
+		}
+		if w.Code != 503 {
+			t.Fatalf("%s promoted stale legacy readiness: code=%d body=%s", path, w.Code, w.Body.String())
+		}
+		if path == "/status" {
+			var report health.SchedulerReadiness
+			if err := json.Unmarshal(w.Body.Bytes(), &report); err != nil || report.Reason != "delivery_stale" {
+				t.Fatalf("legacy failure reason changed: %+v err=%v", report, err)
+			}
+		}
+	}
+}
+
+func timePointer(value time.Time) *time.Time { return &value }
 
 func TestOperationPlanActivationWithoutPinBlocksLegacyAndReportsGenericReadiness(t *testing.T) {
 	config, err := health.LoadCanaryConfig("../../config/canaries.json")

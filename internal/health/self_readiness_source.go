@@ -172,7 +172,7 @@ func (s *SchedulerHealthSelfReadinessSource) validReport(report schedulerReadine
 
 func validSchedulerReadinessReason(reason string) bool {
 	switch reason {
-	case "pipeline_current", "awaiting_first_delivery", "delivery_stale", "awaiting_first_loop", "scheduler_loop_stale", "scheduler_state_unavailable", "runtime_dependencies_unavailable", "delivery_failed", "cli_receipt_missing", "receipt_storage_unavailable", "receipt_unavailable", "scheduled_identity", "release_binding", "operation_identity", "catalog_identity", "registry_identity", "policy_identity", "policy_ceiling", "future_observation", "stale_observation", "receipt_contract", "delivered":
+	case "pipeline_current", "awaiting_first_delivery", "delivery_stale", "awaiting_first_loop", "scheduler_loop_stale", "scheduler_state_unavailable", "runtime_dependencies_unavailable", "delivery_failed", "cli_receipt_missing", "receipt_storage_unavailable", "receipt_unavailable", "scheduled_identity", "release_binding", "operation_identity", "catalog_identity", "registry_identity", "policy_identity", "policy_ceiling", "future_observation", "stale_observation", "receipt_contract", "delivered", "operation_plan_unavailable":
 		return true
 	default:
 		return false

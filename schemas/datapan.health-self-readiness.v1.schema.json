@@ -43,7 +43,7 @@
         "receipt_storage_unavailable", "receipt_unavailable", "scheduled_identity",
         "release_binding", "operation_identity", "catalog_identity", "registry_identity",
         "policy_identity", "policy_ceiling", "future_observation", "stale_observation",
-        "receipt_contract", "delivered"
+        "receipt_contract", "delivered", "operation_plan_unavailable"
       ]
     }
   }
