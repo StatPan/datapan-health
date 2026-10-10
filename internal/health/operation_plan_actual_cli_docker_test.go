@@ -25,12 +25,28 @@ const (
 )
 
 type actualCLIContainerMonitor struct {
-	container string
-	stop      chan struct{}
-	done      chan struct{}
-	mu        sync.Mutex
-	peakBytes uint64
-	samples   int
+	container       string
+	memoryCgroupDir string
+	stop            chan struct{}
+	done            chan struct{}
+	mu              sync.Mutex
+	peakBytes       uint64
+	currentBytes    uint64
+	limitBytes      uint64
+	samples         int
+	readErrors      int
+}
+
+type actualCLIMemorySnapshot struct {
+	PeakBytes     uint64
+	CurrentBytes  uint64
+	LimitBytes    uint64
+	OOMEvents     uint64
+	OOMKillEvents uint64
+	Samples       int
+	ReadErrors    int
+	Source        string
+	ExactPeak     bool
 }
 
 func startActualCLIContainers(t *testing.T, root, binaryPath, binarySHA, providerBinary, providerCA, providerCertificate, providerKey, providerRoutes, planRoot, credentialPath, receiptRoot string, gatusConfig []byte, token string) (networkName, cliContainer, gatusURL, metricsURL string, monitor *actualCLIContainerMonitor) {
@@ -181,7 +197,10 @@ func startActualCLIContainers(t *testing.T, root, binaryPath, binarySHA, provide
 	if !waitActualCLIGatusReady(ctx, gatusURL) {
 		t.Fatal("pinned Gatus did not load the generated local full-population configuration")
 	}
-	monitor = &actualCLIContainerMonitor{container: cliContainer, stop: make(chan struct{}), done: make(chan struct{})}
+	monitor = &actualCLIContainerMonitor{
+		container: cliContainer, memoryCgroupDir: actualCLIContainerMemoryCgroupDir(ctx, cliContainer),
+		stop: make(chan struct{}), done: make(chan struct{}),
+	}
 	go monitor.run()
 	return networkName, cliContainer, gatusURL, metricsURL, monitor
 }
@@ -458,6 +477,10 @@ func dockerActualCLIChildInvoker(network, container, planRoot string) operationP
 
 func (monitor *actualCLIContainerMonitor) run() {
 	defer close(monitor.done)
+	if monitor.memoryCgroupDir != "" {
+		<-monitor.stop
+		return
+	}
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -469,15 +492,21 @@ func (monitor *actualCLIContainerMonitor) run() {
 			output, err := exec.CommandContext(ctx, "docker", "stats", "--no-stream", "--format", "{{.MemUsage}}", monitor.container).Output()
 			cancel()
 			if err == nil {
-				used, _, ok := parseDockerMemoryUsage(strings.TrimSpace(string(output)))
+				used, limit, ok := parseDockerMemoryUsage(strings.TrimSpace(string(output)))
 				if ok {
 					monitor.mu.Lock()
 					if used > monitor.peakBytes {
 						monitor.peakBytes = used
 					}
+					monitor.currentBytes = used
+					monitor.limitBytes = limit
 					monitor.samples++
 					monitor.mu.Unlock()
+				} else {
+					monitor.recordMemoryReadError()
 				}
+			} else {
+				monitor.recordMemoryReadError()
 			}
 		}
 	}
@@ -493,13 +522,193 @@ func (monitor *actualCLIContainerMonitor) Stop() {
 	}
 }
 
-func (monitor *actualCLIContainerMonitor) Snapshot() (peakBytes uint64, samples int) {
+func (monitor *actualCLIContainerMonitor) Snapshot() actualCLIMemorySnapshot {
 	if monitor == nil {
-		return 0, 0
+		return actualCLIMemorySnapshot{Source: "unavailable"}
+	}
+	if monitor.memoryCgroupDir != "" {
+		if snapshot, ok := actualCLIReadCgroupV2Memory(monitor.memoryCgroupDir); ok {
+			monitor.mu.Lock()
+			snapshot.ReadErrors = monitor.readErrors
+			monitor.mu.Unlock()
+			return snapshot
+		}
+		monitor.recordMemoryReadError()
 	}
 	monitor.mu.Lock()
 	defer monitor.mu.Unlock()
-	return monitor.peakBytes, monitor.samples
+	snapshot := actualCLIMemorySnapshot{
+		PeakBytes: monitor.peakBytes, CurrentBytes: monitor.currentBytes, LimitBytes: monitor.limitBytes,
+		Samples: monitor.samples, ReadErrors: monitor.readErrors,
+	}
+	if monitor.samples > 0 {
+		snapshot.Source = "docker_stats_sampled"
+	} else {
+		snapshot.Source = "unavailable"
+	}
+	return snapshot
+}
+
+func (monitor *actualCLIContainerMonitor) recordMemoryReadError() {
+	if monitor == nil {
+		return
+	}
+	monitor.mu.Lock()
+	monitor.readErrors++
+	monitor.mu.Unlock()
+}
+
+func actualCLIContainerMemoryCgroupDir(ctx context.Context, container string) string {
+	if ctx == nil || container == "" {
+		return ""
+	}
+	output, err := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.State.Pid}}", container).Output()
+	if err != nil {
+		return ""
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(output)))
+	if err != nil || pid <= 1 {
+		return ""
+	}
+	cgroup, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cgroup"))
+	if err != nil {
+		return ""
+	}
+	membership, ok := actualCLIParseCgroupV2Membership(cgroup)
+	if !ok {
+		return ""
+	}
+	mountInfo, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return ""
+	}
+	dir, ok := actualCLIResolveCgroupV2Path(membership, mountInfo)
+	if !ok {
+		return ""
+	}
+	for _, name := range []string{"memory.current", "memory.peak", "memory.max", "memory.events"} {
+		info, err := os.Stat(filepath.Join(dir, name))
+		if err != nil || !info.Mode().IsRegular() {
+			return ""
+		}
+	}
+	return dir
+}
+
+func actualCLIParseCgroupV2Membership(raw []byte) (string, bool) {
+	for _, line := range strings.Split(string(raw), "\n") {
+		if !strings.HasPrefix(line, "0::") {
+			continue
+		}
+		rawPath := strings.TrimPrefix(line, "0::")
+		path := filepath.Clean(rawPath)
+		if !filepath.IsAbs(path) || path != rawPath || path == "." || path == ".." || strings.HasPrefix(path, ".."+string(filepath.Separator)) {
+			return "", false
+		}
+		return path, true
+	}
+	return "", false
+}
+
+func actualCLIResolveCgroupV2Path(membership string, mountInfo []byte) (string, bool) {
+	if !filepath.IsAbs(membership) || filepath.Clean(membership) != membership {
+		return "", false
+	}
+	for _, line := range strings.Split(string(mountInfo), "\n") {
+		leftRight := strings.SplitN(line, " - ", 2)
+		if len(leftRight) != 2 {
+			continue
+		}
+		left := strings.Fields(leftRight[0])
+		right := strings.Fields(leftRight[1])
+		if len(left) < 5 || len(right) < 3 || right[0] != "cgroup2" {
+			continue
+		}
+		mountRoot := filepath.Clean(decodeActualCLIMountField(left[3]))
+		mountPoint := filepath.Clean(decodeActualCLIMountField(left[4]))
+		if !filepath.IsAbs(mountRoot) || !filepath.IsAbs(mountPoint) {
+			continue
+		}
+		relative, err := filepath.Rel(mountRoot, membership)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			continue
+		}
+		candidate := filepath.Join(mountPoint, relative)
+		fromMount, err := filepath.Rel(mountPoint, candidate)
+		if err != nil || fromMount == ".." || strings.HasPrefix(fromMount, ".."+string(filepath.Separator)) {
+			continue
+		}
+		return candidate, true
+	}
+	return "", false
+}
+
+func decodeActualCLIMountField(value string) string {
+	return strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`).Replace(value)
+}
+
+func actualCLIReadUintFile(path string) (uint64, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	value, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
+	return value, err == nil
+}
+
+func actualCLIReadCgroupV2Memory(dir string) (actualCLIMemorySnapshot, bool) {
+	current, currentOK := actualCLIReadUintFile(filepath.Join(dir, "memory.current"))
+	peak, peakOK := actualCLIReadUintFile(filepath.Join(dir, "memory.peak"))
+	limit, limitOK := actualCLIReadUintFile(filepath.Join(dir, "memory.max"))
+	oom, oomKill, eventsOK := actualCLIReadCgroupV2Events(filepath.Join(dir, "memory.events"))
+	if !currentOK || !peakOK || !limitOK || limit != uint64(actualCLIContainerMemoryLimit) || current > limit || peak > limit || !eventsOK {
+		return actualCLIMemorySnapshot{}, false
+	}
+	return actualCLIMemorySnapshot{
+		PeakBytes: peak, CurrentBytes: current, LimitBytes: limit,
+		OOMEvents: oom, OOMKillEvents: oomKill, Samples: 1, Source: "cgroup_v2", ExactPeak: true,
+	}, true
+}
+
+func actualCLIExactCapacitySnapshotFailure(snapshot actualCLIMemorySnapshot) string {
+	if snapshot.Source != "cgroup_v2" || !snapshot.ExactPeak || snapshot.Samples < 1 {
+		return "exact_cgroup_v2_peak_unavailable"
+	}
+	if snapshot.LimitBytes != uint64(actualCLIContainerMemoryLimit) {
+		return "memory_limit_mismatch"
+	}
+	if snapshot.PeakBytes == 0 || snapshot.PeakBytes > snapshot.LimitBytes || snapshot.CurrentBytes > snapshot.LimitBytes {
+		return "memory_usage_out_of_range"
+	}
+	if snapshot.OOMEvents != 0 || snapshot.OOMKillEvents != 0 {
+		return "oom_events_nonzero"
+	}
+	return ""
+}
+
+func actualCLIReadCgroupV2Events(path string) (oom, oomKill uint64, ok bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, 0, false
+	}
+	fields := strings.Fields(string(data))
+	if len(fields)%2 != 0 {
+		return 0, 0, false
+	}
+	foundOOM, foundOOMKill := false, false
+	for index := 0; index < len(fields); index += 2 {
+		value, err := strconv.ParseUint(fields[index+1], 10, 64)
+		if err != nil {
+			return 0, 0, false
+		}
+		switch fields[index] {
+		case "oom":
+			oom, foundOOM = value, true
+		case "oom_kill":
+			oomKill, foundOOMKill = value, true
+		}
+	}
+	return oom, oomKill, foundOOM && foundOOMKill
 }
 
 func parseDockerMemoryUsage(value string) (used, limit uint64, ok bool) {
@@ -527,4 +736,101 @@ func parseDockerMemoryUsage(value string) (used, limit uint64, ok bool) {
 	}
 	used, limit = parse(left), parse(right)
 	return used, limit, used > 0 && limit > 0
+}
+
+func TestActualCLIResolveCgroupV2Path(t *testing.T) {
+	tests := []struct {
+		name       string
+		membership string
+		mountInfo  string
+		want       string
+	}{
+		{
+			name:       "host root mount",
+			membership: "/system.slice/docker-a.scope",
+			mountInfo:  "42 31 0:29 / /sys/fs/cgroup rw,nosuid,nodev,noexec,relatime - cgroup2 cgroup rw\n",
+			want:       "/sys/fs/cgroup/system.slice/docker-a.scope",
+		},
+		{
+			name:       "subtree mount with escaped space",
+			membership: "/docker/abc",
+			mountInfo:  "42 31 0:29 /docker /sys/fs/cgroup\\040root rw - cgroup2 cgroup rw\n",
+			want:       "/sys/fs/cgroup root/abc",
+		},
+		{
+			name:       "membership outside mounted subtree",
+			membership: "/system.slice/docker-a.scope",
+			mountInfo:  "42 31 0:29 /docker /sys/fs/cgroup rw - cgroup2 cgroup rw\n",
+		},
+		{
+			name:       "non cgroup2 mount",
+			membership: "/system.slice/docker-a.scope",
+			mountInfo:  "42 31 0:29 / /sys/fs/cgroup rw - cgroup cgroup rw\n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := actualCLIResolveCgroupV2Path(test.membership, []byte(test.mountInfo))
+			if ok != (test.want != "") || ok && got != test.want {
+				t.Fatalf("unexpected cgroup2 path resolution: resolved=%t matches_expected=%t", ok, got == test.want)
+			}
+		})
+	}
+	if path, ok := actualCLIParseCgroupV2Membership([]byte("1:name=systemd:/legacy\n0::/system.slice/docker-a.scope\n")); !ok || path != "/system.slice/docker-a.scope" {
+		t.Fatal("could not select the unified cgroup v2 membership")
+	}
+	if _, ok := actualCLIParseCgroupV2Membership([]byte("1:name=memory:/docker/a\n")); ok {
+		t.Fatal("accepted a cgroup v1-only membership")
+	}
+	if _, ok := actualCLIParseCgroupV2Membership([]byte("0::/../../etc\n")); ok {
+		t.Fatal("accepted a noncanonical cgroup membership path")
+	}
+}
+
+func TestActualCLIReadCgroupV2MemoryEvents(t *testing.T) {
+	dir := t.TempDir()
+	for name, value := range map[string]string{
+		"memory.current": "7340032\n",
+		"memory.peak":    "12582912\n",
+		"memory.max":     "1073741824\n",
+		"memory.events":  "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(value), 0o600); err != nil {
+			t.Fatal("could not prepare bounded cgroup-v2 memory fixture")
+		}
+	}
+	snapshot, ok := actualCLIReadCgroupV2Memory(dir)
+	if !ok || snapshot.CurrentBytes != 7340032 || snapshot.PeakBytes != 12582912 || snapshot.LimitBytes != uint64(actualCLIContainerMemoryLimit) || snapshot.OOMEvents != 0 || snapshot.OOMKillEvents != 0 || !snapshot.ExactPeak || snapshot.Source != "cgroup_v2" {
+		t.Fatal("bounded cgroup-v2 memory snapshot did not parse expected aggregate values")
+	}
+	if _, _, ok := actualCLIReadCgroupV2Events(filepath.Join(dir, "memory.missing")); ok {
+		t.Fatal("accepted a missing cgroup-v2 events file")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "memory.max"), []byte("max\n"), 0o600); err != nil {
+		t.Fatal("could not prepare the invalid cgroup-v2 memory limit")
+	}
+	if _, ok := actualCLIReadCgroupV2Memory(dir); ok {
+		t.Fatal("accepted an unlimited cgroup-v2 memory limit")
+	}
+}
+
+func TestActualCLIExactCapacitySnapshotGate(t *testing.T) {
+	valid := actualCLIMemorySnapshot{
+		PeakBytes: 16 << 20, CurrentBytes: 8 << 20, LimitBytes: uint64(actualCLIContainerMemoryLimit),
+		Samples: 1, Source: "cgroup_v2", ExactPeak: true,
+	}
+	if code := actualCLIExactCapacitySnapshotFailure(valid); code != "" {
+		t.Fatalf("accepted snapshot failed the expected valid capacity gate: code=%s", code)
+	}
+	fallback := valid
+	fallback.Source = "docker_stats_sampled"
+	fallback.ExactPeak = false
+	if code := actualCLIExactCapacitySnapshotFailure(fallback); code != "exact_cgroup_v2_peak_unavailable" {
+		t.Fatalf("sampled fallback did not fail the exact capacity gate: code=%s", code)
+	}
+	withOOM := valid
+	withOOM.OOMKillEvents = 1
+	if code := actualCLIExactCapacitySnapshotFailure(withOOM); code != "oom_events_nonzero" {
+		t.Fatalf("nonzero cgroup OOM count did not fail the exact capacity gate: code=%s", code)
+	}
 }
