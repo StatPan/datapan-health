@@ -105,9 +105,14 @@ does not contact provider destinations. The opt-in
 `TestOperationPlanActualCLIProviderGatusIntegration` target exercises the
 production child runner against an isolated synthetic provider and local
 pinned Gatus; its smoke and full modes are distinct from these source-QA
-fixtures. Existing probe-runner tests separately verify production child
-arguments, executable digest, private receipt path, and receipt validation.
-These tests do not establish deployment or live-provider acceptance.
+fixtures. `make operation-plan-actual-cli-diagnostic` targets 1,024 production
+scheduler tasks against the same complete fixture; its final eight-worker pass
+can bring the actual count to at most 1,031. It emits only aggregate worker,
+store, provider, and child metrics for failure diagnosis. It does not claim
+full-set reconciliation or readiness. Existing probe-runner
+tests separately verify production child arguments, executable digest, private
+receipt path, and receipt validation. These tests do not establish deployment
+or live-provider acceptance.
 
 The runtime-bundle installer accepts a release manifest up to 16 MiB so it can
 read a plan-bearing Registry projection. Its large-manifest test verifies that

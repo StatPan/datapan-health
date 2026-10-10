@@ -45,6 +45,8 @@ const (
 	actualCLIGovSOAPTypedSuccess    = "07776a0ef594eae07eeb13ac59eb5f659f9227dd513cc7505ce60dab21695e7e"
 	actualCLIGovSOAPTypedFailure    = "30a31059d5847698f696854e772aa1b22569c45c200d4e460c8e5f0c6358578c"
 	actualCLIFullControllerTimeout  = 90 * time.Minute
+	actualCLIDiagnosticTaskLimit    = 1024
+	actualCLIDiagnosticTimeout      = 15 * time.Minute
 )
 
 type actualCLIReleaseManifest struct {
@@ -252,8 +254,8 @@ func actualCLIProbeReasonCodeClass(reason string) string {
 func TestOperationPlanActualCLIProviderGatusIntegration(t *testing.T) {
 	qaStarted := time.Now()
 	mode := os.Getenv("HEALTH_OPERATION_ACTUAL_CLI_MODE")
-	if mode != "smoke" && mode != "full" {
-		t.Skip("set HEALTH_OPERATION_ACTUAL_CLI_MODE=smoke or full for isolated actual-CLI source QA")
+	if mode != "smoke" && mode != "diagnostic" && mode != "full" {
+		t.Skip("set HEALTH_OPERATION_ACTUAL_CLI_MODE=smoke, diagnostic, or full for isolated actual-CLI source QA")
 	}
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		t.Skip("the pinned child execution and Docker fixture require Linux amd64")
@@ -373,6 +375,9 @@ func TestOperationPlanActualCLIProviderGatusIntegration(t *testing.T) {
 	}
 	t.Logf("actual CLI source-QA production runtime ready: elapsed=%s", time.Since(qaStarted).Round(time.Millisecond))
 
+	if mode == "diagnostic" {
+		t.Logf("actual CLI bounded diagnostic input: source=%s version=%s binary_sha256=%s go_build=%q registry_revision=%s manifest_sha256=%s index_sha256=%s provider_routes_sha256=%s identities=%d bound_artifact_bytes=%d manifest_bytes=%d", sourceRevision, actualCLIExpectedVersion, binarySHA, goBuildVersion, plan.RegistryRevision(), plan.binding.ReleaseManifestSHA256, plan.IndexSHA256(), providerRoutesSHA256, len(identities), projection.BoundArtifactBytes, projection.ManifestBytes)
+	}
 	if mode == "smoke" {
 		actualCLIRejectsMissingInstallEvidence(t, worker, identities, planRoot, metricsURL, providerCA)
 		childTelemetry.reset()
@@ -388,8 +393,115 @@ func TestOperationPlanActualCLIProviderGatusIntegration(t *testing.T) {
 		t.Logf("actual CLI source-QA smoke passed: cli_source=%s cli_source_tree_verified=true cli_version=%s cli_sha256=%s go_build=%q registry_revision=%s registry_manifest_sha256=%s registry_index_sha256=%s provider_route_sha256=%s full_identities=%d registry_rest=%d registry_soap=%d inventory_unknown=%d synthetic_rest=4 synthetic_soap=4 synthetic_smoke_requests=8 cancellation_probe_requests=1 provider_requests=%d gatus_readbacks=6 external_provider_destinations=0 bound_artifact_bytes=%d manifest_bytes=%d physical_projection_bytes=%d manifest_artifact_count=%d cli_peak_bytes=%d memory_samples=%d cli_children=%d cli_child_total=%s cli_child_max=%s cli_child_timeouts=%d cli_child_exit_errors=%d cli_child_other_errors=%d cli_child_stdout_bytes=%d cli_child_stderr_bytes=%d cancellation_probe_elapsed=%s smoke_elapsed=%s", sourceRevision, actualCLIExpectedVersion, binarySHA, goBuildVersion, plan.binding.RegistryRevision, plan.binding.ReleaseManifestSHA256, plan.IndexSHA256(), providerRoutesSHA256, len(identities), protocolCounts["REST"], protocolCounts["SOAP"], unknownInventoryCount, metrics["requests"], projection.BoundArtifactBytes, projection.ManifestBytes, projection.PhysicalBytes, projection.ManifestArtifactCount, peakBytes, samples, smokeChildren.Calls, smokeChildren.TotalElapsed.Round(time.Millisecond), smokeChildren.MaxElapsed.Round(time.Millisecond), smokeChildren.ContextTimeout, smokeChildren.ExitErrors, smokeChildren.OtherErrors, smokeChildren.StdoutBytes, smokeChildren.StderrBytes, cancellationElapsed.Round(time.Millisecond), time.Since(smokeStarted).Round(time.Second))
 		return
 	}
+	if mode == "diagnostic" {
+		actualCLIDiagnosticPopulation(t, worker, attempts, history, identities, metricsURL, providerCA, childTelemetry, monitor)
+		return
+	}
 
 	actualCLIFullPopulation(t, worker, attempts, history, plan, metadata, identities, metricsURL, providerCA, providerRoutesSHA256, paths, sourceRevision, binarySHA, goBuildVersion, projection, monitor)
+}
+
+// actualCLIDiagnosticPopulation runs a bounded sample through the same
+// production scheduler, worker, runner, local provider, durable stores, and
+// native Gatus adapter as full mode. It records aggregate failure-stage data
+// for diagnosis only and deliberately makes no fleet-readiness or full-set
+// acceptance claim.
+func actualCLIDiagnosticPopulation(t *testing.T, worker *OperationPlanWorker, attempts *OperationAttemptStore, history *OperationHistoryStore, identities []operationPlanPopulationIdentity, metricsURL, caPath string, children *actualCLIInvocationTelemetry, monitor *actualCLIContainerMonitor) {
+	t.Helper()
+	const concurrency = 8
+	scheduler, err := NewOperationPlanScheduler(OperationPlanSchedulerConfig{
+		Worker: worker, MaxConcurrent: concurrency, MaxStartsPerPass: concurrency, MaxDeliveriesPerPass: concurrency,
+		CandidateScanPerPass: operationPlanSchedulerMaximumScanBudget, DeliveryLease: time.Minute,
+	})
+	if err != nil {
+		t.Fatal("bounded actual-CLI diagnostic could not create the production scheduler")
+	}
+	preflight := scheduler.Status(time.Now().UTC())
+	if !preflight.CapacityFeasible || preflight.AdmittedOperations != len(identities) || preflight.RequiredConcurrency > concurrency {
+		t.Fatalf("bounded actual-CLI diagnostic capacity preflight failed: feasible=%t required_concurrency=%d max_concurrent=%d admitted=%d expected=%d", preflight.CapacityFeasible, preflight.RequiredConcurrency, concurrency, preflight.AdmittedOperations, len(identities))
+	}
+	t.Logf("actual CLI bounded diagnostic started: task_limit=%d max_concurrent=%d full_fixture_identities=%d capacity_feasible=true", actualCLIDiagnosticTaskLimit, concurrency, len(identities))
+
+	controllerCtx, cancel := context.WithTimeout(context.Background(), actualCLIDiagnosticTimeout)
+	defer cancel()
+	startedAt := time.Now().UTC()
+	lastProgressAt := time.Now()
+	status := preflight
+	completed := false
+	for controllerCtx.Err() == nil {
+		if status.ExecutionTasksStartedSinceStart < actualCLIDiagnosticTaskLimit {
+			if err := scheduler.ProcessDue(controllerCtx, time.Now().UTC()); err != nil {
+				scheduler.Wait()
+				t.Fatalf("bounded actual-CLI diagnostic scheduler pass failed safely: %v", err)
+			}
+		}
+		status = scheduler.Status(time.Now().UTC())
+		if time.Since(lastProgressAt) >= 30*time.Second {
+			usage, _ := history.Usage(context.Background())
+			t.Logf("actual CLI bounded diagnostic progress: tasks=%d starts=%d observations=%d deferred=%d readbacks=%d not_applicable=%d active=%d execution_failures=%d delivery_failures=%d failure_stages=%s failure_categories=%s receipt_records=%d elapsed=%s", status.ExecutionTasksStartedSinceStart, status.RequestStartsSinceStart, status.ObservationsSinceStart, status.DeferredSinceStart, status.ReadbacksSinceStart, status.NotApplicableSinceStart, status.ActiveWork, status.ExecutionFailuresSinceStart, status.DeliveryFailuresSinceStart, actualCLIDiagnosticCounterMap(status.failureStageCounts, validOperationPlanWorkerFailureStage), actualCLIDiagnosticCounterMap(status.failureCategoryCounts, validOperationPlanWorkerFailureCategory), usage.RecordCount, time.Since(startedAt).Round(time.Second))
+			lastProgressAt = time.Now()
+		}
+		if status.ExecutionTasksStartedSinceStart >= actualCLIDiagnosticTaskLimit && status.ActiveWork == 0 {
+			completed = true
+			break
+		}
+		timer := time.NewTimer(operationPlanSchedulerPassInterval)
+		select {
+		case <-controllerCtx.Done():
+			timer.Stop()
+		case <-timer.C:
+		}
+	}
+	if !completed {
+		cancel()
+		scheduler.Wait()
+		status = scheduler.Status(time.Now().UTC())
+		t.Fatalf("bounded actual-CLI diagnostic did not drain within its controller bound: tasks=%d starts=%d observations=%d deferred=%d active=%d execution_failures=%d delivery_failures=%d", status.ExecutionTasksStartedSinceStart, status.RequestStartsSinceStart, status.ObservationsSinceStart, status.DeferredSinceStart, status.ActiveWork, status.ExecutionFailuresSinceStart, status.DeliveryFailuresSinceStart)
+	}
+	scheduler.Wait()
+	status = scheduler.Status(time.Now().UTC())
+	usage, err := history.Usage(context.Background())
+	if err != nil {
+		t.Fatal("bounded actual-CLI diagnostic could not read aggregate durable-history usage")
+	}
+	rows, err := attempts.SnapshotReadModelAttempts()
+	if err != nil {
+		t.Fatal("bounded actual-CLI diagnostic could not read aggregate attempt states")
+	}
+	states := map[string]int{}
+	for _, row := range rows {
+		states[row.AttemptState]++
+	}
+	metrics := actualCLIProviderMetrics(t, metricsURL, caPath)
+	peakBytes, memorySamples := monitor.Snapshot()
+	childSnapshot := children.snapshot()
+	t.Logf("actual CLI bounded diagnostic completed (not fleet acceptance): full_fixture_identities=%d task_limit=%d tasks=%d starts=%d observations=%d deferred=%d execution_failures=%d delivery_failures=%d failure_stages=%s failure_categories=%s last_error_stage=%s last_error_category=%s readbacks=%d not_applicable=%d active=%d receipt_records=%d history_bytes=%d attempt_state_observed=%d attempt_state_deferred=%d attempt_state_unknown=%d provider_requests=%d provider_unique=%d provider_duplicates=%d provider_invalid=%d provider_rest_get=%d provider_soap_post=%d provider_status_2xx=%d provider_status_503=%d child_calls=%d child_total=%s child_max=%s child_context_timeouts=%d child_exit_errors=%d child_other_errors=%d child_stdout_bytes=%d child_stderr_bytes=%d cli_peak_bytes=%d memory_samples=%d elapsed=%s", len(identities), actualCLIDiagnosticTaskLimit, status.ExecutionTasksStartedSinceStart, status.RequestStartsSinceStart, status.ObservationsSinceStart, status.DeferredSinceStart, status.ExecutionFailuresSinceStart, status.DeliveryFailuresSinceStart, actualCLIDiagnosticCounterMap(status.failureStageCounts, validOperationPlanWorkerFailureStage), actualCLIDiagnosticCounterMap(status.failureCategoryCounts, validOperationPlanWorkerFailureCategory), status.LastErrorStage, status.lastErrorCategory, status.ReadbacksSinceStart, status.NotApplicableSinceStart, status.ActiveWork, usage.RecordCount, usage.UsedBytes, states["observed"], states["deferred"], states["unknown"], metrics["requests"], metrics["unique"], metrics["duplicates"], metrics["invalid"], metrics["rest_get"], metrics["soap_post"], metrics["status_2xx"], metrics["status_503"], childSnapshot.Calls, childSnapshot.TotalElapsed.Round(time.Millisecond), childSnapshot.MaxElapsed.Round(time.Millisecond), childSnapshot.ContextTimeout, childSnapshot.ExitErrors, childSnapshot.OtherErrors, childSnapshot.StdoutBytes, childSnapshot.StderrBytes, peakBytes, memorySamples, time.Since(startedAt).Round(time.Second))
+}
+
+func actualCLIDiagnosticCounterMap(counts map[string]uint64, allowed func(string) bool) string {
+	if len(counts) == 0 {
+		return "none"
+	}
+	keys := make([]string, 0, len(counts))
+	for key := range counts {
+		if allowed == nil || allowed(key) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	var result strings.Builder
+	for i, key := range keys {
+		if i > 0 {
+			result.WriteByte(',')
+		}
+		result.WriteString(key)
+		result.WriteByte('=')
+		result.WriteString(strconv.FormatUint(counts[key], 10))
+	}
+	if result.Len() == 0 {
+		return "none"
+	}
+	return result.String()
 }
 
 func stageActualCLITrustedRegistryProjection(t *testing.T, planRoot string, plan PinnedOperationObservationPlan) actualCLIProjectionMeasurements {

@@ -93,6 +93,11 @@ operation-plan-gatus-capacity:
 operation-plan-actual-cli-smoke:
 	HEALTH_OPERATION_ACTUAL_CLI_MODE=smoke go test ./internal/health -run '^TestOperationPlanActualCLIProviderGatusIntegration$$' -count=1 -timeout=15m -v
 
+# Runs a bounded 1,024-task diagnostic through the production worker path.
+# Its aggregate errors are diagnostic only and do not establish fleet readiness.
+operation-plan-actual-cli-diagnostic:
+	HEALTH_OPERATION_ACTUAL_CLI_MODE=diagnostic go test ./internal/health -run '^TestOperationPlanActualCLIProviderGatusIntegration$$' -count=1 -timeout=20m -v
+
 operation-plan-actual-cli-full:
 	HEALTH_OPERATION_ACTUAL_CLI_MODE=full go test ./internal/health -run '^TestOperationPlanActualCLIProviderGatusIntegration$$' -count=1 -timeout=120m -v
 
