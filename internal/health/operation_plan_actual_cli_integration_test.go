@@ -1,6 +1,7 @@
 package health
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -13,6 +14,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -30,23 +32,30 @@ import (
 )
 
 const (
-	actualCLIExpectedSourceRevision = "acf060e71e2329b6a04ad4ab0abf669fbbfe9dac"
-	actualCLIExpectedVersion        = "v0.1.41"
-	actualCLIProviderSubnet         = "45.77.0.0/24"
-	actualCLIProviderIP             = "45.77.0.2"
-	actualCLIGatusIP                = "45.77.0.3"
-	actualCLIGatusImage             = pinnedOperationPlanTestGatusImage
-	actualCLIGovRESTObservationOK   = "00004a9f03e1bb109137e444e9b58ffe105d5d5c49254abf5e3094b2e3574749"
-	actualCLIGovRESTObservation503  = "0004cea4696c10954bc7db92690058078e6dd3a7ffddd92c61e7f4061e83ef0a"
-	actualCLIGovSOAPObservationOK   = "03d8a11773389ac22d176554aa878adb643d905f667c5115ed447d28476c78be"
-	actualCLIGovSOAPObservation503  = "28256cae93511a322963841fb8e03ac4c0273a45f85fd0371ac0f9f7b7bfb8b2"
-	actualCLIGovRESTTypedSuccess    = "001145a8aa9aa99135ef4d039f85b932cc0fc25641ed9ba2b5f0748728de61c4"
-	actualCLIGovRESTTypedFailure    = "0014af9e0f58c9dd10c0167164e037ddf5f75658431d5ad3ffe531b6bf45d97a"
-	actualCLIGovSOAPTypedSuccess    = "07776a0ef594eae07eeb13ac59eb5f659f9227dd513cc7505ce60dab21695e7e"
-	actualCLIGovSOAPTypedFailure    = "30a31059d5847698f696854e772aa1b22569c45c200d4e460c8e5f0c6358578c"
-	actualCLIFullControllerTimeout  = 90 * time.Minute
-	actualCLIDiagnosticTaskLimit    = 1024
-	actualCLIDiagnosticTimeout      = 15 * time.Minute
+	actualCLIExpectedSourceRevision          = "acf060e71e2329b6a04ad4ab0abf669fbbfe9dac"
+	actualCLIExpectedVersion                 = "v0.1.41"
+	actualCLIProviderSubnet                  = "45.77.0.0/24"
+	actualCLIProviderIP                      = "45.77.0.2"
+	actualCLIGatusIP                         = "45.77.0.3"
+	actualCLIGatusImage                      = pinnedOperationPlanTestGatusImage
+	actualCLIGovRESTObservationOK            = "00004a9f03e1bb109137e444e9b58ffe105d5d5c49254abf5e3094b2e3574749"
+	actualCLIGovRESTObservation503           = "0004cea4696c10954bc7db92690058078e6dd3a7ffddd92c61e7f4061e83ef0a"
+	actualCLIGovSOAPObservationOK            = "03d8a11773389ac22d176554aa878adb643d905f667c5115ed447d28476c78be"
+	actualCLIGovSOAPObservation503           = "28256cae93511a322963841fb8e03ac4c0273a45f85fd0371ac0f9f7b7bfb8b2"
+	actualCLIGovRESTTypedSuccess             = "001145a8aa9aa99135ef4d039f85b932cc0fc25641ed9ba2b5f0748728de61c4"
+	actualCLIGovRESTTypedFailure             = "0014af9e0f58c9dd10c0167164e037ddf5f75658431d5ad3ffe531b6bf45d97a"
+	actualCLIGovSOAPTypedSuccess             = "07776a0ef594eae07eeb13ac59eb5f659f9227dd513cc7505ce60dab21695e7e"
+	actualCLIGovSOAPTypedFailure             = "30a31059d5847698f696854e772aa1b22569c45c200d4e460c8e5f0c6358578c"
+	actualCLIFullControllerTimeout           = 90 * time.Minute
+	actualCLIDiagnosticTaskLimit             = 1024
+	actualCLIDiagnosticTimeout               = 15 * time.Minute
+	actualCLIHistoricalFailureManifestSHA256 = "8ccf9dbfe0bd105097eb1fa20bedd0efb56cad0b580ef58e2ed68cab06ae0a67"
+	actualCLIHistoricalFailureIndexSHA256    = "e0005a4443ab32186c3614c326db584666bbca6f0cab930c7d53c752d947d5c0"
+	actualCLIHistoricalFailureBinarySHA256   = "d99d660ea3b9c9b59bfc275d7855376845f0c65a144ee59481f8e2b75405a3ab"
+	actualCLIRecentCaptureLimit              = 32
+	actualCLIRetainedFailureLimit            = 8
+	actualCLIRecentCaptureByteLimit          = actualCLIRecentCaptureLimit * (2*maxOperationPlanProbeReceiptBytes + maxOperationPlanProbeStderrBytes)
+	actualCLIRetainedFailureByteLimit        = actualCLIRetainedFailureLimit * (2*maxOperationPlanProbeReceiptBytes + maxOperationPlanProbeStderrBytes + (16 << 10))
 )
 
 type actualCLIReleaseManifest struct {
@@ -74,28 +83,78 @@ type actualCLIProjectionMeasurements struct {
 }
 
 type actualCLIInvocationTelemetry struct {
-	mu             sync.Mutex
-	calls          int
-	contextTimeout int
-	exitErrors     int
-	otherErrors    int
-	totalElapsed   time.Duration
-	maxElapsed     time.Duration
-	stdoutBytes    int64
-	stderrBytes    int64
-	stderrClasses  map[string]int
+	mu                sync.Mutex
+	calls             int
+	contextTimeout    int
+	exitErrors        int
+	otherErrors       int
+	totalElapsed      time.Duration
+	maxElapsed        time.Duration
+	stdoutBytes       int64
+	stderrBytes       int64
+	stderrClasses     map[string]int
+	childErrorKinds   map[string]int
+	exitCodes         map[int]int
+	recentCaptures    []actualCLIChildCapture
+	retentionRoot     string
+	receiptRoot       string
+	retainedFailures  int
+	retentionFailures int
+	retentionBytes    int64
 }
 
 type actualCLIInvocationTelemetrySnapshot struct {
-	Calls          int
-	ContextTimeout int
-	ExitErrors     int
-	OtherErrors    int
-	TotalElapsed   time.Duration
-	MaxElapsed     time.Duration
-	StdoutBytes    int64
-	StderrBytes    int64
-	StderrClasses  map[string]int
+	Calls              int
+	ContextTimeout     int
+	ExitErrors         int
+	OtherErrors        int
+	TotalElapsed       time.Duration
+	MaxElapsed         time.Duration
+	StdoutBytes        int64
+	StderrBytes        int64
+	StderrClasses      map[string]int
+	ChildErrorKinds    map[string]int
+	ExitCodes          map[int]int
+	RecentCaptures     int
+	RecentCaptureBytes int64
+	RetainedFailures   int
+	RetentionFailures  int
+	RetentionBytes     int64
+	RetentionByteLimit int64
+}
+
+type actualCLIChildCapture struct {
+	attemptSHA256   string
+	operationSHA256 string
+	stdout          []byte
+	stderr          []byte
+	receipt         []byte
+	elapsed         time.Duration
+	errorKind       string
+	exitCode        int
+	stderrClass     string
+}
+
+type actualCLIPrivateFailureMetadata struct {
+	SchemaVersion        string `json:"schema_version"`
+	AttemptTokenSHA256   string `json:"attempt_token_sha256"`
+	OperationTokenSHA256 string `json:"operation_token_sha256"`
+	AttemptGeneration    uint64 `json:"attempt_generation"`
+	WorkerStage          string `json:"worker_stage"`
+	WorkerCategory       string `json:"worker_category"`
+	ProbeStage           string `json:"probe_stage"`
+	ProbeCategory        string `json:"probe_category"`
+	ChildErrorKind       string `json:"child_error_kind"`
+	ChildExitCode        int    `json:"child_exit_code,omitempty"`
+	StderrClass          string `json:"stderr_class"`
+	ElapsedMilliseconds  int64  `json:"elapsed_milliseconds"`
+	StdoutBytes          int    `json:"stdout_bytes"`
+	StdoutSHA256         string `json:"stdout_sha256,omitempty"`
+	StderrBytes          int    `json:"stderr_bytes"`
+	StderrSHA256         string `json:"stderr_sha256,omitempty"`
+	ReceiptPresent       bool   `json:"receipt_present"`
+	ReceiptBytes         int    `json:"receipt_bytes"`
+	ReceiptSHA256        string `json:"receipt_sha256,omitempty"`
 }
 
 func (telemetry *actualCLIInvocationTelemetry) reset() {
@@ -113,6 +172,12 @@ func (telemetry *actualCLIInvocationTelemetry) reset() {
 	telemetry.stdoutBytes = 0
 	telemetry.stderrBytes = 0
 	telemetry.stderrClasses = nil
+	telemetry.childErrorKinds = nil
+	telemetry.exitCodes = nil
+	telemetry.recentCaptures = nil
+	telemetry.retainedFailures = 0
+	telemetry.retentionFailures = 0
+	telemetry.retentionBytes = 0
 }
 
 func (telemetry *actualCLIInvocationTelemetry) snapshot() actualCLIInvocationTelemetrySnapshot {
@@ -125,14 +190,64 @@ func (telemetry *actualCLIInvocationTelemetry) snapshot() actualCLIInvocationTel
 	for class, count := range telemetry.stderrClasses {
 		classes[class] = count
 	}
+	kinds := make(map[string]int, len(telemetry.childErrorKinds))
+	for kind, count := range telemetry.childErrorKinds {
+		kinds[kind] = count
+	}
+	exitCodes := make(map[int]int, len(telemetry.exitCodes))
+	for code, count := range telemetry.exitCodes {
+		exitCodes[code] = count
+	}
+	var recentCaptureBytes int64
+	for _, capture := range telemetry.recentCaptures {
+		recentCaptureBytes += int64(len(capture.stdout) + len(capture.stderr) + len(capture.receipt))
+	}
 	return actualCLIInvocationTelemetrySnapshot{
 		Calls: telemetry.calls, ContextTimeout: telemetry.contextTimeout, ExitErrors: telemetry.exitErrors,
 		OtherErrors: telemetry.otherErrors, TotalElapsed: telemetry.totalElapsed, MaxElapsed: telemetry.maxElapsed,
 		StdoutBytes: telemetry.stdoutBytes, StderrBytes: telemetry.stderrBytes, StderrClasses: classes,
+		ChildErrorKinds: kinds, ExitCodes: exitCodes, RecentCaptures: len(telemetry.recentCaptures), RecentCaptureBytes: recentCaptureBytes,
+		RetainedFailures: telemetry.retainedFailures, RetentionFailures: telemetry.retentionFailures, RetentionBytes: telemetry.retentionBytes,
+		RetentionByteLimit: actualCLIRetainedFailureByteLimit,
 	}
 }
 
-func (telemetry *actualCLIInvocationTelemetry) record(elapsed time.Duration, childErr, contextErr error, stdoutBytes, stderrBytes int64, stderrClass string) {
+func (telemetry *actualCLIInvocationTelemetry) captureForAttempt(attemptID string) (actualCLIChildCapture, bool) {
+	if telemetry == nil || attemptID == "" {
+		return actualCLIChildCapture{}, false
+	}
+	attemptSHA := digest([]byte(attemptID))
+	telemetry.mu.Lock()
+	defer telemetry.mu.Unlock()
+	for index := len(telemetry.recentCaptures) - 1; index >= 0; index-- {
+		capture := telemetry.recentCaptures[index]
+		if capture.attemptSHA256 == attemptSHA {
+			capture.stdout = append([]byte(nil), capture.stdout...)
+			capture.stderr = append([]byte(nil), capture.stderr...)
+			capture.receipt = append([]byte(nil), capture.receipt...)
+			return capture, true
+		}
+	}
+	return actualCLIChildCapture{}, false
+}
+
+func actualCLIReceiptCaptureMatchesExpectation(expected OperationPlanProbeExpectation, capture actualCLIChildCapture) bool {
+	if expected.Protocol != "REST" || expected.AttemptID == "" || len(capture.stdout) == 0 || len(capture.receipt) == 0 || !bytes.Equal(capture.stdout, capture.receipt) {
+		return false
+	}
+	var receipt operationPlanProbeReceipt
+	if json.Unmarshal(capture.receipt, &receipt) != nil {
+		return false
+	}
+	return receipt.AttemptID == expected.AttemptID &&
+		receipt.Operation.SourceID == expected.SourceID &&
+		receipt.Operation.OperationID == expected.OperationID &&
+		receipt.Operation.Protocol == expected.Protocol &&
+		receipt.Operation.Provider == expected.Provider &&
+		receipt.Operation.AdapterID == expected.AdapterID
+}
+
+func (telemetry *actualCLIInvocationTelemetry) record(elapsed time.Duration, childErr, contextErr error, stdoutBytes, stderrBytes int64, stderrClass string, capture actualCLIChildCapture) {
 	if telemetry == nil {
 		return
 	}
@@ -151,18 +266,32 @@ func (telemetry *actualCLIInvocationTelemetry) record(elapsed time.Duration, chi
 		}
 		telemetry.stderrClasses[stderrClass]++
 	}
+	if telemetry.childErrorKinds == nil {
+		telemetry.childErrorKinds = make(map[string]int)
+	}
+	kind := actualCLIChildErrorKind(childErr, contextErr)
+	telemetry.childErrorKinds[kind]++
 	if errors.Is(contextErr, context.DeadlineExceeded) {
 		telemetry.contextTimeout++
-		return
 	}
-	if childErr == nil {
-		return
+	if childErr != nil {
+		var exit *exec.ExitError
+		if errors.As(childErr, &exit) {
+			telemetry.exitErrors++
+			if telemetry.exitCodes == nil {
+				telemetry.exitCodes = make(map[int]int)
+			}
+			telemetry.exitCodes[exit.ExitCode()]++
+		} else {
+			telemetry.otherErrors++
+		}
 	}
-	var exit *exec.ExitError
-	if errors.As(childErr, &exit) {
-		telemetry.exitErrors++
-	} else {
-		telemetry.otherErrors++
+	if capture.attemptSHA256 != "" && actualCLIChildCaptureWithinLimits(capture) {
+		telemetry.recentCaptures = append(telemetry.recentCaptures, capture)
+		if len(telemetry.recentCaptures) > actualCLIRecentCaptureLimit {
+			copy(telemetry.recentCaptures, telemetry.recentCaptures[len(telemetry.recentCaptures)-actualCLIRecentCaptureLimit:])
+			telemetry.recentCaptures = telemetry.recentCaptures[:actualCLIRecentCaptureLimit]
+		}
 	}
 }
 
@@ -179,9 +308,244 @@ func instrumentActualCLIChildInvoker(base operationPlanProbeChildInvoker, teleme
 			stderrBytes = int64(len(buffer.data))
 			stderrData = buffer.data
 		}
-		telemetry.record(time.Since(started), err, ctx.Err(), stdoutBytes, stderrBytes, actualCLIChildStderrClass(stderrData))
+		stdoutData := []byte(nil)
+		if buffer, ok := stdout.(*boundedOperationOutput); ok {
+			stdoutData = buffer.data
+		}
+		capture := actualCLIChildCapture{
+			attemptSHA256:   actualCLIArgumentSHA256(args, "--health-attempt-id"),
+			operationSHA256: actualCLIArgumentSHA256(args, "--health-operation-id"),
+			stdout:          append([]byte(nil), stdoutData...), stderr: append([]byte(nil), stderrData...),
+			receipt: actualCLIReadReceiptCapture(telemetry.receiptRoot, actualCLIArgumentValue(args, "--output")),
+			elapsed: time.Since(started), errorKind: actualCLIChildErrorKind(err, ctx.Err()),
+			stderrClass: actualCLIChildStderrClass(stderrData),
+		}
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			capture.exitCode = exit.ExitCode()
+		}
+		telemetry.record(capture.elapsed, err, ctx.Err(), stdoutBytes, stderrBytes, capture.stderrClass, capture)
 		return err
 	}
+}
+
+func actualCLIChildErrorKind(childErr, contextErr error) string {
+	if errors.Is(contextErr, context.DeadlineExceeded) || errors.Is(childErr, context.DeadlineExceeded) {
+		return "deadline"
+	}
+	if errors.Is(contextErr, context.Canceled) || errors.Is(childErr, context.Canceled) {
+		return "canceled"
+	}
+	if childErr == nil {
+		return "none"
+	}
+	var exit *exec.ExitError
+	if errors.As(childErr, &exit) {
+		return "exit_nonzero"
+	}
+	return "invoker_error"
+}
+
+func actualCLIArgumentValue(args []string, name string) string {
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] == name {
+			return args[index+1]
+		}
+	}
+	return ""
+}
+
+func actualCLIArgumentSHA256(args []string, name string) string {
+	value := actualCLIArgumentValue(args, name)
+	if value == "" {
+		return ""
+	}
+	return digest([]byte(value))
+}
+
+func actualCLIReadReceiptCapture(receiptRoot, outputPath string) []byte {
+	if receiptRoot == "" || outputPath == "" || !filepath.IsAbs(receiptRoot) || !filepath.IsAbs(outputPath) {
+		return nil
+	}
+	root := filepath.Clean(receiptRoot)
+	path := filepath.Clean(outputPath)
+	rootInfo, rootErr := os.Lstat(root)
+	if rootErr != nil || !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 || rootInfo.Mode().Perm() != 0o700 {
+		return nil
+	}
+	relative, err := filepath.Rel(root, path)
+	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.Base(relative) != "receipt.json" {
+		return nil
+	}
+	parent := filepath.Base(filepath.Dir(path))
+	if !strings.HasPrefix(parent, ".attempt-") || len(parent) < len(".attempt-x") {
+		return nil
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 || info.Size() < 1 || info.Size() > maxOperationPlanProbeReceiptBytes {
+		return nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxOperationPlanProbeReceiptBytes+1))
+	if err != nil || len(data) == 0 || len(data) > maxOperationPlanProbeReceiptBytes {
+		return nil
+	}
+	return data
+}
+
+func actualCLIChildCaptureWithinLimits(capture actualCLIChildCapture) bool {
+	return len(capture.stdout) <= maxOperationPlanProbeReceiptBytes && len(capture.stderr) <= maxOperationPlanProbeStderrBytes && len(capture.receipt) <= maxOperationPlanProbeReceiptBytes
+}
+
+func (telemetry *actualCLIInvocationTelemetry) retainFailedCapture(attemptID string, generation uint64, workerStage, workerCategory, probeStage, probeCategory string) bool {
+	if telemetry == nil || attemptID == "" || telemetry.retentionRoot == "" {
+		return false
+	}
+	attemptSHA := digest([]byte(attemptID))
+	telemetry.mu.Lock()
+	defer telemetry.mu.Unlock()
+	var capture *actualCLIChildCapture
+	for index := len(telemetry.recentCaptures) - 1; index >= 0; index-- {
+		if telemetry.recentCaptures[index].attemptSHA256 == attemptSHA {
+			copy := telemetry.recentCaptures[index]
+			capture = &copy
+			break
+		}
+	}
+	if capture == nil || telemetry.retainedFailures >= actualCLIRetainedFailureLimit || !actualCLIChildCaptureWithinLimits(*capture) {
+		telemetry.retentionFailures++
+		return false
+	}
+	if !validOperationPlanWorkerFailureStage(workerStage) {
+		workerStage = "unavailable"
+	}
+	if !validOperationPlanWorkerFailureCategory(workerCategory) {
+		workerCategory = "unavailable"
+	}
+	if !validOperationPlanProbeFailureStage(probeStage) {
+		probeStage = "unavailable"
+	}
+	if !validOperationPlanProbeFailureCategory(probeCategory) {
+		probeCategory = "unavailable"
+	}
+	if err := actualCLIEnsurePrivateDiagnosticDirectory(telemetry.retentionRoot); err != nil {
+		telemetry.retentionFailures++
+		return false
+	}
+	ordinal := telemetry.retainedFailures + 1
+	prefix := fmt.Sprintf("failure-%02d", ordinal)
+	files := []struct {
+		suffix string
+		data   []byte
+		limit  int
+	}{
+		{suffix: ".stdout", data: capture.stdout, limit: maxOperationPlanProbeReceiptBytes},
+		{suffix: ".stderr", data: capture.stderr, limit: maxOperationPlanProbeStderrBytes},
+		{suffix: ".receipt.json", data: capture.receipt, limit: maxOperationPlanProbeReceiptBytes},
+	}
+	metadata := actualCLIPrivateFailureMetadata{
+		SchemaVersion:      "datapan.health-actual-cli-failure-capture.v1",
+		AttemptTokenSHA256: capture.attemptSHA256, OperationTokenSHA256: capture.operationSHA256,
+		AttemptGeneration: generation,
+		WorkerStage:       workerStage, WorkerCategory: workerCategory, ProbeStage: probeStage, ProbeCategory: probeCategory,
+		ChildErrorKind: capture.errorKind, ChildExitCode: capture.exitCode, StderrClass: capture.stderrClass,
+		ElapsedMilliseconds: capture.elapsed.Milliseconds(), StdoutBytes: len(capture.stdout), StderrBytes: len(capture.stderr),
+		ReceiptPresent: len(capture.receipt) > 0, ReceiptBytes: len(capture.receipt),
+	}
+	if len(capture.stdout) > 0 {
+		metadata.StdoutSHA256 = digest(capture.stdout)
+	}
+	if len(capture.stderr) > 0 {
+		metadata.StderrSHA256 = digest(capture.stderr)
+	}
+	if len(capture.receipt) > 0 {
+		metadata.ReceiptSHA256 = digest(capture.receipt)
+	}
+	metadataRaw, err := json.Marshal(metadata)
+	if err != nil || len(metadataRaw) > 16<<10 {
+		telemetry.retentionFailures++
+		return false
+	}
+	setBytes := int64(len(metadataRaw) + len(capture.stdout) + len(capture.stderr) + len(capture.receipt))
+	if setBytes < 0 || telemetry.retentionBytes > actualCLIRetainedFailureByteLimit-setBytes {
+		telemetry.retentionFailures++
+		return false
+	}
+	for _, artifact := range files {
+		if len(artifact.data) == 0 {
+			continue
+		}
+		if len(artifact.data) > artifact.limit || actualCLIWritePrivateDiagnosticFile(filepath.Join(telemetry.retentionRoot, prefix+artifact.suffix), artifact.data) != nil {
+			for _, cleanup := range files {
+				_ = os.Remove(filepath.Join(telemetry.retentionRoot, prefix+cleanup.suffix))
+			}
+			telemetry.retentionFailures++
+			return false
+		}
+	}
+	if actualCLIWritePrivateDiagnosticFile(filepath.Join(telemetry.retentionRoot, prefix+".json"), metadataRaw) != nil {
+		for _, cleanup := range files {
+			_ = os.Remove(filepath.Join(telemetry.retentionRoot, prefix+cleanup.suffix))
+		}
+		_ = os.Remove(filepath.Join(telemetry.retentionRoot, prefix+".json"))
+		telemetry.retentionFailures++
+		return false
+	}
+	telemetry.retainedFailures++
+	telemetry.retentionBytes += setBytes
+	return true
+}
+
+func actualCLIEnsurePrivateDiagnosticDirectory(path string) error {
+	if !filepath.IsAbs(path) {
+		return os.ErrPermission
+	}
+	parent := filepath.Dir(filepath.Clean(path))
+	parentInfo, err := os.Lstat(parent)
+	if err != nil || !parentInfo.IsDir() || parentInfo.Mode()&os.ModeSymlink != 0 || parentInfo.Mode().Perm() != 0o700 {
+		return os.ErrPermission
+	}
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		if err := os.Mkdir(path, 0o700); err != nil {
+			return os.ErrPermission
+		}
+		info, err = os.Lstat(path)
+	}
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o700 {
+		return os.ErrPermission
+	}
+	return nil
+}
+
+func actualCLIWritePrivateDiagnosticFile(path string, data []byte) error {
+	if !filepath.IsAbs(path) || len(data) == 0 {
+		return os.ErrInvalid
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	return file.Close()
 }
 
 func actualCLIChildStderrClass(stderr []byte) string {
@@ -248,14 +612,16 @@ func actualCLIProbeReasonCodeClass(reason string) string {
 // TestOperationPlanActualCLIProviderGatusIntegration is the opt-in source-QA
 // proof for the compiled, exact-pinned CLI child, a no-egress synthetic REST/
 // SOAP provider, durable operation receipts, and the pinned native Gatus API.
-// Use HEALTH_OPERATION_ACTUAL_CLI_MODE=recovery and smoke before full for all
+// Use HEALTH_OPERATION_ACTUAL_CLI_MODE=repro to investigate one retained
+// ambiguous attempt in a fresh state, recovery for a deterministic quota-window
+// defer/retry, smoke for protocol/cancellation semantics, then full for all
 // 12,666 manifest-derived identities. It never reads provider credentials or
 // calls provider infrastructure.
 func TestOperationPlanActualCLIProviderGatusIntegration(t *testing.T) {
 	qaStarted := time.Now()
 	mode := os.Getenv("HEALTH_OPERATION_ACTUAL_CLI_MODE")
-	if mode != "recovery" && mode != "smoke" && mode != "diagnostic" && mode != "full" {
-		t.Skip("set HEALTH_OPERATION_ACTUAL_CLI_MODE=recovery, smoke, diagnostic, or full for isolated actual-CLI source QA")
+	if mode != "recovery" && mode != "smoke" && mode != "diagnostic" && mode != "repro" && mode != "full" {
+		t.Skip("set HEALTH_OPERATION_ACTUAL_CLI_MODE=recovery, smoke, diagnostic, repro, or full for isolated actual-CLI source QA")
 	}
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		t.Skip("the pinned child execution and Docker fixture require Linux amd64")
@@ -295,6 +661,18 @@ func TestOperationPlanActualCLIProviderGatusIntegration(t *testing.T) {
 	}
 
 	fixtureRoot := actualCLIPrivateFixtureRoot(t)
+	var reproductionIdentity operationPlanPopulationIdentity
+	if mode == "repro" {
+		historicalRoot := strings.TrimSpace(os.Getenv("HEALTH_OPERATION_ACTUAL_CLI_HISTORICAL_FIXTURE"))
+		reproductionIdentity = actualCLIHistoricalUnresolvedIdentity(t, historicalRoot, identities, plan)
+		manifestSame := plan.binding.ReleaseManifestSHA256 == actualCLIHistoricalFailureManifestSHA256
+		indexSame := plan.IndexSHA256() == actualCLIHistoricalFailureIndexSHA256
+		binarySame := binarySHA == actualCLIHistoricalFailureBinarySHA256
+		if !manifestSame || !indexSame || !binarySame {
+			t.Fatalf("actual CLI isolated reproduction inputs differ from the retained full run: manifest_sha_equal=%t index_sha_equal=%t cli_binary_sha_equal=%t", manifestSame, indexSame, binarySame)
+		}
+		t.Logf("actual CLI isolated failure reproduction selected: source=%s registry_protocol=%s synthetic_transport=REST case=observation_only historical_state=unknown historical_request_started=unknown historical_receipt_validated=false same_manifest_bytes=true same_index_bytes=true same_cli_binary_bytes=true", reproductionIdentity.SourceID, reproductionIdentity.Protocol)
+	}
 	delayedOperationID := ""
 	if mode == "smoke" {
 		delayed, found := actualCLICancellationIdentity(identities)
@@ -342,7 +720,9 @@ func TestOperationPlanActualCLIProviderGatusIntegration(t *testing.T) {
 	if filepath.Clean(runner.workingDirectory) != filepath.Clean(planRoot) {
 		t.Fatal("actual CLI sandbox working directory does not match the pinned operation-index root")
 	}
-	childTelemetry := &actualCLIInvocationTelemetry{}
+	childTelemetry := &actualCLIInvocationTelemetry{
+		retentionRoot: filepath.Join(fixtureRoot, "failure-evidence"), receiptRoot: receiptRoot,
+	}
 	runner.childInvoker = instrumentActualCLIChildInvoker(dockerActualCLIChildInvoker(networkName, cliContainer, runner.workingDirectory), childTelemetry)
 	lock := actualCLIRuntimeLock(binarySHA, sourceRevision, plan)
 	resolver, err := NewPinnedOperationPlanProbeExpectationResolver(plan, lock, "amd64")
@@ -400,12 +780,16 @@ func TestOperationPlanActualCLIProviderGatusIntegration(t *testing.T) {
 		actualCLIWindowDrainRecoverySmoke(t, worker, attempts, quotas, history, identities, metricsURL, providerCA, childTelemetry, monitor)
 		return
 	}
+	if mode == "repro" {
+		actualCLIReproduceHistoricalUnknown(t, worker, attempts, history, reproductionIdentity, metricsURL, providerCA, childTelemetry, monitor)
+		return
+	}
 	if mode == "diagnostic" {
 		actualCLIDiagnosticPopulation(t, worker, attempts, history, identities, metricsURL, providerCA, childTelemetry, monitor)
 		return
 	}
 
-	actualCLIFullPopulation(t, worker, attempts, history, plan, metadata, identities, metricsURL, providerCA, providerRoutesSHA256, paths, sourceRevision, binarySHA, goBuildVersion, projection, monitor)
+	actualCLIFullPopulation(t, worker, attempts, history, plan, metadata, identities, metricsURL, providerCA, providerRoutesSHA256, paths, sourceRevision, binarySHA, goBuildVersion, projection, childTelemetry, monitor)
 }
 
 // actualCLIPrivateFixtureRoot retains only this test's synthetic, mode-0700
@@ -428,6 +812,239 @@ func actualCLIPrivateFixtureRoot(t *testing.T) string {
 		}
 	})
 	return root
+}
+
+func actualCLIHistoricalUnresolvedIdentity(t *testing.T, historicalRoot string, identities []operationPlanPopulationIdentity, plan PinnedOperationObservationPlan) operationPlanPopulationIdentity {
+	t.Helper()
+	if !filepath.IsAbs(historicalRoot) || filepath.Clean(filepath.Dir(historicalRoot)) != filepath.Clean(os.TempDir()) || !strings.HasPrefix(filepath.Base(historicalRoot), "datapan-health-actual-cli-") {
+		t.Fatal("actual CLI reproduction requires the retained private source-QA fixture root")
+	}
+	rootInfo, err := os.Lstat(historicalRoot)
+	if err != nil || !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 || rootInfo.Mode().Perm() != 0o700 {
+		t.Fatal("actual CLI reproduction source fixture is not a private owned directory")
+	}
+	readOnlyStore, err := OpenReadOnlyOperationAttemptStore(filepath.Join(historicalRoot, "attempts"))
+	if err != nil {
+		t.Fatal("actual CLI reproduction could not open the historical attempt snapshot read-only")
+	}
+	var selected operationPlanPopulationIdentity
+	unknowns := 0
+	for _, identity := range identities {
+		latest, found, readErr := readOnlyStore.Latest(identity.SourceID, identity.OperationID)
+		if readErr != nil {
+			t.Fatal("actual CLI reproduction could not inspect the historical attempt snapshot")
+		}
+		if !found || latest.State != "unknown" {
+			continue
+		}
+		unknowns++
+		if identity.SourceID == "ecos" && identity.InventoryUnknown && identity.Protocol == "HTTP" && latest.Binding.SourceID == identity.SourceID && latest.Binding.OperationID == identity.OperationID && latest.Binding.ReleaseManifestSHA == plan.binding.ReleaseManifestSHA256 && latest.Binding.IndexSHA == plan.IndexSHA256() && !latest.ReceiptValidated && latest.ReceiptSHA256 == "" && latest.Result == nil {
+			selected = identity
+		}
+	}
+	if unknowns != 1 || selected.OperationID == "" {
+		t.Fatalf("actual CLI reproduction requires exactly one historical unknown partial-scope identity with matching manifest/index pins: unknowns=%d selected=%t", unknowns, selected.OperationID != "")
+	}
+	return selected
+}
+
+func actualCLIReproduceHistoricalUnknown(t *testing.T, worker *OperationPlanWorker, attempts *OperationAttemptStore, history *OperationHistoryStore, identity operationPlanPopulationIdentity, metricsURL, caPath string, children *actualCLIInvocationTelemetry, monitor *actualCLIContainerMonitor) {
+	t.Helper()
+	if identity.SourceID != "ecos" || identity.Protocol != "HTTP" || !identity.InventoryUnknown {
+		t.Fatal("actual CLI single-identity reproduction selected an unexpected source scope")
+	}
+	beforeMetrics := actualCLIProviderMetrics(t, metricsURL, caPath)
+	if beforeMetrics["requests"] != 0 || beforeMetrics["unique"] != 0 {
+		t.Fatal("actual CLI single-identity reproduction requires a fresh synthetic provider")
+	}
+	startedAt := time.Now().UTC()
+	result, runErr := worker.ExecuteOne(context.Background(), identity.SourceID, identity.OperationID, startedAt)
+	var workerStage, workerCategory, probeStage, probeCategory string
+	if runErr != nil {
+		workerStage, workerCategory = "unavailable", "unavailable"
+		probeStage, probeCategory = "unavailable", "unavailable"
+		var failure *operationPlanWorkerFailure
+		if errors.As(runErr, &failure) {
+			workerStage, workerCategory = failure.stage, failure.category
+			probeStage, probeCategory = failure.probeStage, failure.probeCategory
+		}
+	}
+	retained := false
+	if result.AttemptID != "" && runErr != nil {
+		retained = children.retainFailedCapture(result.AttemptID, result.Generation, workerStage, workerCategory, probeStage, probeCategory)
+	}
+	latest, found, latestErr := attempts.Latest(identity.SourceID, identity.OperationID)
+	usage, usageErr := history.Usage(context.Background())
+	afterMetrics := actualCLIProviderMetrics(t, metricsURL, caPath)
+	memory := monitor.Snapshot()
+	child := children.snapshot()
+	receiptProtocolBound := false
+	target, targetFound := worker.targets[operationReadModelIdentityKey(identity.SourceID, identity.OperationID)]
+	if targetFound && result.AttemptID != "" {
+		expected, expectedErr := operationPlanProbeExpected(worker.runtime.Plan, target.Record, target.ShardSHA256, result.AttemptID, worker.lock, worker.arch, startedAt)
+		capture, captureFound := children.captureForAttempt(result.AttemptID)
+		receiptProtocolBound = expectedErr == nil && expected.SourceID == identity.SourceID && expected.OperationID == identity.OperationID && expected.Protocol == "REST" && target.Record.Protocol == "REST" && actualCLIReceiptCaptureMatchesExpectation(expected, capture) && captureFound
+	}
+	requestStarted := "unknown"
+	if found && latest.RequestStarted != nil {
+		requestStarted = strconv.FormatBool(*latest.RequestStarted)
+	}
+	if runErr != nil {
+		t.Fatalf("actual CLI isolated source-QA reproduction produced a worker failure: source=%s registry_protocol=%s synthetic_transport=REST case=observation_only worker_stage=%s worker_category=%s probe_stage=%s probe_category=%s child_calls=%d child_error_kinds=%s child_exit_codes=%s child_max=%s stdout_bytes=%d stderr_bytes=%d stderr_classes=%s retained_child_evidence=%t retention_failures=%d latest_state=%s request_started=%s receipt_validated=%t receipt_present=%t history_records=%d history_reservations=%d provider_request_delta=%d provider_unique_delta=%d provider_rest_delta=%d provider_soap_delta=%d cgroup_source=%s cgroup_peak_bytes=%d cgroup_limit_bytes=%d cgroup_oom_events=%d cgroup_oom_kill_events=%d", identity.SourceID, identity.Protocol, actualCLISafeWorkerFailureCode(workerStage, validOperationPlanWorkerFailureStage), actualCLISafeWorkerFailureCode(workerCategory, validOperationPlanWorkerFailureCategory), actualCLISafeWorkerFailureCode(probeStage, validOperationPlanProbeFailureStage), actualCLISafeWorkerFailureCode(probeCategory, validOperationPlanProbeFailureCategory), child.Calls, actualCLIStringCountMap(child.ChildErrorKinds), actualCLIIntCountMap(child.ExitCodes), child.MaxElapsed.Round(time.Millisecond), child.StdoutBytes, child.StderrBytes, actualCLIStringCountMap(child.StderrClasses), retained, child.RetentionFailures, actualCLIStateName(found, latest.State), requestStarted, found && latest.ReceiptValidated, found && latest.ReceiptSHA256 != "", actualCLIUsageCount(usageErr, usage.RecordCount), actualCLIUsageCount(usageErr, usage.ReservationCount), afterMetrics["requests"]-beforeMetrics["requests"], afterMetrics["unique"]-beforeMetrics["unique"], afterMetrics["rest_get"]-beforeMetrics["rest_get"], afterMetrics["soap_post"]-beforeMetrics["soap_post"], memory.Source, memory.PeakBytes, memory.LimitBytes, memory.OOMEvents, memory.OOMKillEvents)
+	}
+	if latestErr != nil || usageErr != nil || !found || result.AttemptState != "observed" || !result.RequestStarted || !latest.ReceiptValidated || latest.Result == nil || latest.Result.State != "indeterminate" || latest.Result.Category != "response_semantics_unestablished" || latest.DeliveryState != "not_applicable" || latest.DeliveryState != result.DeliveryState || afterMetrics["requests"]-beforeMetrics["requests"] != 1 || afterMetrics["unique"]-beforeMetrics["unique"] != 1 || afterMetrics["rest_get"]-beforeMetrics["rest_get"] != 1 || afterMetrics["soap_post"] != beforeMetrics["soap_post"] || usage.RecordCount != 1 || usage.ReservationCount != 0 || child.Calls != 1 || !receiptProtocolBound {
+		t.Fatalf("actual CLI isolated reproduction did not preserve the expected observation-only result: source=%s registry_protocol=%s synthetic_transport=REST receipt_protocol_bound=%t case=observation_only worker_stage=none worker_category=none probe_stage=none probe_category=none child_calls=%d child_error_kinds=%s child_exit_codes=%s child_max=%s stdout_bytes=%d stderr_bytes=%d latest_state=%s request_started=%s receipt_validated=%t receipt_present=%t history_records=%d history_reservations=%d provider_request_delta=%d provider_unique_delta=%d provider_rest_delta=%d provider_soap_delta=%d cgroup_source=%s cgroup_peak_bytes=%d cgroup_limit_bytes=%d cgroup_oom_events=%d cgroup_oom_kill_events=%d", identity.SourceID, identity.Protocol, receiptProtocolBound, child.Calls, actualCLIStringCountMap(child.ChildErrorKinds), actualCLIIntCountMap(child.ExitCodes), child.MaxElapsed.Round(time.Millisecond), child.StdoutBytes, child.StderrBytes, actualCLIStateName(found, latest.State), requestStarted, found && latest.ReceiptValidated, found && latest.ReceiptSHA256 != "", actualCLIUsageCount(usageErr, usage.RecordCount), actualCLIUsageCount(usageErr, usage.ReservationCount), afterMetrics["requests"]-beforeMetrics["requests"], afterMetrics["unique"]-beforeMetrics["unique"], afterMetrics["rest_get"]-beforeMetrics["rest_get"], afterMetrics["soap_post"]-beforeMetrics["soap_post"], memory.Source, memory.PeakBytes, memory.LimitBytes, memory.OOMEvents, memory.OOMKillEvents)
+	}
+	if code := actualCLIExactCapacitySnapshotFailure(memory); code != "" {
+		t.Fatalf("actual CLI isolated reproduction capacity snapshot failed: code=%s", code)
+	}
+	t.Logf("actual CLI isolated source-QA reproduction passed (not fleet acceptance): source=%s registry_protocol=%s synthetic_transport=REST receipt_protocol_bound=true case=observation_only observation=indeterminate request_delta=1 unique_delta=1 durable_receipts=%d gatus_delivery=not_applicable child_calls=%d child_max=%s cgroup_source=%s cgroup_peak_bytes=%d cgroup_limit_bytes=%d cgroup_oom_events=%d cgroup_oom_kill_events=%d same_manifest_bytes=true same_index_bytes=true same_cli_binary_bytes=true", identity.SourceID, identity.Protocol, usage.RecordCount, child.Calls, child.MaxElapsed.Round(time.Millisecond), memory.Source, memory.PeakBytes, memory.LimitBytes, memory.OOMEvents, memory.OOMKillEvents)
+}
+
+func actualCLIStateName(found bool, state string) string {
+	if !found {
+		return "missing"
+	}
+	if !validOperationAttemptStateName(state) {
+		return "unrecognized"
+	}
+	return state
+}
+
+func actualCLIUsageCount(err error, count int64) int64 {
+	if err != nil || count < 0 {
+		return -1
+	}
+	return count
+}
+
+func actualCLIStringCountMap(counts map[string]int) string {
+	if len(counts) == 0 {
+		return "none"
+	}
+	keys := make([]string, 0, len(counts))
+	for key := range counts {
+		if validOperationPlanProbeFailureCategory(key) || validOperationPlanWorkerFailureCategory(key) || actualCLIValidChildStderrClass(key) || key == "none" || key == "exit_nonzero" || key == "invoker_error" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, key+"="+strconv.Itoa(counts[key]))
+	}
+	if len(parts) == 0 {
+		return "unrecognized"
+	}
+	return strings.Join(parts, ",")
+}
+
+func actualCLIValidChildStderrClass(value string) bool {
+	switch value {
+	case "plan_not_executable", "document_evidence_invalid", "policy_invalid", "effect_policy_invalid", "assertion_invalid", "operation_plan_load_rejected", "selection_identity_mismatch", "receipt_output_rejected", "unclassified_child_error":
+		return true
+	default:
+		return false
+	}
+}
+
+func actualCLIIntCountMap(counts map[int]int) string {
+	if len(counts) == 0 {
+		return "none"
+	}
+	keys := make([]int, 0, len(counts))
+	for key := range counts {
+		if key >= 0 && key <= 255 {
+			keys = append(keys, key)
+		}
+	}
+	sort.Ints(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, strconv.Itoa(key)+"="+strconv.Itoa(counts[key]))
+	}
+	if len(parts) == 0 {
+		return "unrecognized"
+	}
+	return strings.Join(parts, ",")
+}
+
+type actualCLIFailureAttemptCounts struct {
+	TerminalAttempts     int
+	UnknownAttempts      int
+	FailedAttempts       int
+	UnknownRequestState  int
+	RequestStartedTrue   int
+	ReceiptPresent       int
+	CaptureMatched       int
+	CaptureMissing       int
+	SnapshotReadFailures int
+}
+
+func actualCLIRetainLatestFailureCaptures(attempts *OperationAttemptStore, identities []operationPlanPopulationIdentity, children *actualCLIInvocationTelemetry) actualCLIFailureAttemptCounts {
+	var summary actualCLIFailureAttemptCounts
+	if attempts == nil || children == nil {
+		summary.SnapshotReadFailures++
+		return summary
+	}
+	for _, identity := range identities {
+		latest, found, err := attempts.Latest(identity.SourceID, identity.OperationID)
+		if err != nil {
+			summary.SnapshotReadFailures++
+			continue
+		}
+		if !found || (latest.State != "unknown" && latest.State != "failed") {
+			continue
+		}
+		summary.TerminalAttempts++
+		if latest.State == "unknown" {
+			summary.UnknownAttempts++
+			if latest.RequestStarted == nil {
+				summary.UnknownRequestState++
+			} else if *latest.RequestStarted {
+				summary.RequestStartedTrue++
+			}
+		} else {
+			summary.FailedAttempts++
+		}
+		if latest.ReceiptValidated || latest.ReceiptSHA256 != "" {
+			summary.ReceiptPresent++
+		}
+		if children.retainFailedCapture(latest.AttemptID, latest.Generation, "unavailable", "unavailable", "unavailable", "unavailable") {
+			summary.CaptureMatched++
+		} else {
+			summary.CaptureMissing++
+		}
+	}
+	return summary
+}
+
+func actualCLIFullFailureSnapshot(t *testing.T, reason string, status OperationPlanSchedulerStatus, elapsed time.Duration, attempts *OperationAttemptStore, history *OperationHistoryStore, identities []operationPlanPopulationIdentity, metricsURL, caPath string, children *actualCLIInvocationTelemetry, monitor *actualCLIContainerMonitor) string {
+	t.Helper()
+	allowedReason := "unavailable"
+	switch reason {
+	case "scheduler_pass_failure", "asynchronous_worker_failure", "controller_timeout", "readiness_mismatch", "harness_assertion_failure":
+		allowedReason = reason
+	}
+	failedAttempts := actualCLIRetainLatestFailureCaptures(attempts, identities, children)
+	usage, usageErr := history.Usage(context.Background())
+	metrics, metricsCode := actualCLIProviderMetricsSnapshot(metricsURL, caPath)
+	child := children.snapshot()
+	memory := monitor.Snapshot()
+	return fmt.Sprintf("actual CLI full source-QA stopped: reason=%s starts=%d observations=%d deferred=%d readbacks=%d not_applicable=%d execution_failures=%d delivery_failures=%d identity_scan_failures=%d delivery_scan_failures=%d active=%d expected=%d elapsed=%s receipts=%d reservations=%d history_bytes=%d worker_failure_stages=%s worker_failure_categories=%s probe_failure_stages=%s probe_failure_categories=%s last_diagnostic_stage=%s last_diagnostic_category=%s last_pass_elapsed=%s last_pass_delivery_scanned=%d last_pass_execution_scanned=%d last_pass_evidence_scanned=%d terminal_failure_attempts=%d unknown_attempts=%d failed_attempts=%d unknown_request_started=%d request_started_true=%d receipt_present=%d child_capture_matches=%d child_capture_missing=%d attempt_snapshot_read_errors=%d child_calls=%d child_error_kinds=%s child_exit_codes=%s child_max=%s child_stdout_bytes=%d child_stderr_bytes=%d child_stderr_classes=%s recent_child_captures=%d recent_capture_bytes=%d recent_capture_byte_cap=%d retained_child_files=%d retention_failures=%d retention_bytes=%d retention_byte_cap=%d provider_metrics_code=%s provider_requests=%d provider_unique=%d provider_duplicates=%d provider_invalid=%d provider_rest=%d provider_soap=%d provider_status_2xx=%d provider_status_503=%d cgroup_source=%s cgroup_peak_exact=%t cgroup_peak_bytes=%d cgroup_current_bytes=%d cgroup_limit_bytes=%d cgroup_oom_events=%d cgroup_oom_kill_events=%d cgroup_read_errors=%d",
+		allowedReason, status.RequestStartsSinceStart, status.ObservationsSinceStart, status.DeferredSinceStart, status.ReadbacksSinceStart, status.NotApplicableSinceStart,
+		status.ExecutionFailuresSinceStart, status.DeliveryFailuresSinceStart, status.IdentityScanFailuresSinceStart, status.PendingDeliveryScanFailures, status.ActiveWork, status.AdmittedOperations, elapsed.Round(time.Second),
+		actualCLIUsageCount(usageErr, usage.RecordCount), actualCLIUsageCount(usageErr, usage.ReservationCount), actualCLIUsageCount(usageErr, usage.UsedBytes),
+		actualCLIDiagnosticCounterMap(status.failureStageCounts, validOperationPlanWorkerFailureStage), actualCLIDiagnosticCounterMap(status.failureCategoryCounts, validOperationPlanWorkerFailureCategory),
+		actualCLIDiagnosticCounterMap(status.probeFailureStageCounts, validOperationPlanProbeFailureStage), actualCLIDiagnosticCounterMap(status.probeFailureCategoryCounts, validOperationPlanProbeFailureCategory),
+		actualCLISafeWorkerFailureCode(status.lastDiagnosticFailureStage, validOperationPlanSchedulerFailureStage), actualCLISafeWorkerFailureCode(status.lastDiagnosticFailureCategory, validOperationPlanSchedulerFailureCategory), status.lastPassElapsed.Round(time.Millisecond),
+		status.lastPassDeliveryScanned, status.lastPassExecutionScanned, status.lastPassEvidenceScanned,
+		failedAttempts.TerminalAttempts, failedAttempts.UnknownAttempts, failedAttempts.FailedAttempts, failedAttempts.UnknownRequestState, failedAttempts.RequestStartedTrue, failedAttempts.ReceiptPresent, failedAttempts.CaptureMatched, failedAttempts.CaptureMissing, failedAttempts.SnapshotReadFailures,
+		child.Calls, actualCLIStringCountMap(child.ChildErrorKinds), actualCLIIntCountMap(child.ExitCodes), child.MaxElapsed.Round(time.Millisecond), child.StdoutBytes, child.StderrBytes,
+		actualCLIStringCountMap(child.StderrClasses), child.RecentCaptures, child.RecentCaptureBytes, actualCLIRecentCaptureByteLimit,
+		child.RetainedFailures, child.RetentionFailures, child.RetentionBytes, child.RetentionByteLimit,
+		metricsCode, metrics["requests"], metrics["unique"], metrics["duplicates"], metrics["invalid"], metrics["rest_get"], metrics["soap_post"], metrics["status_2xx"], metrics["status_503"],
+		memory.Source, memory.ExactPeak, memory.PeakBytes, memory.CurrentBytes, memory.LimitBytes, memory.OOMEvents, memory.OOMKillEvents, memory.ReadErrors)
 }
 
 func actualCLISafeSchedulerReason(reason string) string {
@@ -485,6 +1102,167 @@ func TestActualCLISchedulerDiagnosticsRedactUnknownValues(t *testing.T) {
 				t.Fatalf("diagnostic code was not safely bounded: got=%q want=%q", test.got, test.want)
 			}
 		})
+	}
+}
+
+func TestActualCLIReceiptCaptureRequiresPrivateInRootFile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal("could not make the synthetic capture root private")
+	}
+	attemptDir := filepath.Join(root, ".attempt-0123456789abcdef")
+	if err := os.Mkdir(attemptDir, 0o700); err != nil {
+		t.Fatal("could not create the synthetic attempt output directory")
+	}
+	receiptPath := filepath.Join(attemptDir, "receipt.json")
+	receipt := []byte(`{"schema_version":"synthetic.receipt"}`)
+	if err := os.WriteFile(receiptPath, receipt, 0o600); err != nil {
+		t.Fatal("could not create the synthetic receipt")
+	}
+	if got := actualCLIReadReceiptCapture(root, receiptPath); !bytes.Equal(got, receipt) {
+		t.Fatal("bounded capture did not read the private in-root receipt")
+	}
+	if got := actualCLIReadReceiptCapture(root, filepath.Join(root, "outside", "receipt.json")); len(got) != 0 {
+		t.Fatal("bounded capture accepted an output path outside the private root")
+	}
+	if err := os.Chmod(receiptPath, 0o644); err != nil {
+		t.Fatal("could not set up the non-private receipt negative case")
+	}
+	if got := actualCLIReadReceiptCapture(root, receiptPath); len(got) != 0 {
+		t.Fatal("bounded capture accepted a receipt with group or world permissions")
+	}
+	if err := os.Chmod(receiptPath, 0o600); err != nil {
+		t.Fatal("could not restore private receipt mode for symlink negative case")
+	}
+	linkDir := filepath.Join(root, ".attempt-linked")
+	if err := os.Mkdir(linkDir, 0o700); err != nil {
+		t.Fatal("could not create the symlink attempt directory")
+	}
+	linkPath := filepath.Join(linkDir, "receipt.json")
+	if err := os.Symlink(receiptPath, linkPath); err != nil {
+		t.Fatal("could not create the symlink receipt negative case")
+	}
+	if got := actualCLIReadReceiptCapture(root, linkPath); len(got) != 0 {
+		t.Fatal("bounded capture followed a symlinked receipt")
+	}
+}
+
+func TestActualCLIReceiptCaptureMatchesPlanProtocolAndIdentity(t *testing.T) {
+	expected := OperationPlanProbeExpectation{
+		AttemptID: "attempt-local-source-qa", SourceID: "ecos", OperationID: "synthetic-local-operation",
+		Provider: "ecos", AdapterID: "ecos", Protocol: "REST",
+	}
+	receipt := operationPlanProbeReceipt{
+		AttemptID: expected.AttemptID,
+		Operation: operationPlanProbeOperation{
+			SourceID: expected.SourceID, OperationID: expected.OperationID,
+			Provider: expected.Provider, AdapterID: expected.AdapterID, Protocol: expected.Protocol,
+		},
+	}
+	raw, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatal("could not encode the synthetic receipt protocol case")
+	}
+	capture := actualCLIChildCapture{stdout: append([]byte(nil), raw...), receipt: append([]byte(nil), raw...)}
+	if !actualCLIReceiptCaptureMatchesExpectation(expected, capture) {
+		t.Fatal("actual child receipt did not match its synthetic REST plan expectation")
+	}
+	mutations := []struct {
+		name     string
+		expected OperationPlanProbeExpectation
+		receipt  operationPlanProbeReceipt
+		stdout   []byte
+	}{
+		{name: "raw inventory protocol mismatch", expected: expected, receipt: func() operationPlanProbeReceipt { value := receipt; value.Operation.Protocol = "HTTP"; return value }(), stdout: raw},
+		{name: "expectation protocol mismatch", expected: func() OperationPlanProbeExpectation { value := expected; value.Protocol = "SOAP"; return value }(), receipt: receipt, stdout: raw},
+		{name: "operation identity mismatch", expected: expected, receipt: func() operationPlanProbeReceipt {
+			value := receipt
+			value.Operation.OperationID = "other-operation"
+			return value
+		}(), stdout: raw},
+		{name: "attempt identity mismatch", expected: expected, receipt: func() operationPlanProbeReceipt { value := receipt; value.AttemptID = "other-attempt"; return value }(), stdout: raw},
+		{name: "stdout receipt mismatch", expected: expected, receipt: receipt, stdout: []byte(`{"schema_version":"different"}`)},
+	}
+	for _, testCase := range mutations {
+		t.Run(testCase.name, func(t *testing.T) {
+			receiptRaw, marshalErr := json.Marshal(testCase.receipt)
+			if marshalErr != nil {
+				t.Fatal("could not encode a synthetic mismatch case")
+			}
+			candidate := actualCLIChildCapture{stdout: testCase.stdout, receipt: receiptRaw}
+			if actualCLIReceiptCaptureMatchesExpectation(testCase.expected, candidate) {
+				t.Fatal("actual child receipt capture accepted a mismatched protocol, identity, or byte stream")
+			}
+		})
+	}
+}
+
+func TestActualCLIChildFailureRetentionIsBoundedPrivateAndRedacted(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal("could not make the synthetic failure root private")
+	}
+	telemetry := &actualCLIInvocationTelemetry{retentionRoot: filepath.Join(root, "failure-evidence")}
+	maxStdout := bytes.Repeat([]byte{'o'}, maxOperationPlanProbeReceiptBytes)
+	maxStderr := bytes.Repeat([]byte{'e'}, maxOperationPlanProbeStderrBytes)
+	maxReceipt := bytes.Repeat([]byte{'r'}, maxOperationPlanProbeReceiptBytes)
+	var latestAttempt string
+	for index := 0; index < actualCLIRecentCaptureLimit+5; index++ {
+		latestAttempt = fmt.Sprintf("attempt-private-%d", index)
+		capture := actualCLIChildCapture{
+			attemptSHA256: digest([]byte(latestAttempt)), operationSHA256: digest([]byte("operation-private")),
+			stdout: maxStdout, stderr: maxStderr, receipt: maxReceipt,
+			elapsed: 17 * time.Millisecond, errorKind: "invoker_error", stderrClass: "unclassified_child_error",
+		}
+		telemetry.record(capture.elapsed, errors.New("sensitive diagnostic payload"), nil, int64(len(capture.stdout)), int64(len(capture.stderr)), capture.stderrClass, capture)
+	}
+	before := telemetry.snapshot()
+	if before.Calls != actualCLIRecentCaptureLimit+5 || before.RecentCaptures != actualCLIRecentCaptureLimit || before.RecentCaptureBytes > actualCLIRecentCaptureByteLimit {
+		t.Fatalf("private failure capture ring exceeded or missed its bound: calls=%d recent=%d bytes=%d byte_cap=%d", before.Calls, before.RecentCaptures, before.RecentCaptureBytes, actualCLIRecentCaptureByteLimit)
+	}
+	if telemetry.retainFailedCapture("attempt-private-0", 1, "unknown private stage", "unknown private category", "unknown private probe stage", "unknown private probe category") {
+		t.Fatal("private failure capture retained an attempt that aged out of the bounded ring")
+	}
+	for index := actualCLIRecentCaptureLimit - 3; index < actualCLIRecentCaptureLimit+5; index++ {
+		attemptID := fmt.Sprintf("attempt-private-%d", index)
+		if !telemetry.retainFailedCapture(attemptID, uint64(index+1), "unknown private stage", "unknown private category", "unknown private probe stage", "unknown private probe category") {
+			t.Fatalf("private failure capture did not retain bounded invocation %d", index)
+		}
+	}
+	if telemetry.retainFailedCapture(latestAttempt, uint64(actualCLIRecentCaptureLimit+5), "unknown private stage", "unknown private category", "unknown private probe stage", "unknown private probe category") {
+		t.Fatal("private failure capture exceeded its total retained invocation bound")
+	}
+	snapshot := telemetry.snapshot()
+	if snapshot.RetainedFailures != actualCLIRetainedFailureLimit || snapshot.RetentionFailures != 2 || snapshot.RetentionBytes == 0 || snapshot.RetentionBytes > snapshot.RetentionByteLimit {
+		t.Fatalf("private retention counters differ from bounded results: retained=%d failed=%d bytes=%d byte_cap=%d", snapshot.RetainedFailures, snapshot.RetentionFailures, snapshot.RetentionBytes, snapshot.RetentionByteLimit)
+	}
+	retentionRoot := telemetry.retentionRoot
+	rootInfo, err := os.Lstat(retentionRoot)
+	if err != nil || !rootInfo.IsDir() || rootInfo.Mode().Perm() != 0o700 {
+		t.Fatal("private failure evidence directory is not mode 0700")
+	}
+	entries, err := os.ReadDir(retentionRoot)
+	if err != nil || len(entries) != 4*actualCLIRetainedFailureLimit {
+		t.Fatalf("private failure evidence has an unexpected bounded file count: files=%d", len(entries))
+	}
+	for _, entry := range entries {
+		info, infoErr := entry.Info()
+		if infoErr != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+			t.Fatal("retained failure evidence file is not a regular mode-0600 file")
+		}
+	}
+	metadataRaw, err := os.ReadFile(filepath.Join(retentionRoot, fmt.Sprintf("failure-%02d.json", actualCLIRetainedFailureLimit)))
+	if err != nil {
+		t.Fatal("private failure metadata could not be read")
+	}
+	var metadata actualCLIPrivateFailureMetadata
+	if json.Unmarshal(metadataRaw, &metadata) != nil || metadata.AttemptTokenSHA256 != digest([]byte(latestAttempt)) || metadata.OperationTokenSHA256 != digest([]byte("operation-private")) || metadata.AttemptGeneration != uint64(actualCLIRecentCaptureLimit+5) || metadata.WorkerStage != "unavailable" || metadata.WorkerCategory != "unavailable" || metadata.ProbeStage != "unavailable" || metadata.ProbeCategory != "unavailable" {
+		t.Fatal("private failure metadata did not preserve only bounded hashes and allowlisted codes")
+	}
+	for _, sensitive := range []string{latestAttempt, "operation-private", "unknown private", "sensitive diagnostic payload"} {
+		if bytes.Contains(metadataRaw, []byte(sensitive)) {
+			t.Fatal("private failure metadata exposed an unredacted value")
+		}
 	}
 }
 
@@ -1224,33 +2002,45 @@ func buildActualCLIRuntime(t *testing.T, root, planRoot string, metadata Verifie
 
 func actualCLIProviderMetrics(t *testing.T, endpoint, caPath string) map[string]int {
 	t.Helper()
+	result, code := actualCLIProviderMetricsSnapshot(endpoint, caPath)
+	if code != "" {
+		t.Fatalf("aggregate synthetic provider counters are unavailable: code=%s", code)
+	}
+	return result
+}
+
+func actualCLIProviderMetricsSnapshot(endpoint, caPath string) (map[string]int, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/__metrics", nil)
 	if err != nil {
-		t.Fatal("could not inspect aggregate synthetic provider counters")
+		return nil, "request_invalid"
 	}
 	caRaw, err := os.ReadFile(caPath)
 	if err != nil {
-		t.Fatal("could not inspect the public local fixture CA")
+		return nil, "ca_unavailable"
 	}
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(caRaw) {
-		t.Fatal("local fixture CA did not parse")
+		return nil, "ca_invalid"
 	}
 	response, err := (&http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{RootCAs: roots}}}).Do(request)
 	if err != nil {
-		t.Fatal("aggregate synthetic provider counters are unavailable")
+		return nil, "request_failed"
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		t.Fatal("aggregate synthetic provider counters returned an invalid status")
+		return nil, "status_invalid"
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, 16<<10+1))
+	if err != nil || len(data) == 0 || len(data) > 16<<10 {
+		return nil, "body_invalid"
 	}
 	var result map[string]int
-	if json.NewDecoder(response.Body).Decode(&result) != nil {
-		t.Fatal("aggregate synthetic provider counters were not valid JSON")
+	if json.Unmarshal(data, &result) != nil || result == nil {
+		return nil, "body_invalid"
 	}
-	return result
+	return result, ""
 }
 
 func actualCLISmoke(t *testing.T, worker *OperationPlanWorker, attempts *OperationAttemptStore, history *OperationHistoryStore, identities []operationPlanPopulationIdentity, metricsURL, caPath string, telemetry *actualCLIInvocationTelemetry) {
@@ -1401,9 +2191,10 @@ func actualCLISmokeIdentity(identities []operationPlanPopulationIdentity, operat
 	return operationPlanPopulationIdentity{}, false
 }
 
-func actualCLIFullPopulation(t *testing.T, worker *OperationPlanWorker, attempts *OperationAttemptStore, history *OperationHistoryStore, plan PinnedOperationObservationPlan, metadata VerifiedRegistryAPIMetadata, identities []operationPlanPopulationIdentity, metricsURL, caPath, providerRoutesSHA256 string, paths OperationPlanRuntimePaths, sourceRevision, binarySHA, goBuildVersion string, projection actualCLIProjectionMeasurements, monitor *actualCLIContainerMonitor) {
+func actualCLIFullPopulation(t *testing.T, worker *OperationPlanWorker, attempts *OperationAttemptStore, history *OperationHistoryStore, plan PinnedOperationObservationPlan, metadata VerifiedRegistryAPIMetadata, identities []operationPlanPopulationIdentity, metricsURL, caPath, providerRoutesSHA256 string, paths OperationPlanRuntimePaths, sourceRevision, binarySHA, goBuildVersion string, projection actualCLIProjectionMeasurements, children *actualCLIInvocationTelemetry, monitor *actualCLIContainerMonitor) {
 	t.Helper()
 	const concurrency = 8
+	startedAt := time.Now().UTC()
 	scheduler, err := NewOperationPlanScheduler(OperationPlanSchedulerConfig{
 		Worker: worker, MaxConcurrent: concurrency, MaxStartsPerPass: concurrency, MaxDeliveriesPerPass: concurrency,
 		CandidateScanPerPass: operationPlanSchedulerMaximumScanBudget, DeliveryLease: time.Minute,
@@ -1411,6 +2202,15 @@ func actualCLIFullPopulation(t *testing.T, worker *OperationPlanWorker, attempts
 	if err != nil {
 		t.Fatal("bounded production scheduler rejected the actual-CLI full population")
 	}
+	failureSnapshotLogged := false
+	t.Cleanup(func() {
+		if !t.Failed() || failureSnapshotLogged {
+			return
+		}
+		scheduler.Wait()
+		status := scheduler.Status(time.Now().UTC())
+		t.Logf("%s", actualCLIFullFailureSnapshot(t, "harness_assertion_failure", status, time.Since(startedAt), attempts, history, identities, metricsURL, caPath, children, monitor))
+	})
 	preflight := scheduler.Status(time.Now().UTC())
 	if !preflight.CapacityFeasible || preflight.AdmittedOperations != len(identities) || preflight.RequiredConcurrency > concurrency {
 		t.Fatalf("actual CLI full source-QA capacity preflight failed before provider requests: feasible=%t required_concurrency=%d max_concurrent=%d required_starts_per_second=%.9f admitted=%d expected=%d", preflight.CapacityFeasible, preflight.RequiredConcurrency, concurrency, preflight.RequiredStartsPerSecond, preflight.AdmittedOperations, len(identities))
@@ -1418,31 +2218,26 @@ func actualCLIFullPopulation(t *testing.T, worker *OperationPlanWorker, attempts
 	t.Logf("actual CLI full source-QA capacity preflight: identities=%d required_starts_per_second=%.9f required_concurrency=%d max_concurrent=%d feasible=true", preflight.AdmittedOperations, preflight.RequiredStartsPerSecond, preflight.RequiredConcurrency, concurrency)
 	controllerCtx, cancel := context.WithTimeout(context.Background(), actualCLIFullControllerTimeout)
 	defer cancel()
-	startedAt := time.Now().UTC()
 	lastProgressAt := time.Now()
 	status := preflight
 	lastDeferredScan := uint64(0)
 	completed := false
 	for controllerCtx.Err() == nil {
 		before := status.PassesSinceStart
-		passStartedAt := time.Now()
 		if err := scheduler.ProcessDue(controllerCtx, time.Now().UTC()); err != nil {
-			failureAt := time.Now()
-			failedPassElapsed := failureAt.Sub(passStartedAt)
-			failedPass := scheduler.Status(failureAt.UTC())
-			parentContextDone := controllerCtx.Err() != nil
-			failureStage, failureCategory, failureDetailsFound := operationPlanSchedulerFailureDetails(err)
-			if !failureDetailsFound {
-				failureStage = "unavailable"
-				failureCategory = "unavailable"
-			}
-			settleStartedAt := time.Now()
+			failedPass := scheduler.Status(time.Now().UTC())
 			scheduler.Wait()
-			settledAt := time.Now()
-			settled := scheduler.Status(settledAt.UTC())
-			t.Fatalf("bounded production pass failed after %s with no provider call outside the isolated fixture: code=scheduler_unavailable failure_stage=%s failure_category=%s failure_pass_elapsed=%s settle_elapsed=%s scheduler_last_pass_elapsed=%s controller_context_done=%t pass_count=%d scan_budget=%d delivery_scanned=%d execution_scanned=%d evidence_scanned=%d active_at_error=%d starts_at_error=%d observations_at_error=%d deferred_at_error=%d readbacks_at_error=%d not_applicable_at_error=%d execution_failures_at_error=%d delivery_failures_at_error=%d identity_scan_failures_at_error=%d delivery_scan_failures_at_error=%d last_error_reason=%s last_error_stage=%s last_error_category=%s failure_stages=%s failure_categories=%s settled_active=%d settled_observations=%d", time.Since(startedAt).Round(time.Second), actualCLISafeWorkerFailureCode(failureStage, validOperationPlanSchedulerFailureStage), actualCLISafeWorkerFailureCode(failureCategory, validOperationPlanSchedulerFailureCategory), failedPassElapsed.Round(time.Millisecond), settledAt.Sub(settleStartedAt).Round(time.Millisecond), failedPass.lastPassElapsed.Round(time.Millisecond), parentContextDone, failedPass.PassesSinceStart, failedPass.CandidateScanPerSecond, failedPass.lastPassDeliveryScanned, failedPass.lastPassExecutionScanned, failedPass.lastPassEvidenceScanned, failedPass.ActiveWork, failedPass.RequestStartsSinceStart, failedPass.ObservationsSinceStart, failedPass.DeferredSinceStart, failedPass.ReadbacksSinceStart, failedPass.NotApplicableSinceStart, failedPass.ExecutionFailuresSinceStart, failedPass.DeliveryFailuresSinceStart, failedPass.IdentityScanFailuresSinceStart, failedPass.PendingDeliveryScanFailures, actualCLISafeSchedulerReason(failedPass.LastErrorReason), actualCLISafeWorkerFailureCode(failedPass.LastErrorStage, actualCLIValidSchedulerOrWorkerFailureStage), actualCLISafeWorkerFailureCode(failedPass.lastErrorCategory, actualCLIValidSchedulerOrWorkerFailureCategory), actualCLIDiagnosticCounterMap(failedPass.failureStageCounts, actualCLIValidSchedulerOrWorkerFailureStage), actualCLIDiagnosticCounterMap(failedPass.failureCategoryCounts, actualCLIValidSchedulerOrWorkerFailureCategory), settled.ActiveWork, settled.ObservationsSinceStart)
+			failedPass = scheduler.Status(time.Now().UTC())
+			failureSnapshotLogged = true
+			t.Fatalf("%s", actualCLIFullFailureSnapshot(t, "scheduler_pass_failure", failedPass, time.Since(startedAt), attempts, history, identities, metricsURL, caPath, children, monitor))
 		}
 		status = scheduler.Status(time.Now().UTC())
+		if status.ExecutionFailuresSinceStart > 0 || status.DeliveryFailuresSinceStart > 0 || status.IdentityScanFailuresSinceStart > 0 || status.PendingDeliveryScanFailures > 0 {
+			scheduler.Wait()
+			status = scheduler.Status(time.Now().UTC())
+			failureSnapshotLogged = true
+			t.Fatalf("%s", actualCLIFullFailureSnapshot(t, "asynchronous_worker_failure", status, time.Since(startedAt), attempts, history, identities, metricsURL, caPath, children, monitor))
+		}
 		if status.DeferredSinceStart > lastDeferredScan {
 			deferredEvidence, evidenceErr := actualCLIHistoricalAttemptSummary(attempts, identities, nil)
 			if evidenceErr != nil {
@@ -1477,14 +2272,15 @@ func actualCLIFullPopulation(t *testing.T, worker *OperationPlanWorker, attempts
 	if !completed {
 		cancel()
 		scheduler.Wait()
-		usage, _ := history.Usage(context.Background())
-		elapsed := time.Since(startedAt)
-		t.Fatalf("actual CLI did not reconcile all pinned identities within the 90-minute source-QA controller bound: starts=%d observations=%d deferred=%d readbacks=%d not_applicable=%d execution_failures=%d delivery_failures=%d active=%d expected=%d elapsed=%s receipts=%d history_bytes=%d", status.RequestStartsSinceStart, status.ObservationsSinceStart, status.DeferredSinceStart, status.ReadbacksSinceStart, status.NotApplicableSinceStart, status.ExecutionFailuresSinceStart, status.DeliveryFailuresSinceStart, status.ActiveWork, len(identities), elapsed.Round(time.Second), usage.RecordCount, usage.UsedBytes)
+		status = scheduler.Status(time.Now().UTC())
+		failureSnapshotLogged = true
+		t.Fatalf("%s", actualCLIFullFailureSnapshot(t, "controller_timeout", status, time.Since(startedAt), attempts, history, identities, metricsURL, caPath, children, monitor))
 	}
 	scheduler.Wait()
 	status = scheduler.Status(time.Now().UTC())
 	if status.ExecutionFailuresSinceStart != 0 || status.DeliveryFailuresSinceStart != 0 || status.IdentityScanFailuresSinceStart != 0 || status.PendingDeliveryScanFailures != 0 || status.EvidenceCurrentOperations != len(identities) || !status.Ready {
-		t.Fatalf("actual CLI readiness sweep did not prove a current exact receipt for every identity: ready=%t evidence=%d/%d execution_failures=%d delivery_failures=%d identity_scan_failures=%d delivery_scan_failures=%d", status.Ready, status.EvidenceCurrentOperations, len(identities), status.ExecutionFailuresSinceStart, status.DeliveryFailuresSinceStart, status.IdentityScanFailuresSinceStart, status.PendingDeliveryScanFailures)
+		failureSnapshotLogged = true
+		t.Fatalf("%s", actualCLIFullFailureSnapshot(t, "readiness_mismatch", status, time.Since(startedAt), attempts, history, identities, metricsURL, caPath, children, monitor))
 	}
 	deferredEvidence, deferredEvidenceErr := actualCLIHistoricalAttemptSummary(attempts, identities, history)
 	if deferredEvidenceErr != nil || deferredEvidence.Identities != len(identities) || deferredEvidence.Attempts < len(identities) || deferredEvidence.MissingIdentities != 0 || deferredEvidence.Deferred != int(status.DeferredSinceStart) || deferredEvidence.UnclassifiedDeferred != 0 || deferredEvidence.InvalidDeferred != 0 || deferredEvidence.UnresolvedDeferrals != 0 || deferredEvidence.RecoveredDeferrals != deferredEvidence.Deferred || deferredEvidence.HistoryMatches != 0 {

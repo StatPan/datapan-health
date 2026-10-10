@@ -2,7 +2,7 @@ RUNTIME_IMAGE ?= datapan-health-runtime:test
 ARCHIVE_IMAGE ?= datapan-health-archive:test
 TESTED_REVISION ?= $(HEALTH_HEAD)
 
-.PHONY: test quality build images image-smoke release-oci release-governance-smoke release-provenance-smoke runtime-publication-contract smoke visual archive-smoke hf-publish-smoke governance-check security-reporting-check security-reporting-check-test diagnostic-compatibility diagnostic-provenance diagnostic-provenance-check assertion-policy-compatibility correlation-replay diagnosis-snapshot-evidence public-status-doctor manifest-verify schedule-coverage schedule-coverage-doctor operation-plan-full-population operation-plan-gatus-integration operation-plan-gatus-capacity operation-plan-actual-cli-recovery operation-plan-actual-cli-smoke operation-plan-actual-cli-full
+.PHONY: test quality build images image-smoke release-oci release-governance-smoke release-provenance-smoke runtime-publication-contract smoke visual archive-smoke hf-publish-smoke governance-check security-reporting-check security-reporting-check-test diagnostic-compatibility diagnostic-provenance diagnostic-provenance-check assertion-policy-compatibility correlation-replay diagnosis-snapshot-evidence public-status-doctor manifest-verify schedule-coverage schedule-coverage-doctor operation-plan-full-population operation-plan-gatus-integration operation-plan-gatus-capacity operation-plan-actual-cli-recovery operation-plan-actual-cli-smoke operation-plan-actual-cli-repro operation-plan-actual-cli-full
 
 test:
 	go test ./...
@@ -95,6 +95,14 @@ operation-plan-actual-cli-recovery:
 
 operation-plan-actual-cli-smoke:
 	HEALTH_OPERATION_ACTUAL_CLI_MODE=smoke go test ./internal/health -run '^TestOperationPlanActualCLIProviderGatusIntegration$$' -count=1 -timeout=15m -v
+
+# Reproduces one retained ambiguous identity in a fresh fixture and durable
+# state. It checks the exact historical plan and CLI hashes without editing or
+# retrying the retained full-run state. Set HISTORICAL_FIXTURE to that private
+# mode-0700 source-QA fixture directory.
+operation-plan-actual-cli-repro:
+	test -n "$(HISTORICAL_FIXTURE)" || (echo 'set HISTORICAL_FIXTURE to the retained private source-QA fixture directory' >&2; exit 2)
+	HEALTH_OPERATION_ACTUAL_CLI_MODE=repro HEALTH_OPERATION_ACTUAL_CLI_HISTORICAL_FIXTURE="$(HISTORICAL_FIXTURE)" go test ./internal/health -run '^TestOperationPlanActualCLIProviderGatusIntegration$$' -count=1 -timeout=20m -v
 
 # Runs a bounded 1,024-task diagnostic through the production worker path.
 # Its aggregate errors are diagnostic only and do not establish fleet readiness.
