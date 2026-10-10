@@ -34,6 +34,8 @@ import (
 const (
 	actualCLIExpectedSourceRevision          = "d4226321c1a4c6c7aa091753dc6f03f4ab04cddd"
 	actualCLIExpectedVersion                 = "v0.1.41"
+	actualCLIExpectedGoBuildVersion          = "go version go1.27.1 linux/amd64"
+	actualCLIExpectedBinarySHA256            = "0e35dde1329fd9efae08fa258ca0d4561b61034e9cef2fff3ebda038aee509d3"
 	actualCLIProviderSubnet                  = "45.77.0.0/24"
 	actualCLIProviderIP                      = "45.77.0.2"
 	actualCLIGatusIP                         = "45.77.0.3"
@@ -51,6 +53,7 @@ const (
 	actualCLIDiagnosticTimeout               = 15 * time.Minute
 	actualCLIHistoricalFailureManifestSHA256 = "8ccf9dbfe0bd105097eb1fa20bedd0efb56cad0b580ef58e2ed68cab06ae0a67"
 	actualCLIHistoricalFailureIndexSHA256    = "e0005a4443ab32186c3614c326db584666bbca6f0cab930c7d53c752d947d5c0"
+	actualCLIHistoricalFailureSourceRevision = "acf060e71e2329b6a04ad4ab0abf669fbbfe9dac"
 	actualCLIHistoricalFailureBinarySHA256   = "d99d660ea3b9c9b59bfc275d7855376845f0c65a144ee59481f8e2b75405a3ab"
 	actualCLIRecentCaptureLimit              = 32
 	actualCLIRetainedFailureLimit            = 8
@@ -655,7 +658,7 @@ func TestOperationPlanActualCLIProviderGatusIntegration(t *testing.T) {
 	}
 
 	sourceRoot, sourceRevision, binaryPath, binarySHA, goBuildVersion := actualCLIInput(t)
-	t.Logf("actual CLI source-QA build complete: elapsed=%s", time.Since(qaStarted).Round(time.Millisecond))
+	t.Logf("actual CLI source-QA build complete: cli_source=%s cli_sha256=%s go_build=%q elapsed=%s", sourceRevision, binarySHA, goBuildVersion, time.Since(qaStarted).Round(time.Millisecond))
 	metadata, canaries, basePlan, planRoot, identities := loadManifestDerivedPopulationPlan(t)
 	plan := bindActualCLIEvidenceFixture(t, sourceRoot, planRoot, basePlan, metadata, identities)
 	credentialBindings := filepath.Join(planRoot, ".datapan", "credential-bindings.json")
@@ -691,11 +694,13 @@ func TestOperationPlanActualCLIProviderGatusIntegration(t *testing.T) {
 		reproductionIdentity = actualCLIHistoricalUnresolvedIdentity(t, historicalRoot, identities, plan)
 		manifestSame := plan.binding.ReleaseManifestSHA256 == actualCLIHistoricalFailureManifestSHA256
 		indexSame := plan.IndexSHA256() == actualCLIHistoricalFailureIndexSHA256
-		binarySame := binarySHA == actualCLIHistoricalFailureBinarySHA256
-		if !manifestSame || !indexSame || !binarySame {
-			t.Fatalf("actual CLI isolated reproduction inputs differ from the retained full run: manifest_sha_equal=%t index_sha_equal=%t cli_binary_sha_equal=%t", manifestSame, indexSame, binarySame)
+		sourceChanged := sourceRevision != actualCLIHistoricalFailureSourceRevision
+		binaryChanged := binarySHA != actualCLIHistoricalFailureBinarySHA256
+		binaryPinned := binarySHA == actualCLIExpectedBinarySHA256
+		if !manifestSame || !indexSame || !sourceChanged || !binaryChanged || !binaryPinned {
+			t.Fatalf("actual CLI isolated reproduction inputs are not correctly source-qualified: manifest_sha_equal=%t index_sha_equal=%t historical_source_changed=%t historical_binary_changed=%t exact_current_binary_pin=%t", manifestSame, indexSame, sourceChanged, binaryChanged, binaryPinned)
 		}
-		t.Logf("actual CLI isolated failure reproduction selected: source=%s registry_protocol=%s synthetic_transport=REST case=observation_only historical_state=unknown historical_request_started=unknown historical_receipt_validated=false same_manifest_bytes=true same_index_bytes=true same_cli_binary_bytes=true", reproductionIdentity.SourceID, reproductionIdentity.Protocol)
+		t.Logf("actual CLI isolated failure reproduction selected: source=%s registry_protocol=%s synthetic_transport=REST case=observation_only historical_state=unknown historical_request_started=unknown historical_receipt_validated=false historical_cli_source=%s historical_cli_sha256=%s current_cli_source=%s current_cli_sha256=%s go_build=%q manifest_bytes_equal=true index_bytes_equal=true cli_binary_bytes_equal=false source_qualified_selector_revision=true", reproductionIdentity.SourceID, reproductionIdentity.Protocol, actualCLIHistoricalFailureSourceRevision, actualCLIHistoricalFailureBinarySHA256, sourceRevision, binarySHA, goBuildVersion)
 	}
 	delayedOperationID := ""
 	if mode == "smoke" {
@@ -805,7 +810,7 @@ func TestOperationPlanActualCLIProviderGatusIntegration(t *testing.T) {
 		return
 	}
 	if mode == "repro" {
-		actualCLIReproduceHistoricalUnknown(t, worker, attempts, history, reproductionIdentity, metricsURL, providerCA, childTelemetry, monitor)
+		actualCLIReproduceHistoricalUnknown(t, worker, attempts, history, reproductionIdentity, sourceRevision, binarySHA, goBuildVersion, metricsURL, providerCA, childTelemetry, monitor)
 		return
 	}
 	if mode == "diagnostic" {
@@ -872,7 +877,7 @@ func actualCLIHistoricalUnresolvedIdentity(t *testing.T, historicalRoot string, 
 	return selected
 }
 
-func actualCLIReproduceHistoricalUnknown(t *testing.T, worker *OperationPlanWorker, attempts *OperationAttemptStore, history *OperationHistoryStore, identity operationPlanPopulationIdentity, metricsURL, caPath string, children *actualCLIInvocationTelemetry, monitor *actualCLIContainerMonitor) {
+func actualCLIReproduceHistoricalUnknown(t *testing.T, worker *OperationPlanWorker, attempts *OperationAttemptStore, history *OperationHistoryStore, identity operationPlanPopulationIdentity, sourceRevision, binarySHA, goBuildVersion, metricsURL, caPath string, children *actualCLIInvocationTelemetry, monitor *actualCLIContainerMonitor) {
 	t.Helper()
 	if identity.SourceID != "ecos" || identity.Protocol != "HTTP" || !identity.InventoryUnknown {
 		t.Fatal("actual CLI single-identity reproduction selected an unexpected source scope")
@@ -923,7 +928,7 @@ func actualCLIReproduceHistoricalUnknown(t *testing.T, worker *OperationPlanWork
 		requestStarted = strconv.FormatBool(*latest.RequestStarted)
 	}
 	if runErr != nil {
-		t.Fatalf("actual CLI isolated source-QA reproduction produced a worker failure: source=%s registry_protocol=%s synthetic_transport=REST case=observation_only operation_token_sha256=%s child_source_token_matches=%t child_operation_token_matches=%t index_range_matches=%d source_range_matches=%d target_shard_range_matches=%d worker_stage=%s worker_category=%s probe_stage=%s probe_category=%s child_calls=%d child_error_kinds=%s child_exit_codes=%s child_max=%s stdout_bytes=%d stderr_bytes=%d stderr_classes=%s retained_child_evidence=%t retention_failures=%d latest_state=%s request_started=%s receipt_validated=%t receipt_present=%t history_records=%d history_reservations=%d provider_request_delta=%d provider_unique_delta=%d provider_rest_delta=%d provider_soap_delta=%d cgroup_source=%s cgroup_peak_bytes=%d cgroup_limit_bytes=%d cgroup_oom_events=%d cgroup_oom_kill_events=%d", identity.SourceID, identity.Protocol, operationTokenSHA256, childSourceTokenMatches, childOperationTokenMatches, indexRangeMatches, sourceRangeMatches, targetShardRangeMatches, actualCLISafeWorkerFailureCode(workerStage, validOperationPlanWorkerFailureStage), actualCLISafeWorkerFailureCode(workerCategory, validOperationPlanWorkerFailureCategory), actualCLISafeWorkerFailureCode(probeStage, validOperationPlanProbeFailureStage), actualCLISafeWorkerFailureCode(probeCategory, validOperationPlanProbeFailureCategory), child.Calls, actualCLIStringCountMap(child.ChildErrorKinds), actualCLIIntCountMap(child.ExitCodes), child.MaxElapsed.Round(time.Millisecond), child.StdoutBytes, child.StderrBytes, actualCLIStringCountMap(child.StderrClasses), retained, child.RetentionFailures, actualCLIStateName(found, latest.State), requestStarted, found && latest.ReceiptValidated, found && latest.ReceiptSHA256 != "", actualCLIUsageCount(usageErr, usage.RecordCount), actualCLIUsageCount(usageErr, usage.ReservationCount), afterMetrics["requests"]-beforeMetrics["requests"], afterMetrics["unique"]-beforeMetrics["unique"], afterMetrics["rest_get"]-beforeMetrics["rest_get"], afterMetrics["soap_post"]-beforeMetrics["soap_post"], memory.Source, memory.PeakBytes, memory.LimitBytes, memory.OOMEvents, memory.OOMKillEvents)
+		t.Fatalf("actual CLI isolated source-QA reproduction produced a worker failure: cli_source=%s cli_sha256=%s go_build=%q historical_cli_source=%s historical_cli_sha256=%s source=%s registry_protocol=%s synthetic_transport=REST case=observation_only operation_token_sha256=%s child_source_token_matches=%t child_operation_token_matches=%t index_range_matches=%d source_range_matches=%d target_shard_range_matches=%d worker_stage=%s worker_category=%s probe_stage=%s probe_category=%s child_calls=%d child_error_kinds=%s child_exit_codes=%s child_max=%s stdout_bytes=%d stderr_bytes=%d stderr_classes=%s retained_child_evidence=%t retention_failures=%d latest_state=%s request_started=%s receipt_validated=%t receipt_present=%t history_records=%d history_reservations=%d provider_request_delta=%d provider_unique_delta=%d provider_rest_delta=%d provider_soap_delta=%d cgroup_source=%s cgroup_peak_bytes=%d cgroup_limit_bytes=%d cgroup_oom_events=%d cgroup_oom_kill_events=%d", sourceRevision, binarySHA, goBuildVersion, actualCLIHistoricalFailureSourceRevision, actualCLIHistoricalFailureBinarySHA256, identity.SourceID, identity.Protocol, operationTokenSHA256, childSourceTokenMatches, childOperationTokenMatches, indexRangeMatches, sourceRangeMatches, targetShardRangeMatches, actualCLISafeWorkerFailureCode(workerStage, validOperationPlanWorkerFailureStage), actualCLISafeWorkerFailureCode(workerCategory, validOperationPlanWorkerFailureCategory), actualCLISafeWorkerFailureCode(probeStage, validOperationPlanProbeFailureStage), actualCLISafeWorkerFailureCode(probeCategory, validOperationPlanProbeFailureCategory), child.Calls, actualCLIStringCountMap(child.ChildErrorKinds), actualCLIIntCountMap(child.ExitCodes), child.MaxElapsed.Round(time.Millisecond), child.StdoutBytes, child.StderrBytes, actualCLIStringCountMap(child.StderrClasses), retained, child.RetentionFailures, actualCLIStateName(found, latest.State), requestStarted, found && latest.ReceiptValidated, found && latest.ReceiptSHA256 != "", actualCLIUsageCount(usageErr, usage.RecordCount), actualCLIUsageCount(usageErr, usage.ReservationCount), afterMetrics["requests"]-beforeMetrics["requests"], afterMetrics["unique"]-beforeMetrics["unique"], afterMetrics["rest_get"]-beforeMetrics["rest_get"], afterMetrics["soap_post"]-beforeMetrics["soap_post"], memory.Source, memory.PeakBytes, memory.LimitBytes, memory.OOMEvents, memory.OOMKillEvents)
 	}
 	if latestErr != nil || usageErr != nil || !found || result.AttemptState != "observed" || !result.RequestStarted || !latest.ReceiptValidated || latest.Result == nil || latest.Result.State != "indeterminate" || latest.Result.Category != "response_semantics_unestablished" || latest.DeliveryState != "not_applicable" || latest.DeliveryState != result.DeliveryState || afterMetrics["requests"]-beforeMetrics["requests"] != 1 || afterMetrics["unique"]-beforeMetrics["unique"] != 1 || afterMetrics["rest_get"]-beforeMetrics["rest_get"] != 1 || afterMetrics["soap_post"] != beforeMetrics["soap_post"] || usage.RecordCount != 1 || usage.ReservationCount != 0 || child.Calls != 1 || !receiptProtocolBound || !childArgumentTokensMatch {
 		t.Fatalf("actual CLI isolated reproduction did not preserve the expected source-qualified observation-only result: source=%s registry_protocol=%s synthetic_transport=REST source_token_matches=%t operation_token_matches=%t receipt_protocol_bound=%t case=observation_only worker_stage=none worker_category=none probe_stage=none probe_category=none child_calls=%d child_error_kinds=%s child_exit_codes=%s child_max=%s stdout_bytes=%d stderr_bytes=%d latest_state=%s request_started=%s receipt_validated=%t receipt_present=%t history_records=%d history_reservations=%d provider_request_delta=%d provider_unique_delta=%d provider_rest_delta=%d provider_soap_delta=%d cgroup_source=%s cgroup_peak_bytes=%d cgroup_limit_bytes=%d cgroup_oom_events=%d cgroup_oom_kill_events=%d", identity.SourceID, identity.Protocol, childSourceTokenMatches, childOperationTokenMatches, receiptProtocolBound, child.Calls, actualCLIStringCountMap(child.ChildErrorKinds), actualCLIIntCountMap(child.ExitCodes), child.MaxElapsed.Round(time.Millisecond), child.StdoutBytes, child.StderrBytes, actualCLIStateName(found, latest.State), requestStarted, found && latest.ReceiptValidated, found && latest.ReceiptSHA256 != "", actualCLIUsageCount(usageErr, usage.RecordCount), actualCLIUsageCount(usageErr, usage.ReservationCount), afterMetrics["requests"]-beforeMetrics["requests"], afterMetrics["unique"]-beforeMetrics["unique"], afterMetrics["rest_get"]-beforeMetrics["rest_get"], afterMetrics["soap_post"]-beforeMetrics["soap_post"], memory.Source, memory.PeakBytes, memory.LimitBytes, memory.OOMEvents, memory.OOMKillEvents)
@@ -931,7 +936,7 @@ func actualCLIReproduceHistoricalUnknown(t *testing.T, worker *OperationPlanWork
 	if code := actualCLIExactCapacitySnapshotFailure(memory); code != "" {
 		t.Fatalf("actual CLI isolated reproduction capacity snapshot failed: code=%s", code)
 	}
-	t.Logf("actual CLI isolated source-QA reproduction passed (not fleet acceptance): source=%s registry_protocol=%s synthetic_transport=REST operation_token_sha256=%s child_source_token_matches=%t child_operation_token_matches=%t index_range_matches=%d source_range_matches=%d target_shard_range_matches=%d receipt_protocol_bound=true case=observation_only observation=indeterminate request_delta=1 unique_delta=1 durable_receipts=%d gatus_delivery=not_applicable child_calls=%d child_max=%s cgroup_source=%s cgroup_peak_bytes=%d cgroup_limit_bytes=%d cgroup_oom_events=%d cgroup_oom_kill_events=%d same_manifest_bytes=true same_index_bytes=true same_cli_binary_bytes=true", identity.SourceID, identity.Protocol, operationTokenSHA256, childSourceTokenMatches, childOperationTokenMatches, indexRangeMatches, sourceRangeMatches, targetShardRangeMatches, usage.RecordCount, child.Calls, child.MaxElapsed.Round(time.Millisecond), memory.Source, memory.PeakBytes, memory.LimitBytes, memory.OOMEvents, memory.OOMKillEvents)
+	t.Logf("actual CLI isolated source-QA reproduction passed (not fleet acceptance): cli_source=%s cli_sha256=%s go_build=%q historical_cli_source=%s historical_cli_sha256=%s source=%s registry_protocol=%s synthetic_transport=REST operation_token_sha256=%s child_source_token_matches=%t child_operation_token_matches=%t index_range_matches=%d source_range_matches=%d target_shard_range_matches=%d receipt_protocol_bound=true case=observation_only observation=indeterminate request_delta=1 unique_delta=1 durable_receipts=%d gatus_delivery=not_applicable child_calls=%d child_max=%s cgroup_source=%s cgroup_peak_bytes=%d cgroup_limit_bytes=%d cgroup_oom_events=%d cgroup_oom_kill_events=%d manifest_bytes_equal=true index_bytes_equal=true cli_binary_bytes_equal=false source_qualified_selector_revision=true", sourceRevision, binarySHA, goBuildVersion, actualCLIHistoricalFailureSourceRevision, actualCLIHistoricalFailureBinarySHA256, identity.SourceID, identity.Protocol, operationTokenSHA256, childSourceTokenMatches, childOperationTokenMatches, indexRangeMatches, sourceRangeMatches, targetShardRangeMatches, usage.RecordCount, child.Calls, child.MaxElapsed.Round(time.Millisecond), memory.Source, memory.PeakBytes, memory.LimitBytes, memory.OOMEvents, memory.OOMKillEvents)
 }
 
 func actualCLIPlanShardRangeMatches(plan PinnedOperationObservationPlan, sourceID, operationID, targetShardSHA256 string) (allMatches, sourceMatches, targetShardMatches int) {
@@ -1889,6 +1894,9 @@ func actualCLIInput(t *testing.T) (sourceRoot, revision, binaryPath, binarySHA, 
 		t.Fatal("could not identify the Go toolchain used for source QA")
 	}
 	buildGoVersion = strings.TrimSpace(string(goVersionOutput))
+	if buildGoVersion != actualCLIExpectedGoBuildVersion {
+		t.Fatalf("actual CLI source-QA Go toolchain differs from its reviewed binary pin: got=%q expected=%q", buildGoVersion, actualCLIExpectedGoBuildVersion)
+	}
 	binaryPath = filepath.Join(t.TempDir(), "datapan-amd64")
 	build := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-ldflags", "-X github.com/StatPan/datapan-cli/internal/cli.version="+actualCLIExpectedVersion, "-o", binaryPath, "./cmd/datapan")
 	build.Dir = sourceRoot
@@ -1906,6 +1914,9 @@ func actualCLIInput(t *testing.T) (sourceRoot, revision, binaryPath, binarySHA, 
 	}
 	sum := sha256.Sum256(binaryBytes)
 	binarySHA = hex.EncodeToString(sum[:])
+	if binarySHA != actualCLIExpectedBinarySHA256 {
+		t.Fatalf("fresh build from the exact merged CLI source differs from the reviewed source-QA binary pin: got=%s expected=%s", binarySHA, actualCLIExpectedBinarySHA256)
+	}
 	if supplied := strings.TrimSpace(os.Getenv("HEALTH_OPERATION_ACTUAL_CLI_BINARY")); supplied != "" {
 		if !filepath.IsAbs(supplied) {
 			t.Fatal("HEALTH_OPERATION_ACTUAL_CLI_BINARY must be an absolute path")
