@@ -18,14 +18,16 @@ const pinnedOperationPlanTestGatusImage = "ghcr.io/twin/gatus:v5.36.0@sha256:c5f
 const partialRegistryIdentityFixtureSHA256 = "d7f7da4da9e959cb99561f058504c02a17fe276c6bb68e53faef1647f3bddcda"
 
 type operationPlanPopulationIdentity struct {
-	SourceID         string
-	Provider         string
-	AdapterID        string
-	InventoryStatus  string
-	InventoryUnknown bool
-	OperationID      string
-	Protocol         string
-	DatasetID        string
+	SourceID             string
+	Provider             string
+	AdapterID            string
+	InventoryStatus      string
+	InventoryUnknown     bool
+	OperationID          string
+	Protocol             string
+	DatasetID            string
+	OperationName        string
+	UpstreamOperationKey string
 }
 
 type partialRegistryIdentityFixture struct {
@@ -606,6 +608,7 @@ func loadManifestDerivedPopulationPlan(t *testing.T) (VerifiedRegistryAPIMetadat
 			identities = append(identities, operationPlanPopulationIdentity{
 				SourceID: "data_go_kr", Provider: "data.go.kr", AdapterID: "data-go-kr", InventoryStatus: "source_complete",
 				OperationID: operation.RegistryOperationID, Protocol: operation.Protocol, DatasetID: operation.DatasetID,
+				OperationName: operation.Name, UpstreamOperationKey: operation.UpstreamOperationKey,
 			})
 		}
 	}
@@ -832,6 +835,12 @@ func writeManifestDerivedSyntheticPlan(t *testing.T, source RegistryAPIMetadata,
 		operationIdentity["operation_id"], operationIdentity["protocol"] = identity.OperationID, templateName
 		if identity.DatasetID != "" {
 			operationIdentity["dataset_id"] = identity.DatasetID
+		}
+		if identity.OperationName != "" {
+			operationIdentity["operation_name"] = identity.OperationName
+		}
+		if identity.UpstreamOperationKey != "" {
+			operationIdentity["upstream_operation_key"] = identity.UpstreamOperationKey
 		}
 		runtimeBinding := record["runtime_binding"].(map[string]any)
 		runtimeBinding["credential_reference"], runtimeBinding["credential_scope_key"] = "test-only/synthetic", credentialScopeKey

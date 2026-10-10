@@ -130,9 +130,10 @@ func TestOperationPlanProbeRunnerUsesBoundedDirectChildAndCanonicalReceipt(t *te
 		t.Fatal(err)
 	}
 	argumentLog := filepath.Join(root, "args.txt")
+	workingDirectoryLog := filepath.Join(root, "cwd.txt")
 	templatePath := filepath.Join(root, "receipt-template.json")
 	scriptPath := filepath.Join(root, "synthetic-cli")
-	script := []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ARG_LOG\"\nout=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--output\" ]; then shift; out=$1; fi\n  shift\ndone\n/bin/cat \"$RECEIPT_TEMPLATE\" > \"$out\"\n/bin/chmod 600 \"$out\"\n/bin/cat \"$out\"\n")
+	script := []byte("#!/bin/sh\npwd > \"$CWD_LOG\"\nprintf '%s\\n' \"$@\" > \"$ARG_LOG\"\nout=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--output\" ]; then shift; out=$1; fi\n  shift\ndone\n/bin/cat \"$RECEIPT_TEMPLATE\" > \"$out\"\n/bin/chmod 600 \"$out\"\n/bin/cat \"$out\"\n")
 	if err := os.WriteFile(scriptPath, script, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -145,10 +146,11 @@ func TestOperationPlanProbeRunnerUsesBoundedDirectChildAndCanonicalReceipt(t *te
 	}
 	config := OperationPlanProbeConfig{
 		ExecutablePath: scriptPath, ExecutableSHA256: expected.CLIBinarySHA256, CLIVersion: expected.CLIVersion,
-		RegistryIndexPath: filepath.Join(root, "index.json"), CredentialBindings: credentialPath, ReceiptDirectory: filepath.Join(root, "receipts"),
-		EnvironmentNames: []string{"ARG_LOG", "RECEIPT_TEMPLATE", "UNDECLARED_SECRET"},
+		RegistryIndexPath: filepath.Join(root, "reports", "operation-observation-plan", "index.json"), CredentialBindings: credentialPath, ReceiptDirectory: filepath.Join(root, "receipts"),
+		EnvironmentNames: []string{"ARG_LOG", "CWD_LOG", "RECEIPT_TEMPLATE", "UNDECLARED_SECRET"},
 	}
 	t.Setenv("ARG_LOG", argumentLog)
+	t.Setenv("CWD_LOG", workingDirectoryLog)
 	t.Setenv("RECEIPT_TEMPLATE", templatePath)
 	t.Setenv("UNDECLARED_SECRET", "DO_NOT_PASS")
 	runner, err := NewOperationPlanProbeRunner(config)
@@ -172,6 +174,10 @@ func TestOperationPlanProbeRunnerUsesBoundedDirectChildAndCanonicalReceipt(t *te
 	}
 	if strings.Contains(argText, "DO_NOT_PASS") || strings.Contains(argText, "RECEIPT_TEMPLATE") || strings.Contains(argText, "ARG_LOG") || strings.Contains(argText, "endpoint") || strings.Contains(argText, "query=") {
 		t.Fatal("child argv contains unrelated environment or request values")
+	}
+	workingDirectory, err := os.ReadFile(workingDirectoryLog)
+	if err != nil || filepath.Clean(strings.TrimSpace(string(workingDirectory))) != filepath.Clean(root) {
+		t.Fatalf("actual child did not use the installed plan root independent of the parent process CWD: cwd=%q err=%v", strings.TrimSpace(string(workingDirectory)), err)
 	}
 }
 

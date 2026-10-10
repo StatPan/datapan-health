@@ -89,12 +89,12 @@ make operation-plan-gatus-integration
 make operation-plan-gatus-capacity
 ```
 
-The first command derives a synthetic scheduler/storage/read-model fixture:
-12,662 identities from the pinned Gov metadata plus four identities from an
-explicit partial-provider fixture. It reconciles bounded scheduler dispatch
-using a test receipt executor, validated receipt history, durable attempts,
-exact generated Gatus-key bookkeeping, and bounded public paging. This fixture
-does not claim to enumerate the entire known Registry population, run the
+The first command covers all 12,666 identities in the pinned Registry snapshot:
+12,662 Gov identities plus four identities from an explicit partial-provider
+fixture. It reconciles bounded scheduler dispatch using a test receipt
+executor, validated receipt history, durable attempts, exact generated
+Gatus-key bookkeeping, and bounded public paging. This synthetic fixture does
+not claim to enumerate complete upstream provider inventories, run the
 released CLI, or contact Gatus. The second starts the pinned Gatus container
 on loopback and verifies one synthetic receipt through the production Gatus
 push/readback adapter using the synthetic worker fixture. The third loads the
@@ -108,3 +108,10 @@ pinned Gatus; its smoke and full modes are distinct from these source-QA
 fixtures. Existing probe-runner tests separately verify production child
 arguments, executable digest, private receipt path, and receipt validation.
 These tests do not establish deployment or live-provider acceptance.
+
+The runtime-bundle installer accepts a release manifest up to 16 MiB so it can
+read a plan-bearing Registry projection. Its large-manifest test verifies that
+bounded manifest acceptance and immutable local binding; it does not fetch and
+install the entire operation-artifact closure. The actual-CLI source-QA target
+stages the complete pinned projection separately and keeps it read-only while
+the production runner executes.
