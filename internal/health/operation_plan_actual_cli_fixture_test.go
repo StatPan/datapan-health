@@ -425,9 +425,16 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 			if typed {
 				profileEvidence = append(profileEvidence, policyRef(profile, "request/response/branches/0"), policyRef(profile, "request/response/branches/1"))
 			}
-			assertionEvidence := []operationPlanEvidenceRef{docRef(doc, "#/identity"), {
+			assertionEvidence := []operationPlanEvidenceRef{docRef(doc, "#/identity")}
+			if typed {
+				assertionEvidence = append(assertionEvidence,
+					policyRef(profile, "request/response/branches/0"),
+					policyRef(profile, "request/response/branches/1"),
+				)
+			}
+			assertionEvidence = append(assertionEvidence, operationPlanEvidenceRef{
 				ArtifactPath: assertion.path, SHA256: assertion.sha, JSONPointer: "#/assertion", EvidenceKind: "reviewed_policy",
-			}}
+			})
 			responseAssertion := map[string]any{"kind": responseKind, "empty_result_semantics": emptySemantics, "assertion_ref": assertion.path + "#/assertion", "evidence_refs": assertionEvidence}
 			if typed {
 				responseAssertion["expected_status_codes"] = statuses
@@ -601,6 +608,7 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 			}
 			var contract struct {
 				ResponseAssertion struct {
+					Kind         string                     `json:"kind"`
 					AssertionRef string                     `json:"assertion_ref"`
 					EvidenceRefs []operationPlanEvidenceRef `json:"evidence_refs"`
 				} `json:"response_assertion"`
@@ -652,6 +660,32 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 			artifact, ok := plan.state.manifest[assertionPath]
 			if !ok || artifact.Kind != "operation_response_assertion" {
 				t.Fatalf("loader-only source-QA fixture is missing the canonical assertion artifact for %s/%s", record.SourceID, record.OperationID)
+			}
+			assertionRaw, readErr := os.ReadFile(filepath.Join(plan.state.root, filepath.FromSlash(assertionPath)))
+			if readErr != nil || int64(len(assertionRaw)) != artifact.Bytes || digest(assertionRaw) != artifact.SHA256 {
+				t.Fatalf("loader-only source-QA fixture assertion artifact is unavailable or altered for %s/%s", record.SourceID, record.OperationID)
+			}
+			branchRefs, err := actualCLICollectEvidenceRefs(assertionRaw)
+			if err != nil {
+				t.Fatalf("loader-only source-QA fixture could not scan assertion branch references for %s/%s", record.SourceID, record.OperationID)
+			}
+			if contract.ResponseAssertion.Kind == "observation_only" {
+				if len(branchRefs) != 0 {
+					t.Fatalf("loader-only source-QA observation-only assertion unexpectedly contains branch refs for %s/%s", record.SourceID, record.OperationID)
+				}
+			} else {
+				responseEvidence := make(map[operationPlanEvidenceRef]struct{}, len(contract.ResponseAssertion.EvidenceRefs))
+				for _, ref := range contract.ResponseAssertion.EvidenceRefs {
+					responseEvidence[ref] = struct{}{}
+				}
+				if len(branchRefs) == 0 {
+					t.Fatalf("loader-only source-QA typed assertion has no branch evidence refs for %s/%s", record.SourceID, record.OperationID)
+				}
+				for _, ref := range branchRefs {
+					if _, ok := responseEvidence[ref]; !ok {
+						t.Fatalf("loader-only source-QA typed assertion omits a branch source or review ref for %s/%s", record.SourceID, record.OperationID)
+					}
+				}
 			}
 			transportCounts[record.Protocol]++
 			if record.ObservationPeriod != time.Duration(actualCLIFixtureObservationPeriodSeconds)*time.Second || record.RequestTimeout != time.Duration(actualCLIFixtureRequestTimeoutMS)*time.Millisecond {
