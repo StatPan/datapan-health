@@ -294,7 +294,7 @@ func TestOperationPlanActualCLIProviderGatusIntegration(t *testing.T) {
 		t.Fatalf("actual-CLI fixture source-known protocol or partial-inventory counts differ from pinned metadata: rest=%d soap=%d unknown_inventory=%d", protocolCounts["REST"], protocolCounts["SOAP"], unknownInventoryCount)
 	}
 
-	fixtureRoot := t.TempDir()
+	fixtureRoot := actualCLIPrivateFixtureRoot(t)
 	delayedOperationID := ""
 	if mode == "smoke" {
 		delayed, found := actualCLICancellationIdentity(identities)
@@ -406,6 +406,74 @@ func TestOperationPlanActualCLIProviderGatusIntegration(t *testing.T) {
 	}
 
 	actualCLIFullPopulation(t, worker, attempts, history, plan, metadata, identities, metricsURL, providerCA, providerRoutesSHA256, paths, sourceRevision, binarySHA, goBuildVersion, projection, monitor)
+}
+
+// actualCLIPrivateFixtureRoot retains only this test's synthetic, mode-0700
+// fixture after a failure so durable attempt/history/quota state can be
+// diagnosed. Successful runs remove it; the path is logged only by the local
+// test runner and is never included in public status output.
+func actualCLIPrivateFixtureRoot(t *testing.T) string {
+	t.Helper()
+	root, err := os.MkdirTemp("", "datapan-health-actual-cli-")
+	if err != nil {
+		t.Fatal("could not create the private synthetic actual-CLI fixture")
+	}
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("private synthetic actual-CLI fixture retained for diagnosis: %s", root)
+			return
+		}
+		if err := os.RemoveAll(root); err != nil {
+			t.Log("private synthetic actual-CLI fixture cleanup failed")
+		}
+	})
+	return root
+}
+
+func actualCLISafeSchedulerReason(reason string) string {
+	if reason == "" {
+		return "none"
+	}
+	switch reason {
+	case "capacity_infeasible", "attempt_store_unavailable", "delivery_store_unavailable",
+		"delivery_unavailable", "delivery_state_unavailable", "delivery_state_invalid",
+		"execution_unavailable", "scheduler_loop_stale", "awaiting_initial_evidence_sweep",
+		"operation_observations_incomplete", "operation_observations_stale":
+		return reason
+	default:
+		return "unrecognized"
+	}
+}
+
+func actualCLISafeWorkerFailureCode(code string, valid func(string) bool) string {
+	if code == "" {
+		return "none"
+	}
+	if valid != nil && valid(code) {
+		return code
+	}
+	return "unrecognized"
+}
+
+func TestActualCLISchedulerDiagnosticsRedactUnknownValues(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		got  string
+		want string
+	}{
+		{name: "known scheduler reason", got: actualCLISafeSchedulerReason("attempt_store_unavailable"), want: "attempt_store_unavailable"},
+		{name: "unknown scheduler reason", got: actualCLISafeSchedulerReason("private fixture path"), want: "unrecognized"},
+		{name: "known worker stage", got: actualCLISafeWorkerFailureCode("quota_acquire", validOperationPlanWorkerFailureStage), want: "quota_acquire"},
+		{name: "unknown worker stage", got: actualCLISafeWorkerFailureCode("sensitive detail", validOperationPlanWorkerFailureStage), want: "unrecognized"},
+		{name: "known worker category", got: actualCLISafeWorkerFailureCode("deadline", validOperationPlanWorkerFailureCategory), want: "deadline"},
+		{name: "unknown worker category", got: actualCLISafeWorkerFailureCode("sensitive detail", validOperationPlanWorkerFailureCategory), want: "unrecognized"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if test.got != test.want {
+				t.Fatalf("diagnostic code was not safely bounded: got=%q want=%q", test.got, test.want)
+			}
+		})
+	}
 }
 
 // actualCLIWindowDrainRecoverySmoke seeds valid same-policy quota ledgers in a
@@ -1345,9 +1413,14 @@ func actualCLIFullPopulation(t *testing.T, worker *OperationPlanWorker, attempts
 	completed := false
 	for controllerCtx.Err() == nil {
 		before := status.PassesSinceStart
+		passStartedAt := time.Now()
 		if err := scheduler.ProcessDue(controllerCtx, time.Now().UTC()); err != nil {
+			failedPass := scheduler.Status(time.Now().UTC())
+			parentContextDone := controllerCtx.Err() != nil
 			scheduler.Wait()
-			t.Fatalf("bounded production pass failed after %s with no provider call outside the isolated fixture: %v", time.Since(startedAt).Round(time.Second), err)
+			settled := scheduler.Status(time.Now().UTC())
+			t.Fatalf("bounded production pass failed after %s with no provider call outside the isolated fixture: code=scheduler_unavailable pass_elapsed=%s controller_context_done=%t pass_count=%d active_at_error=%d starts_at_error=%d observations_at_error=%d deferred_at_error=%d readbacks_at_error=%d not_applicable_at_error=%d execution_failures_at_error=%d delivery_failures_at_error=%d identity_scan_failures_at_error=%d delivery_scan_failures_at_error=%d last_error_reason=%s last_error_stage=%s last_error_category=%s failure_stages=%s failure_categories=%s settled_active=%d settled_observations=%d", time.Since(startedAt).Round(time.Second), time.Since(passStartedAt).Round(time.Millisecond), parentContextDone, failedPass.PassesSinceStart, failedPass.ActiveWork, failedPass.RequestStartsSinceStart, failedPass.ObservationsSinceStart, failedPass.DeferredSinceStart, failedPass.ReadbacksSinceStart, failedPass.NotApplicableSinceStart, failedPass.ExecutionFailuresSinceStart, failedPass.DeliveryFailuresSinceStart, failedPass.IdentityScanFailuresSinceStart, failedPass.PendingDeliveryScanFailures, actualCLISafeSchedulerReason(failedPass.LastErrorReason), actualCLISafeWorkerFailureCode(failedPass.LastErrorStage, validOperationPlanWorkerFailureStage), actualCLISafeWorkerFailureCode(failedPass.lastErrorCategory, validOperationPlanWorkerFailureCategory), actualCLIDiagnosticCounterMap(failedPass.failureStageCounts, validOperationPlanWorkerFailureStage), actualCLIDiagnosticCounterMap(failedPass.failureCategoryCounts, validOperationPlanWorkerFailureCategory), settled.ActiveWork, settled.ObservationsSinceStart)
+			t.Fatalf("bounded production pass failed after %s with no provider call outside the isolated fixture: code=scheduler_unavailable pass_elapsed=%s controller_context_done=%t pass_count=%d active_at_error=%d starts_at_error=%d observations_at_error=%d deferred_at_error=%d readbacks_at_error=%d not_applicable_at_error=%d execution_failures_at_error=%d delivery_failures_at_error=%d identity_scan_failures_at_error=%d delivery_scan_failures_at_error=%d last_error_reason=%s last_error_stage=%s last_error_category=%s failure_stages=%s failure_categories=%s settled_active=%d settled_observations=%d", time.Since(startedAt).Round(time.Second), time.Since(passStartedAt).Round(time.Millisecond), parentContextDone, failedPass.PassesSinceStart, failedPass.ActiveWork, failedPass.RequestStartsSinceStart, failedPass.ObservationsSinceStart, failedPass.DeferredSinceStart, failedPass.ReadbacksSinceStart, failedPass.NotApplicableSinceStart, failedPass.ExecutionFailuresSinceStart, failedPass.DeliveryFailuresSinceStart, failedPass.IdentityScanFailuresSinceStart, failedPass.PendingDeliveryScanFailures, actualCLISafeSchedulerReason(failedPass.LastErrorReason), actualCLISafeWorkerFailureCode(failedPass.LastErrorStage, validOperationPlanWorkerFailureStage), actualCLISafeWorkerFailureCode(failedPass.lastErrorCategory, validOperationPlanWorkerFailureCategory), actualCLIDiagnosticCounterMap(failedPass.failureStageCounts, validOperationPlanWorkerFailureStage), actualCLIDiagnosticCounterMap(failedPass.failureCategoryCounts, validOperationPlanWorkerFailureCategory), settled.ActiveWork, settled.ObservationsSinceStart)
 		}
 		status = scheduler.Status(time.Now().UTC())
 		if status.DeferredSinceStart > lastDeferredScan {
