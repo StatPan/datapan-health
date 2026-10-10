@@ -471,6 +471,10 @@ func TestActualCLISchedulerDiagnosticsRedactUnknownValues(t *testing.T) {
 	}{
 		{name: "known scheduler reason", got: actualCLISafeSchedulerReason("attempt_store_unavailable"), want: "attempt_store_unavailable"},
 		{name: "unknown scheduler reason", got: actualCLISafeSchedulerReason("private fixture path"), want: "unrecognized"},
+		{name: "known scheduler failure stage", got: actualCLISafeWorkerFailureCode("evidence_proof", validOperationPlanSchedulerFailureStage), want: "evidence_proof"},
+		{name: "unknown scheduler failure stage", got: actualCLISafeWorkerFailureCode("private fixture path", validOperationPlanSchedulerFailureStage), want: "unrecognized"},
+		{name: "known scheduler failure category", got: actualCLISafeWorkerFailureCode("scan_deadline", validOperationPlanSchedulerFailureCategory), want: "scan_deadline"},
+		{name: "unknown scheduler failure category", got: actualCLISafeWorkerFailureCode("private fixture path", validOperationPlanSchedulerFailureCategory), want: "unrecognized"},
 		{name: "known worker stage", got: actualCLISafeWorkerFailureCode("quota_acquire", validOperationPlanWorkerFailureStage), want: "quota_acquire"},
 		{name: "unknown worker stage", got: actualCLISafeWorkerFailureCode("sensitive detail", validOperationPlanWorkerFailureStage), want: "unrecognized"},
 		{name: "known worker category", got: actualCLISafeWorkerFailureCode("deadline", validOperationPlanWorkerFailureCategory), want: "deadline"},
@@ -1423,16 +1427,20 @@ func actualCLIFullPopulation(t *testing.T, worker *OperationPlanWorker, attempts
 		before := status.PassesSinceStart
 		passStartedAt := time.Now()
 		if err := scheduler.ProcessDue(controllerCtx, time.Now().UTC()); err != nil {
-			failedPass := scheduler.Status(time.Now().UTC())
+			failureAt := time.Now()
+			failedPassElapsed := failureAt.Sub(passStartedAt)
+			failedPass := scheduler.Status(failureAt.UTC())
 			parentContextDone := controllerCtx.Err() != nil
 			failureStage, failureCategory, failureDetailsFound := operationPlanSchedulerFailureDetails(err)
 			if !failureDetailsFound {
 				failureStage = "unavailable"
 				failureCategory = "unavailable"
 			}
+			settleStartedAt := time.Now()
 			scheduler.Wait()
-			settled := scheduler.Status(time.Now().UTC())
-			t.Fatalf("bounded production pass failed after %s with no provider call outside the isolated fixture: code=scheduler_unavailable failure_stage=%s failure_category=%s pass_elapsed=%s scheduler_last_pass_elapsed=%s controller_context_done=%t pass_count=%d scan_budget=%d delivery_scanned=%d execution_scanned=%d evidence_scanned=%d active_at_error=%d starts_at_error=%d observations_at_error=%d deferred_at_error=%d readbacks_at_error=%d not_applicable_at_error=%d execution_failures_at_error=%d delivery_failures_at_error=%d identity_scan_failures_at_error=%d delivery_scan_failures_at_error=%d last_error_reason=%s last_error_stage=%s last_error_category=%s failure_stages=%s failure_categories=%s settled_active=%d settled_observations=%d", time.Since(startedAt).Round(time.Second), actualCLISafeWorkerFailureCode(failureStage, validOperationPlanSchedulerFailureStage), actualCLISafeWorkerFailureCode(failureCategory, validOperationPlanSchedulerFailureCategory), time.Since(passStartedAt).Round(time.Millisecond), failedPass.lastPassElapsed.Round(time.Millisecond), parentContextDone, failedPass.PassesSinceStart, failedPass.CandidateScanPerSecond, failedPass.lastPassDeliveryScanned, failedPass.lastPassExecutionScanned, failedPass.lastPassEvidenceScanned, failedPass.ActiveWork, failedPass.RequestStartsSinceStart, failedPass.ObservationsSinceStart, failedPass.DeferredSinceStart, failedPass.ReadbacksSinceStart, failedPass.NotApplicableSinceStart, failedPass.ExecutionFailuresSinceStart, failedPass.DeliveryFailuresSinceStart, failedPass.IdentityScanFailuresSinceStart, failedPass.PendingDeliveryScanFailures, actualCLISafeSchedulerReason(failedPass.LastErrorReason), actualCLISafeWorkerFailureCode(failedPass.LastErrorStage, actualCLIValidSchedulerOrWorkerFailureStage), actualCLISafeWorkerFailureCode(failedPass.lastErrorCategory, actualCLIValidSchedulerOrWorkerFailureCategory), actualCLIDiagnosticCounterMap(failedPass.failureStageCounts, actualCLIValidSchedulerOrWorkerFailureStage), actualCLIDiagnosticCounterMap(failedPass.failureCategoryCounts, actualCLIValidSchedulerOrWorkerFailureCategory), settled.ActiveWork, settled.ObservationsSinceStart)
+			settledAt := time.Now()
+			settled := scheduler.Status(settledAt.UTC())
+			t.Fatalf("bounded production pass failed after %s with no provider call outside the isolated fixture: code=scheduler_unavailable failure_stage=%s failure_category=%s failure_pass_elapsed=%s settle_elapsed=%s scheduler_last_pass_elapsed=%s controller_context_done=%t pass_count=%d scan_budget=%d delivery_scanned=%d execution_scanned=%d evidence_scanned=%d active_at_error=%d starts_at_error=%d observations_at_error=%d deferred_at_error=%d readbacks_at_error=%d not_applicable_at_error=%d execution_failures_at_error=%d delivery_failures_at_error=%d identity_scan_failures_at_error=%d delivery_scan_failures_at_error=%d last_error_reason=%s last_error_stage=%s last_error_category=%s failure_stages=%s failure_categories=%s settled_active=%d settled_observations=%d", time.Since(startedAt).Round(time.Second), actualCLISafeWorkerFailureCode(failureStage, validOperationPlanSchedulerFailureStage), actualCLISafeWorkerFailureCode(failureCategory, validOperationPlanSchedulerFailureCategory), failedPassElapsed.Round(time.Millisecond), settledAt.Sub(settleStartedAt).Round(time.Millisecond), failedPass.lastPassElapsed.Round(time.Millisecond), parentContextDone, failedPass.PassesSinceStart, failedPass.CandidateScanPerSecond, failedPass.lastPassDeliveryScanned, failedPass.lastPassExecutionScanned, failedPass.lastPassEvidenceScanned, failedPass.ActiveWork, failedPass.RequestStartsSinceStart, failedPass.ObservationsSinceStart, failedPass.DeferredSinceStart, failedPass.ReadbacksSinceStart, failedPass.NotApplicableSinceStart, failedPass.ExecutionFailuresSinceStart, failedPass.DeliveryFailuresSinceStart, failedPass.IdentityScanFailuresSinceStart, failedPass.PendingDeliveryScanFailures, actualCLISafeSchedulerReason(failedPass.LastErrorReason), actualCLISafeWorkerFailureCode(failedPass.LastErrorStage, actualCLIValidSchedulerOrWorkerFailureStage), actualCLISafeWorkerFailureCode(failedPass.lastErrorCategory, actualCLIValidSchedulerOrWorkerFailureCategory), actualCLIDiagnosticCounterMap(failedPass.failureStageCounts, actualCLIValidSchedulerOrWorkerFailureStage), actualCLIDiagnosticCounterMap(failedPass.failureCategoryCounts, actualCLIValidSchedulerOrWorkerFailureCategory), settled.ActiveWork, settled.ObservationsSinceStart)
 		}
 		status = scheduler.Status(time.Now().UTC())
 		if status.DeferredSinceStart > lastDeferredScan {
