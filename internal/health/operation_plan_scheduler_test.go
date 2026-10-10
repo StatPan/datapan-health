@@ -97,6 +97,23 @@ func TestOperationPlanWorkerOwnsAnImmutableVerifiedRuntimeSnapshot(t *testing.T)
 	}
 }
 
+func TestOperationPlanRuntimeSealBindsCachedProbeGenerationInputPins(t *testing.T) {
+	_, _, _, _, _, runtime := newOperationPlanSchedulerTestWorker(t)
+	if !validVerifiedOperationPlanRuntime(runtime) {
+		t.Fatal("source fixture runtime is not verified before the cache tamper check")
+	}
+	mutated := *runtime
+	state := *runtime.Plan.state
+	mutated.Plan.state = &state
+	mutated.Plan.state.operationManifestRef.SHA256 = strings.Repeat("f", 64)
+	if validVerifiedOperationPlanRuntime(&mutated) {
+		t.Fatal("runtime seal did not bind the cached operation-manifest pin")
+	}
+	if _, err := cloneVerifiedOperationPlanRuntime(&mutated); err == nil {
+		t.Fatal("worker-constructor runtime clone accepted a tampered cached probe pin")
+	}
+}
+
 func TestOperationPlanWorkerRuntimeIdentitySealBindsEveryField(t *testing.T) {
 	worker, _, _, _, _, _ := newOperationPlanSchedulerTestWorker(t)
 	base := worker.runtimeIdentity

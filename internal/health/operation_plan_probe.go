@@ -475,11 +475,10 @@ func operationPlanProbeExpected(plan PinnedOperationObservationPlan, record Oper
 		return OperationPlanProbeExpectation{}, errOperationPlanProbeUnavailable
 	}
 	scope, ok := plan.state.byScope[record.SourceID]
-	if !ok || scope.Provider != record.Provider || scope.AdapterID != record.AdapterID || !sha256Pattern.MatchString(scope.IdentitySetSHA256) || plan.state.index.GenerationInputs == nil {
+	if !ok || scope.Provider != record.Provider || scope.AdapterID != record.AdapterID || !sha256Pattern.MatchString(scope.IdentitySetSHA256) || !validOperationPlanProbeGenerationInputPins(plan.state) {
 		return OperationPlanProbeExpectation{}, errOperationPlanProbeUnavailable
 	}
-	var inputs operationObservationPlanGenerationInputs
-	if json.Unmarshal(plan.state.index.GenerationInputs, &inputs) != nil || inputs.ProviderIndex == nil || !sha256Pattern.MatchString(inputs.OperationManifest.SHA256) || !sha256Pattern.MatchString(inputs.ProviderIndex.SHA256) {
+	if !plan.state.providerIndexRefExists {
 		return OperationPlanProbeExpectation{}, errOperationPlanProbeUnavailable
 	}
 	binary, ok := lock.CLI.Binaries[arch]
@@ -490,12 +489,22 @@ func operationPlanProbeExpected(plan PinnedOperationObservationPlan, record Oper
 		AttemptID: attemptID, CLIVersion: lock.CLI.Release, CLIBinarySHA256: binary.BinarySHA256,
 		DatasetID: "StatPan/datapan-registry", Distribution: "huggingface_dataset", DistributionDatasetRevision: lock.Registry.DatasetRevision,
 		RegistrySHA256: lock.Registry.SourceRegistrySHA256, RegistryRevision: plan.RegistryRevision(), ReleaseManifestSHA256: plan.binding.ReleaseManifestSHA256,
-		OperationManifestSHA256: inputs.OperationManifest.SHA256, ProviderIndexSHA256: inputs.ProviderIndex.SHA256,
+		OperationManifestSHA256: plan.state.operationManifestRef.SHA256, ProviderIndexSHA256: plan.state.providerIndexRef.SHA256,
 		PlanSchemaSHA256: plan.binding.SchemaSHA256, IndexSHA256: plan.IndexSHA256(), ShardSHA256: shardSHA,
 		SourceIdentitySetSHA256: scope.IdentitySetSHA256, SourceID: record.SourceID, OperationID: record.OperationID,
 		Provider: record.Provider, AdapterID: record.AdapterID, Protocol: record.Protocol, ResponseAssertionKind: record.ResponseAssertionKind,
 		RequestTimeout: record.RequestTimeout, StartedAt: startedAt.UTC(),
 	}, nil
+}
+
+func validOperationPlanProbeGenerationInputPins(state *operationPlanIndexState) bool {
+	if state == nil || !state.verified || !releaseManifestBinds(state.manifest, state.operationManifestRef.Path, state.operationManifestRef.Bytes, state.operationManifestRef.SHA256) {
+		return false
+	}
+	if !state.providerIndexRefExists {
+		return state.providerIndexRef == (operationPlanArtifactRef{})
+	}
+	return releaseManifestBinds(state.manifest, state.providerIndexRef.Path, state.providerIndexRef.Bytes, state.providerIndexRef.SHA256)
 }
 
 func checkOperationCredentialBindingFile(path string) error {
