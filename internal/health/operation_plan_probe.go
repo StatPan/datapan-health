@@ -161,18 +161,46 @@ type OperationPlanProbeConfig struct {
 // OperationPlanProbeRunner invokes the fixed CLI child ABI. No endpoint,
 // parameter, credential, query, or response value is accepted by this type.
 type OperationPlanProbeRunner struct {
-	config OperationPlanProbeConfig
+	config           OperationPlanProbeConfig
+	workingDirectory string
+	// childInvoker is a package-private execution seam for source-QA tests that
+	// place the exact opened binary in a no-egress namespace. Production runners
+	// leave it nil and execute the verified inode directly below.
+	childInvoker operationPlanProbeChildInvoker
 }
+
+type operationPlanProbeChildInvoker func(context.Context, *os.File, []string, []string, io.Writer, io.Writer) error
 
 func NewOperationPlanProbeRunner(config OperationPlanProbeConfig) (*OperationPlanProbeRunner, error) {
 	if !filepath.IsAbs(config.ExecutablePath) || !filepath.IsAbs(config.RegistryIndexPath) || !filepath.IsAbs(config.CredentialBindings) || !filepath.IsAbs(config.ReceiptDirectory) || !sha256Pattern.MatchString(config.ExecutableSHA256) || strings.TrimSpace(config.CLIVersion) == "" || len(config.CLIVersion) > 64 {
 		return nil, errOperationPlanProbeUnavailable
 	}
-	runner := &OperationPlanProbeRunner{config: config}
+	workingDirectory, err := operationPlanInstallRootFromIndex(config.RegistryIndexPath)
+	if err != nil {
+		return nil, errOperationPlanProbeUnavailable
+	}
+	runner := &OperationPlanProbeRunner{config: config, workingDirectory: workingDirectory}
 	if err := runner.VerifyExecutable(); err != nil {
 		return nil, errOperationPlanProbeUnavailable
 	}
 	return runner, nil
+}
+
+func operationPlanInstallRootFromIndex(indexPath string) (string, error) {
+	if !filepath.IsAbs(indexPath) {
+		return "", errOperationPlanProbeUnavailable
+	}
+	const indexRelativePath = "reports/operation-observation-plan/index.json"
+	clean := filepath.ToSlash(filepath.Clean(indexPath))
+	suffix := "/" + indexRelativePath
+	if !strings.HasSuffix(clean, suffix) {
+		return "", errOperationPlanProbeUnavailable
+	}
+	root := strings.TrimSuffix(clean, suffix)
+	if root == "" {
+		root = "/"
+	}
+	return filepath.FromSlash(root), nil
 }
 
 // OperationPlanProbeConfigFromRuntimeLock selects the architecture-specific
@@ -251,13 +279,19 @@ func (runner *OperationPlanProbeRunner) Run(ctx context.Context, expectation Ope
 	// descriptor 3 prevents a pathname replacement between digest verification
 	// and exec from selecting different bytes. This Linux-only child route fails
 	// closed if procfs is unavailable; it never falls back to reopening by path.
-	cmd := exec.CommandContext(processCtx, "/proc/self/fd/3", args...)
-	cmd.ExtraFiles = []*os.File{executable}
-	cmd.Env = selectEnvironment(runner.config.EnvironmentNames)
 	stdout, stderr := &boundedOperationOutput{limit: maxOperationPlanProbeReceiptBytes}, &boundedOperationOutput{limit: maxOperationPlanProbeStderrBytes}
-	cmd.Stdout, cmd.Stderr = stdout, stderr
 	started := time.Now().UTC()
-	runErr := cmd.Run()
+	var runErr error
+	if runner.childInvoker != nil {
+		runErr = runner.childInvoker(processCtx, executable, args, selectEnvironment(runner.config.EnvironmentNames), stdout, stderr)
+	} else {
+		cmd := exec.CommandContext(processCtx, "/proc/self/fd/3", args...)
+		cmd.Dir = runner.workingDirectory
+		cmd.ExtraFiles = []*os.File{executable}
+		cmd.Env = selectEnvironment(runner.config.EnvironmentNames)
+		cmd.Stdout, cmd.Stderr = stdout, stderr
+		runErr = cmd.Run()
+	}
 	receivedAt := time.Now().UTC()
 	exitCode := 0
 	if runErr != nil {
