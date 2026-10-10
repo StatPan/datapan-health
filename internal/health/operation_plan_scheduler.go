@@ -34,49 +34,53 @@ type OperationPlanSchedulerConfig struct {
 // are process-local counters since startup, not claims about durable fleet
 // coverage or native Gatus delivery.
 type OperationPlanSchedulerStatus struct {
-	SchemaVersion                   string    `json:"schema_version"`
-	State                           string    `json:"state"`
-	Ready                           bool      `json:"ready"`
-	Reason                          string    `json:"reason,omitempty"`
-	RegistryRevision                string    `json:"registry_revision,omitempty"`
-	ReleaseManifestSHA256           string    `json:"release_manifest_sha256,omitempty"`
-	IndexSHA256                     string    `json:"index_sha256,omitempty"`
-	ActivationSHA256                string    `json:"activation_sha256,omitempty"`
-	CanaryConfigSHA256              string    `json:"canary_config_sha256,omitempty"`
-	IdentityMappingSHA256           string    `json:"identity_mapping_sha256,omitempty"`
-	RuntimePinSHA256                string    `json:"runtime_pin_sha256,omitempty"`
-	SuppressedLegacyCanaries        []string  `json:"suppressed_legacy_canaries,omitempty"`
-	KnownOperations                 int       `json:"known_operations"`
-	AdmittedOperations              int       `json:"admitted_operations"`
-	ActiveWork                      int       `json:"active_work"`
-	MaxConcurrent                   int       `json:"max_concurrent"`
-	MaxStartsPerSecond              int       `json:"max_starts_per_second"`
-	CandidateScanPerSecond          int       `json:"candidate_scan_per_second"`
-	RequiredStartsPerSecond         float64   `json:"required_starts_per_second"`
-	RequiredConcurrency             int       `json:"required_concurrency"`
-	CapacityFeasible                bool      `json:"capacity_feasible"`
-	CapacityFailureScopes           int       `json:"capacity_failure_scopes"`
-	EvidenceSweepAt                 time.Time `json:"evidence_sweep_at,omitempty"`
-	EvidenceCheckedOperations       int       `json:"evidence_checked_operations"`
-	EvidenceCurrentOperations       int       `json:"evidence_current_operations"`
-	EvidenceMissingOperations       int       `json:"evidence_missing_operations"`
-	EvidenceValidUntil              time.Time `json:"evidence_valid_until,omitempty"`
-	LastPassAt                      time.Time `json:"last_pass_at,omitempty"`
-	LastPassAgeSeconds              int64     `json:"last_pass_age_seconds,omitempty"`
-	LastErrorReason                 string    `json:"last_error_reason,omitempty"`
-	LastErrorAt                     time.Time `json:"last_error_at,omitempty"`
-	PassesSinceStart                uint64    `json:"passes_since_start"`
-	ExecutionTasksStartedSinceStart uint64    `json:"execution_tasks_started_since_start"`
-	RequestStartsSinceStart         uint64    `json:"request_starts_since_start"`
-	ObservationsSinceStart          uint64    `json:"observations_since_start"`
-	DeferredSinceStart              uint64    `json:"deferred_since_start"`
-	ExecutionFailuresSinceStart     uint64    `json:"execution_failures_since_start"`
-	DeliveryTasksStartedSinceStart  uint64    `json:"delivery_tasks_started_since_start"`
-	ReadbacksSinceStart             uint64    `json:"readbacks_since_start"`
-	NotApplicableSinceStart         uint64    `json:"not_applicable_since_start"`
-	DeliveryFailuresSinceStart      uint64    `json:"delivery_failures_since_start"`
-	PendingDeliveryScanFailures     uint64    `json:"pending_delivery_scan_failures"`
-	IdentityScanFailuresSinceStart  uint64    `json:"identity_scan_failures_since_start"`
+	SchemaVersion                   string            `json:"schema_version"`
+	State                           string            `json:"state"`
+	Ready                           bool              `json:"ready"`
+	Reason                          string            `json:"reason,omitempty"`
+	RegistryRevision                string            `json:"registry_revision,omitempty"`
+	ReleaseManifestSHA256           string            `json:"release_manifest_sha256,omitempty"`
+	IndexSHA256                     string            `json:"index_sha256,omitempty"`
+	ActivationSHA256                string            `json:"activation_sha256,omitempty"`
+	CanaryConfigSHA256              string            `json:"canary_config_sha256,omitempty"`
+	IdentityMappingSHA256           string            `json:"identity_mapping_sha256,omitempty"`
+	RuntimePinSHA256                string            `json:"runtime_pin_sha256,omitempty"`
+	SuppressedLegacyCanaries        []string          `json:"suppressed_legacy_canaries,omitempty"`
+	KnownOperations                 int               `json:"known_operations"`
+	AdmittedOperations              int               `json:"admitted_operations"`
+	ActiveWork                      int               `json:"active_work"`
+	MaxConcurrent                   int               `json:"max_concurrent"`
+	MaxStartsPerSecond              int               `json:"max_starts_per_second"`
+	CandidateScanPerSecond          int               `json:"candidate_scan_per_second"`
+	RequiredStartsPerSecond         float64           `json:"required_starts_per_second"`
+	RequiredConcurrency             int               `json:"required_concurrency"`
+	CapacityFeasible                bool              `json:"capacity_feasible"`
+	CapacityFailureScopes           int               `json:"capacity_failure_scopes"`
+	EvidenceSweepAt                 time.Time         `json:"evidence_sweep_at,omitempty"`
+	EvidenceCheckedOperations       int               `json:"evidence_checked_operations"`
+	EvidenceCurrentOperations       int               `json:"evidence_current_operations"`
+	EvidenceMissingOperations       int               `json:"evidence_missing_operations"`
+	EvidenceValidUntil              time.Time         `json:"evidence_valid_until,omitempty"`
+	LastPassAt                      time.Time         `json:"last_pass_at,omitempty"`
+	LastPassAgeSeconds              int64             `json:"last_pass_age_seconds,omitempty"`
+	LastErrorReason                 string            `json:"last_error_reason,omitempty"`
+	LastErrorStage                  string            `json:"last_error_stage,omitempty"`
+	lastErrorCategory               string            `json:"-"`
+	failureStageCounts              map[string]uint64 `json:"-"`
+	failureCategoryCounts           map[string]uint64 `json:"-"`
+	LastErrorAt                     time.Time         `json:"last_error_at,omitempty"`
+	PassesSinceStart                uint64            `json:"passes_since_start"`
+	ExecutionTasksStartedSinceStart uint64            `json:"execution_tasks_started_since_start"`
+	RequestStartsSinceStart         uint64            `json:"request_starts_since_start"`
+	ObservationsSinceStart          uint64            `json:"observations_since_start"`
+	DeferredSinceStart              uint64            `json:"deferred_since_start"`
+	ExecutionFailuresSinceStart     uint64            `json:"execution_failures_since_start"`
+	DeliveryTasksStartedSinceStart  uint64            `json:"delivery_tasks_started_since_start"`
+	ReadbacksSinceStart             uint64            `json:"readbacks_since_start"`
+	NotApplicableSinceStart         uint64            `json:"not_applicable_since_start"`
+	DeliveryFailuresSinceStart      uint64            `json:"delivery_failures_since_start"`
+	PendingDeliveryScanFailures     uint64            `json:"pending_delivery_scan_failures"`
+	IdentityScanFailuresSinceStart  uint64            `json:"identity_scan_failures_since_start"`
 }
 
 type operationPlanCapacityAssessment struct {
@@ -121,6 +125,10 @@ type OperationPlanScheduler struct {
 	deliveryCursor        int
 	lastPass              time.Time
 	lastErrorReason       string
+	lastErrorStage        string
+	lastErrorCategory     string
+	failureStageCounts    map[string]uint64
+	failureCategoryCounts map[string]uint64
 	lastErrorAt           time.Time
 	errorEpoch            uint64
 	identityErrors        map[string]operationPlanIdentityError
@@ -367,6 +375,8 @@ func (scheduler *OperationPlanScheduler) advanceEvidenceSweep(ctx context.Contex
 		if allIdentityErrorsRecovered {
 			scheduler.identityErrors = make(map[string]operationPlanIdentityError)
 			scheduler.lastErrorReason = ""
+			scheduler.lastErrorStage = ""
+			scheduler.lastErrorCategory = ""
 			scheduler.lastErrorAt = time.Time{}
 		}
 	}
@@ -495,23 +505,51 @@ func (scheduler *OperationPlanScheduler) launch(parent context.Context, identity
 func (scheduler *OperationPlanScheduler) finishExecution(identityKey string, result OperationPlanWorkerResult, err error) {
 	scheduler.mu.Lock()
 	defer scheduler.mu.Unlock()
-	if err != nil {
-		scheduler.executionFailures++
-		scheduler.latchIdentityErrorLocked(identityKey, "execution_unavailable", time.Now().UTC(), true)
-		return
-	}
 	if result.RequestStarted {
 		scheduler.requestStarts++
 	}
-	switch result.AttemptState {
-	case "observed":
+	if result.AttemptState == "observed" {
 		scheduler.observations++
 		if result.DeliveryState == "not_applicable" {
 			scheduler.notApplicable++
 		}
-	case "deferred":
+	} else if result.AttemptState == "deferred" {
 		scheduler.deferred++
-	case "failed", "unknown":
+	}
+	if err != nil {
+		scheduler.executionFailures++
+		scheduler.latchIdentityErrorLocked(identityKey, "execution_unavailable", time.Now().UTC(), true)
+		var failure *operationPlanWorkerFailure
+		if errors.As(err, &failure) {
+			if validOperationPlanWorkerFailureStage(failure.stage) {
+				scheduler.lastErrorStage = failure.stage
+			} else {
+				scheduler.lastErrorStage = "unavailable"
+			}
+			if validOperationPlanWorkerFailureCategory(failure.category) {
+				scheduler.lastErrorCategory = failure.category
+			} else {
+				scheduler.lastErrorCategory = "unavailable"
+			}
+		} else {
+			scheduler.lastErrorStage = "unavailable"
+			scheduler.lastErrorCategory = operationPlanWorkerFailureCategory(err)
+		}
+		if validOperationPlanWorkerFailureStage(scheduler.lastErrorStage) {
+			if scheduler.failureStageCounts == nil {
+				scheduler.failureStageCounts = make(map[string]uint64)
+			}
+			scheduler.failureStageCounts[scheduler.lastErrorStage]++
+		}
+		if validOperationPlanWorkerFailureCategory(scheduler.lastErrorCategory) {
+			if scheduler.failureCategoryCounts == nil {
+				scheduler.failureCategoryCounts = make(map[string]uint64)
+			}
+			scheduler.failureCategoryCounts[scheduler.lastErrorCategory]++
+		}
+		return
+	}
+	if result.AttemptState == "failed" || result.AttemptState == "unknown" {
 		scheduler.executionFailures++
 		scheduler.latchIdentityErrorLocked(identityKey, "execution_unavailable", time.Now().UTC(), true)
 	}
@@ -563,6 +601,8 @@ func (scheduler *OperationPlanScheduler) recordFailure(now time.Time, reason str
 
 func (scheduler *OperationPlanScheduler) latchErrorLocked(reason string, at time.Time) {
 	scheduler.lastErrorReason = reason
+	scheduler.lastErrorStage = ""
+	scheduler.lastErrorCategory = ""
 	scheduler.lastErrorAt = at.UTC()
 	scheduler.errorEpoch++
 }
@@ -636,6 +676,10 @@ func (scheduler *OperationPlanScheduler) Status(at time.Time) OperationPlanSched
 	status.EvidenceValidUntil = scheduler.evidenceValidUntil
 	status.LastPassAt = scheduler.lastPass
 	status.LastErrorReason = scheduler.lastErrorReason
+	status.LastErrorStage = scheduler.lastErrorStage
+	status.lastErrorCategory = scheduler.lastErrorCategory
+	status.failureStageCounts = cloneOperationPlanFailureCounts(scheduler.failureStageCounts)
+	status.failureCategoryCounts = cloneOperationPlanFailureCounts(scheduler.failureCategoryCounts)
 	status.LastErrorAt = scheduler.lastErrorAt
 	status.PassesSinceStart = scheduler.passes
 	status.ExecutionTasksStartedSinceStart = scheduler.executionTasksStarted
@@ -685,6 +729,17 @@ func (scheduler *OperationPlanScheduler) Status(at time.Time) OperationPlanSched
 		status.State = "degraded"
 	}
 	return status
+}
+
+func cloneOperationPlanFailureCounts(counts map[string]uint64) map[string]uint64 {
+	if len(counts) == 0 {
+		return nil
+	}
+	copy := make(map[string]uint64, len(counts))
+	for key, count := range counts {
+		copy[key] = count
+	}
+	return copy
 }
 
 func (scheduler *OperationPlanScheduler) Wait() {

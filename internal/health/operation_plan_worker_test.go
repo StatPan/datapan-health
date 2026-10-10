@@ -3,6 +3,7 @@ package health
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -272,6 +273,26 @@ func TestOperationPlanWorkerArchivesCanceledChildReceiptBeforeGatusReadback(t *t
 	if err == nil || time.Since(startedAt) > maximumCommitTime || result.AttemptState != "observed" || result.DeliveryState != "not_ready" || !result.RequestStarted || result.ReceiptSHA256 == "" || ctx.Err() == nil {
 		unlockOperationPlanTestLocks(quotaLocks)
 		t.Fatalf("validated local child receipt was not committed despite caller cancellation: result=%#v err=%v canceled=%t", result, err, ctx.Err() != nil)
+	}
+	var workerFailure *operationPlanWorkerFailure
+	if !errors.Is(err, errOperationPlanWorkerUnavailable) || !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, ErrOperationQuotaUnavailable) || err.Error() != errOperationPlanWorkerUnavailable.Error() || !errors.As(err, &workerFailure) || workerFailure.stage != "quota_release" || workerFailure.category != "deadline" {
+		unlockOperationPlanTestLocks(quotaLocks)
+		t.Fatalf("post-receipt quota lock failure lost its redacted stage/category: err=%v typed=%#v", err, workerFailure)
+	}
+	workerErr := err
+	scheduler, err := NewOperationPlanScheduler(OperationPlanSchedulerConfig{
+		Worker: worker, MaxConcurrent: 1, MaxStartsPerPass: 1, MaxDeliveriesPerPass: 1,
+		CandidateScanPerPass: 2, DeliveryLease: time.Minute,
+	})
+	if err != nil {
+		unlockOperationPlanTestLocks(quotaLocks)
+		t.Fatal("could not construct scheduler for post-receipt diagnostics:", err)
+	}
+	scheduler.finishExecution(operationReadModelIdentityKey(result.SourceID, result.OperationID), result, workerErr)
+	status := scheduler.Status(time.Now().UTC())
+	if status.Ready || status.LastErrorReason != "execution_unavailable" || status.LastErrorStage != "quota_release" || status.lastErrorCategory != "deadline" || status.failureStageCounts["quota_release"] != 1 || status.failureCategoryCounts["deadline"] != 1 || status.RequestStartsSinceStart != 1 || status.ObservationsSinceStart != 1 || status.ExecutionFailuresSinceStart != 1 {
+		unlockOperationPlanTestLocks(quotaLocks)
+		t.Fatalf("post-receipt cleanup failure was not represented as observed evidence plus a latched failure: %#v", status)
 	}
 	unlockOperationPlanTestLocks(quotaLocks)
 	cancel()

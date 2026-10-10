@@ -4,13 +4,87 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"sort"
+	"syscall"
 	"time"
 
 	"github.com/StatPan/datapan-health/internal/runtimebundle"
 )
 
 var errOperationPlanWorkerUnavailable = errors.New("operation-plan worker is unavailable")
+
+// operationPlanWorkerFailure carries allowlisted diagnostic codes and keeps
+// the cause private for errors.Is compatibility. Error remains the existing
+// fixed redacted message for callers that log errors.
+type operationPlanWorkerFailure struct {
+	stage    string
+	category string
+	cause    error
+}
+
+func (failure *operationPlanWorkerFailure) Error() string {
+	return errOperationPlanWorkerUnavailable.Error()
+}
+
+func (failure *operationPlanWorkerFailure) Is(target error) bool {
+	return target == errOperationPlanWorkerUnavailable || failure != nil && errors.Is(failure.cause, target)
+}
+
+func newOperationPlanWorkerFailure(stage string, cause error) error {
+	if !validOperationPlanWorkerFailureStage(stage) {
+		stage = "unavailable"
+	}
+	return &operationPlanWorkerFailure{stage: stage, category: operationPlanWorkerFailureCategory(cause), cause: cause}
+}
+
+func validOperationPlanWorkerFailureStage(stage string) bool {
+	switch stage {
+	case "runtime_validation", "target_lookup", "attempt_id", "attempt_begin", "expectation", "history_reservation", "quota_acquire", "quota_acquire_cleanup", "pre_dispatch_cleanup", "execution_deadline", "runner", "history_validate", "history_append", "attempt_complete", "quota_release", "unavailable":
+		return true
+	default:
+		return false
+	}
+}
+
+func validOperationPlanWorkerFailureCategory(category string) bool {
+	switch category {
+	case "deadline", "canceled", "capacity", "lock", "io", "store_unavailable", "unavailable":
+		return true
+	default:
+		return false
+	}
+}
+
+func operationPlanWorkerFailureCategory(cause error) string {
+	if cause == nil {
+		return "unavailable"
+	}
+	if errors.Is(cause, context.DeadlineExceeded) {
+		return "deadline"
+	}
+	if errors.Is(cause, context.Canceled) {
+		return "canceled"
+	}
+	if errors.Is(cause, ErrOperationQuotaExhausted) || errors.Is(cause, ErrOperationAttemptCapacity) || errors.Is(cause, ErrOperationHistoryCapacity) || errors.Is(cause, ErrOperationAttemptHeld) || errors.Is(cause, ErrOperationAttemptNotDue) {
+		return "capacity"
+	}
+	var quotaFailure *operationQuotaFailure
+	if errors.As(cause, &quotaFailure) && quotaFailure.category != "" {
+		if validOperationPlanWorkerFailureCategory(quotaFailure.category) {
+			return quotaFailure.category
+		}
+	}
+	var pathError *os.PathError
+	var syscallError syscall.Errno
+	if errors.As(cause, &pathError) || errors.As(cause, &syscallError) {
+		return "io"
+	}
+	if errors.Is(cause, ErrOperationQuotaUnavailable) || errors.Is(cause, ErrOperationAttemptUnavailable) || errors.Is(cause, ErrOperationHistoryUnavailable) {
+		return "store_unavailable"
+	}
+	return "unavailable"
+}
 
 const operationPlanPostChildCommitTimeout = 15 * time.Second
 
@@ -169,15 +243,27 @@ func newOperationPlanWorker(config OperationPlanWorkerConfig, runnerConfig Opera
 // ExecuteOne runs one due-checked active identity. A call with an unknown or
 // inactive identity performs no attempt, quota reservation, child spawn, or
 // network request.
-func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, operationID string, now time.Time) (OperationPlanWorkerResult, error) {
+func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, operationID string, now time.Time) (result OperationPlanWorkerResult, runErr error) {
+	stage := "runtime_validation"
+	defer func() {
+		if runErr == nil {
+			return
+		}
+		var failure *operationPlanWorkerFailure
+		if !errors.As(runErr, &failure) {
+			runErr = newOperationPlanWorkerFailure(stage, runErr)
+		}
+	}()
 	if worker == nil || ctx == nil || ctx.Err() != nil || !worker.validRuntimeSnapshot() || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 || now.IsZero() {
 		return OperationPlanWorkerResult{}, errOperationPlanWorkerUnavailable
 	}
+	stage = "target_lookup"
 	target, found := worker.targets[operationReadModelIdentityKey(sourceID, operationID)]
 	if !found {
 		return OperationPlanWorkerResult{}, errOperationPlanWorkerUnavailable
 	}
 	now = now.UTC()
+	stage = "attempt_id"
 	attemptID, err := NewOperationPlanProbeAttemptID()
 	if err != nil {
 		return OperationPlanWorkerResult{}, errOperationPlanWorkerUnavailable
@@ -189,24 +275,29 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 	}
 	preDispatchCtx, cancelPreDispatch := context.WithTimeout(ctx, operationPlanPreDispatchCleanupTimeout)
 	defer cancelPreDispatch()
+	stage = "attempt_begin"
 	claim, err := worker.attempts.BeginAttemptContext(preDispatchCtx, binding, attemptID, now, worker.attemptLease)
 	if err != nil {
 		return OperationPlanWorkerResult{}, err
 	}
-	result := OperationPlanWorkerResult{SourceID: sourceID, OperationID: operationID, AttemptID: claim.AttemptID, Generation: claim.Generation, AttemptState: "claimed"}
+	result = OperationPlanWorkerResult{SourceID: sourceID, OperationID: operationID, AttemptID: claim.AttemptID, Generation: claim.Generation, AttemptState: "claimed"}
 	identity := OperationHistoryIdentity{
 		SourceID: claim.Binding.SourceID, OperationID: claim.Binding.OperationID, AttemptID: claim.AttemptID,
 		Generation: claim.Generation, RegistryRevision: claim.Binding.RegistryRevision,
 		ReleaseManifestSHA256: claim.Binding.ReleaseManifestSHA, IndexSHA256: claim.Binding.IndexSHA, ShardSHA256: claim.Binding.ShardSHA,
 	}
+	stage = "expectation"
 	expected, err := operationPlanProbeExpected(worker.runtime.Plan, target.Record, target.ShardSHA256, claim.AttemptID, worker.lock, worker.arch, claim.StartedAt)
 	if err != nil {
 		return worker.deferBeforeDispatch(claim, result, operationAttemptReasonChildUnavailable, now, nil, OperationHistoryReservation{})
 	}
+	stage = "history_reservation"
 	reservation, err := worker.history.Reserve(preDispatchCtx, identity)
 	if err != nil {
 		if reservation.Matches(identity) {
-			_ = cancelOperationHistoryReservation(worker.history, identity, reservation)
+			if cancelErr := cancelOperationHistoryReservation(worker.history, identity, reservation); cancelErr != nil {
+				return result, newOperationPlanWorkerFailure("pre_dispatch_cleanup", cancelErr)
+			}
 		}
 		reason := operationAttemptReasonChildUnavailable
 		if errors.Is(err, ErrOperationHistoryCapacity) {
@@ -215,8 +306,10 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 		return worker.deferBeforeDispatch(claim, result, reason, now, nil, OperationHistoryReservation{})
 	}
 	quotaNow := time.Now().UTC()
-	quotaClaims, err := worker.quotas.AcquireManyContext(preDispatchCtx, target.Record.QuotaPolicies, attemptID, quotaNow, worker.quotaLease)
+	stage = "quota_acquire"
+	quotaClaims, _, err := worker.quotas.acquireManyLiveContext(preDispatchCtx, target.Record.QuotaPolicies, attemptID, worker.quotaLease)
 	if err != nil {
+		stage = "quota_acquire_cleanup"
 		cancelErr := cancelOperationHistoryReservation(worker.history, identity, reservation)
 		reason := operationAttemptReasonChildUnavailable
 		if errors.Is(err, ErrOperationQuotaExhausted) {
@@ -224,7 +317,7 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 		}
 		deferred, deferErr := worker.deferBeforeDispatch(claim, result, reason, quotaNow, nil, OperationHistoryReservation{})
 		if cancelErr != nil {
-			return deferred, errOperationPlanWorkerUnavailable
+			return deferred, newOperationPlanWorkerFailure("quota_acquire_cleanup", cancelErr)
 		}
 		if deferErr != nil {
 			return deferred, deferErr
@@ -232,20 +325,29 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 		return deferred, nil
 	}
 	deadlineNow := time.Now().UTC()
+	stage = "execution_deadline"
 	deadline, deadlineOK := operationPlanProbeExecutionDeadline(deadlineNow, target.Record.RequestTimeout, claim.ExpiresAt, attemptID, quotaClaims)
 	if !deadlineOK {
-		_ = worker.releaseQuotaClaims(quotaClaims, deadlineNow)
-		return worker.deferBeforeDispatch(claim, result, operationAttemptReasonChildUnavailable, deadlineNow, worker.history, reservation)
+		releasedErr := worker.releaseQuotaClaims(quotaClaims)
+		deferred, deferErr := worker.deferBeforeDispatch(claim, result, operationAttemptReasonChildUnavailable, deadlineNow, worker.history, reservation)
+		if deferErr != nil {
+			return deferred, deferErr
+		}
+		if releasedErr != nil {
+			return deferred, newOperationPlanWorkerFailure("quota_release", releasedErr)
+		}
+		return deferred, nil
 	}
+	stage = "runner"
 	probeResult, _, runErr := worker.runner.Run(ctx, expected, deadline)
 	if runErr != nil {
 		finishedAt := time.Now().UTC()
 		commitCtx, cancelCommit := worker.newPostChildCommitContext()
 		_ = worker.attempts.failAttemptContext(commitCtx, claim, finishedAt)
 		cancelCommit()
-		_ = worker.releaseQuotaClaims(quotaClaims, time.Now().UTC())
+		_ = worker.releaseQuotaClaims(quotaClaims)
 		result.AttemptState = "unknown"
-		return result, errOperationPlanWorkerUnavailable
+		return result, newOperationPlanWorkerFailure("runner", runErr)
 	}
 	// A valid receipt may already exist in memory even if the scheduler context
 	// was canceled as the child returned. Preserve and commit that evidence with
@@ -253,21 +355,27 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 	// that may have reached the provider without its validated receipt.
 	commitCtx, cancelCommit := worker.newPostChildCommitContext()
 	defer cancelCommit()
+	stage = "history_validate"
 	record, err := worker.historyValidator.newRecord(identity, probeResult, expected, claim.StartedAt)
 	if err != nil {
 		_ = worker.attempts.failAttemptContext(commitCtx, claim, time.Now().UTC())
-		_ = worker.releaseQuotaClaims(quotaClaims, time.Now().UTC())
+		_ = worker.releaseQuotaClaims(quotaClaims)
 		result.AttemptState = "unknown"
-		return result, errOperationPlanWorkerUnavailable
+		return result, newOperationPlanWorkerFailure("history_validate", err)
 	}
+	stage = "history_append"
 	ref, err := worker.history.AppendValidated(commitCtx, reservation, record)
 	if err != nil || !ref.MatchesValidatedRecord(record) {
 		_ = worker.attempts.failAttemptContext(commitCtx, claim, time.Now().UTC())
-		_ = worker.releaseQuotaClaims(quotaClaims, time.Now().UTC())
+		_ = worker.releaseQuotaClaims(quotaClaims)
 		result.AttemptState = "unknown"
-		return result, errOperationPlanWorkerUnavailable
+		if err == nil {
+			err = ErrOperationHistoryUnavailable
+		}
+		return result, newOperationPlanWorkerFailure("history_append", err)
 	}
 	completedAt := time.Now().UTC()
+	stage = "attempt_complete"
 	if !probeResult.RequestStarted {
 		err = worker.attempts.RecordBlockedAttemptFromValidatedHistory(commitCtx, claim, record, ref, worker.historyValidator, completedAt)
 		result.AttemptState = "failed"
@@ -288,9 +396,13 @@ func (worker *OperationPlanWorker) ExecuteOne(ctx context.Context, sourceID, ope
 		}
 	}
 	result.ReceiptSHA256 = probeResult.ReceiptSHA256
-	quotaReleaseErr := worker.releaseQuotaClaims(quotaClaims, time.Now().UTC())
-	if err != nil || quotaReleaseErr != nil {
-		return result, errOperationPlanWorkerUnavailable
+	stage = "quota_release"
+	quotaReleaseErr := worker.releaseQuotaClaims(quotaClaims)
+	if err != nil {
+		return result, newOperationPlanWorkerFailure("attempt_complete", err)
+	}
+	if quotaReleaseErr != nil {
+		return result, quotaReleaseErr
 	}
 	return result, nil
 }
@@ -387,7 +499,7 @@ func (worker *OperationPlanWorker) newPostChildCommitContext() (context.Context,
 	return context.WithTimeout(context.Background(), deadline)
 }
 
-func (worker *OperationPlanWorker) releaseQuotaClaims(claims []OperationQuotaClaim, now time.Time) error {
+func (worker *OperationPlanWorker) releaseQuotaClaims(claims []OperationQuotaClaim) error {
 	if worker == nil || worker.quotas == nil || len(claims) == 0 {
 		return ErrOperationQuotaUnavailable
 	}
@@ -397,7 +509,7 @@ func (worker *OperationPlanWorker) releaseQuotaClaims(claims []OperationQuotaCla
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
-	return worker.quotas.ReleaseManyContext(ctx, claims, now)
+	return worker.quotas.releaseManyLiveContext(ctx, claims)
 }
 
 func operationPlanProbeExecutionDeadline(now time.Time, requestTimeout time.Duration, attemptExpiresAt time.Time, attemptID string, quotaClaims []OperationQuotaClaim) (time.Time, bool) {
@@ -463,14 +575,14 @@ func (worker *OperationPlanWorker) deferBeforeDispatch(claim OperationAttemptCla
 			Generation: claim.Generation, RegistryRevision: claim.Binding.RegistryRevision,
 			ReleaseManifestSHA256: claim.Binding.ReleaseManifestSHA, IndexSHA256: claim.Binding.IndexSHA, ShardSHA256: claim.Binding.ShardSHA,
 		}
-		if cancelOperationHistoryReservation(history, identity, reservation) != nil {
-			return result, errOperationPlanWorkerUnavailable
+		if err := cancelOperationHistoryReservation(history, identity, reservation); err != nil {
+			return result, newOperationPlanWorkerFailure("pre_dispatch_cleanup", err)
 		}
 	}
 	deferCtx, cancel := context.WithTimeout(context.Background(), operationPlanPreDispatchCleanupTimeout)
 	defer cancel()
-	if worker.attempts.recordPreDispatchDeferredContext(deferCtx, claim, reason, now.UTC()) != nil {
-		return result, errOperationPlanWorkerUnavailable
+	if err := worker.attempts.recordPreDispatchDeferredContext(deferCtx, claim, reason, now.UTC()); err != nil {
+		return result, newOperationPlanWorkerFailure("pre_dispatch_cleanup", err)
 	}
 	result.AttemptState = "deferred"
 	result.ExecutionBlockReason = reason
