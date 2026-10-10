@@ -249,6 +249,14 @@ func actualCLIReceiptCaptureMatchesExpectation(expected OperationPlanProbeExpect
 		receipt.Operation.AdapterID == expected.AdapterID
 }
 
+func actualCLIChildArgumentTokensMatch(capture actualCLIChildCapture, captureFound bool, sourceID, operationID string) bool {
+	if !captureFound || sourceID == "" || operationID == "" {
+		return false
+	}
+	return capture.sourceSHA256 == digest([]byte(sourceID)) &&
+		capture.operationSHA256 == digest([]byte(operationID))
+}
+
 func (telemetry *actualCLIInvocationTelemetry) record(elapsed time.Duration, childErr, contextErr error, stdoutBytes, stderrBytes int64, stderrClass string, capture actualCLIChildCapture) {
 	if telemetry == nil {
 		return
@@ -899,6 +907,7 @@ func actualCLIReproduceHistoricalUnknown(t *testing.T, worker *OperationPlanWork
 	capture, captureFound := children.captureForAttempt(result.AttemptID)
 	childSourceTokenMatches := captureFound && capture.sourceSHA256 == digest([]byte(identity.SourceID))
 	childOperationTokenMatches := captureFound && capture.operationSHA256 == operationTokenSHA256
+	childArgumentTokensMatch := actualCLIChildArgumentTokensMatch(capture, captureFound, identity.SourceID, identity.OperationID)
 	latest, found, latestErr := attempts.Latest(identity.SourceID, identity.OperationID)
 	usage, usageErr := history.Usage(context.Background())
 	afterMetrics := actualCLIProviderMetrics(t, metricsURL, caPath)
@@ -916,8 +925,8 @@ func actualCLIReproduceHistoricalUnknown(t *testing.T, worker *OperationPlanWork
 	if runErr != nil {
 		t.Fatalf("actual CLI isolated source-QA reproduction produced a worker failure: source=%s registry_protocol=%s synthetic_transport=REST case=observation_only operation_token_sha256=%s child_source_token_matches=%t child_operation_token_matches=%t index_range_matches=%d source_range_matches=%d target_shard_range_matches=%d worker_stage=%s worker_category=%s probe_stage=%s probe_category=%s child_calls=%d child_error_kinds=%s child_exit_codes=%s child_max=%s stdout_bytes=%d stderr_bytes=%d stderr_classes=%s retained_child_evidence=%t retention_failures=%d latest_state=%s request_started=%s receipt_validated=%t receipt_present=%t history_records=%d history_reservations=%d provider_request_delta=%d provider_unique_delta=%d provider_rest_delta=%d provider_soap_delta=%d cgroup_source=%s cgroup_peak_bytes=%d cgroup_limit_bytes=%d cgroup_oom_events=%d cgroup_oom_kill_events=%d", identity.SourceID, identity.Protocol, operationTokenSHA256, childSourceTokenMatches, childOperationTokenMatches, indexRangeMatches, sourceRangeMatches, targetShardRangeMatches, actualCLISafeWorkerFailureCode(workerStage, validOperationPlanWorkerFailureStage), actualCLISafeWorkerFailureCode(workerCategory, validOperationPlanWorkerFailureCategory), actualCLISafeWorkerFailureCode(probeStage, validOperationPlanProbeFailureStage), actualCLISafeWorkerFailureCode(probeCategory, validOperationPlanProbeFailureCategory), child.Calls, actualCLIStringCountMap(child.ChildErrorKinds), actualCLIIntCountMap(child.ExitCodes), child.MaxElapsed.Round(time.Millisecond), child.StdoutBytes, child.StderrBytes, actualCLIStringCountMap(child.StderrClasses), retained, child.RetentionFailures, actualCLIStateName(found, latest.State), requestStarted, found && latest.ReceiptValidated, found && latest.ReceiptSHA256 != "", actualCLIUsageCount(usageErr, usage.RecordCount), actualCLIUsageCount(usageErr, usage.ReservationCount), afterMetrics["requests"]-beforeMetrics["requests"], afterMetrics["unique"]-beforeMetrics["unique"], afterMetrics["rest_get"]-beforeMetrics["rest_get"], afterMetrics["soap_post"]-beforeMetrics["soap_post"], memory.Source, memory.PeakBytes, memory.LimitBytes, memory.OOMEvents, memory.OOMKillEvents)
 	}
-	if latestErr != nil || usageErr != nil || !found || result.AttemptState != "observed" || !result.RequestStarted || !latest.ReceiptValidated || latest.Result == nil || latest.Result.State != "indeterminate" || latest.Result.Category != "response_semantics_unestablished" || latest.DeliveryState != "not_applicable" || latest.DeliveryState != result.DeliveryState || afterMetrics["requests"]-beforeMetrics["requests"] != 1 || afterMetrics["unique"]-beforeMetrics["unique"] != 1 || afterMetrics["rest_get"]-beforeMetrics["rest_get"] != 1 || afterMetrics["soap_post"] != beforeMetrics["soap_post"] || usage.RecordCount != 1 || usage.ReservationCount != 0 || child.Calls != 1 || !receiptProtocolBound {
-		t.Fatalf("actual CLI isolated reproduction did not preserve the expected observation-only result: source=%s registry_protocol=%s synthetic_transport=REST receipt_protocol_bound=%t case=observation_only worker_stage=none worker_category=none probe_stage=none probe_category=none child_calls=%d child_error_kinds=%s child_exit_codes=%s child_max=%s stdout_bytes=%d stderr_bytes=%d latest_state=%s request_started=%s receipt_validated=%t receipt_present=%t history_records=%d history_reservations=%d provider_request_delta=%d provider_unique_delta=%d provider_rest_delta=%d provider_soap_delta=%d cgroup_source=%s cgroup_peak_bytes=%d cgroup_limit_bytes=%d cgroup_oom_events=%d cgroup_oom_kill_events=%d", identity.SourceID, identity.Protocol, receiptProtocolBound, child.Calls, actualCLIStringCountMap(child.ChildErrorKinds), actualCLIIntCountMap(child.ExitCodes), child.MaxElapsed.Round(time.Millisecond), child.StdoutBytes, child.StderrBytes, actualCLIStateName(found, latest.State), requestStarted, found && latest.ReceiptValidated, found && latest.ReceiptSHA256 != "", actualCLIUsageCount(usageErr, usage.RecordCount), actualCLIUsageCount(usageErr, usage.ReservationCount), afterMetrics["requests"]-beforeMetrics["requests"], afterMetrics["unique"]-beforeMetrics["unique"], afterMetrics["rest_get"]-beforeMetrics["rest_get"], afterMetrics["soap_post"]-beforeMetrics["soap_post"], memory.Source, memory.PeakBytes, memory.LimitBytes, memory.OOMEvents, memory.OOMKillEvents)
+	if latestErr != nil || usageErr != nil || !found || result.AttemptState != "observed" || !result.RequestStarted || !latest.ReceiptValidated || latest.Result == nil || latest.Result.State != "indeterminate" || latest.Result.Category != "response_semantics_unestablished" || latest.DeliveryState != "not_applicable" || latest.DeliveryState != result.DeliveryState || afterMetrics["requests"]-beforeMetrics["requests"] != 1 || afterMetrics["unique"]-beforeMetrics["unique"] != 1 || afterMetrics["rest_get"]-beforeMetrics["rest_get"] != 1 || afterMetrics["soap_post"] != beforeMetrics["soap_post"] || usage.RecordCount != 1 || usage.ReservationCount != 0 || child.Calls != 1 || !receiptProtocolBound || !childArgumentTokensMatch {
+		t.Fatalf("actual CLI isolated reproduction did not preserve the expected source-qualified observation-only result: source=%s registry_protocol=%s synthetic_transport=REST source_token_matches=%t operation_token_matches=%t receipt_protocol_bound=%t case=observation_only worker_stage=none worker_category=none probe_stage=none probe_category=none child_calls=%d child_error_kinds=%s child_exit_codes=%s child_max=%s stdout_bytes=%d stderr_bytes=%d latest_state=%s request_started=%s receipt_validated=%t receipt_present=%t history_records=%d history_reservations=%d provider_request_delta=%d provider_unique_delta=%d provider_rest_delta=%d provider_soap_delta=%d cgroup_source=%s cgroup_peak_bytes=%d cgroup_limit_bytes=%d cgroup_oom_events=%d cgroup_oom_kill_events=%d", identity.SourceID, identity.Protocol, childSourceTokenMatches, childOperationTokenMatches, receiptProtocolBound, child.Calls, actualCLIStringCountMap(child.ChildErrorKinds), actualCLIIntCountMap(child.ExitCodes), child.MaxElapsed.Round(time.Millisecond), child.StdoutBytes, child.StderrBytes, actualCLIStateName(found, latest.State), requestStarted, found && latest.ReceiptValidated, found && latest.ReceiptSHA256 != "", actualCLIUsageCount(usageErr, usage.RecordCount), actualCLIUsageCount(usageErr, usage.ReservationCount), afterMetrics["requests"]-beforeMetrics["requests"], afterMetrics["unique"]-beforeMetrics["unique"], afterMetrics["rest_get"]-beforeMetrics["rest_get"], afterMetrics["soap_post"]-beforeMetrics["soap_post"], memory.Source, memory.PeakBytes, memory.LimitBytes, memory.OOMEvents, memory.OOMKillEvents)
 	}
 	if code := actualCLIExactCapacitySnapshotFailure(memory); code != "" {
 		t.Fatalf("actual CLI isolated reproduction capacity snapshot failed: code=%s", code)
@@ -1358,6 +1367,34 @@ func TestActualCLIReceiptCaptureMatchesPlanProtocolAndIdentity(t *testing.T) {
 			candidate := actualCLIChildCapture{stdout: testCase.stdout, receipt: receiptRaw}
 			if actualCLIReceiptCaptureMatchesExpectation(testCase.expected, candidate) {
 				t.Fatal("actual child receipt capture accepted a mismatched protocol, identity, or byte stream")
+			}
+		})
+	}
+}
+
+func TestActualCLIChildArgumentTokensMustMatchSourceAndOperation(t *testing.T) {
+	const sourceID = "ecos"
+	const operationID = "synthetic-local-operation"
+	validCapture := actualCLIChildCapture{
+		sourceSHA256: digest([]byte(sourceID)), operationSHA256: digest([]byte(operationID)),
+	}
+	testCases := []struct {
+		name         string
+		capture      actualCLIChildCapture
+		captureFound bool
+		want         bool
+	}{
+		{name: "exact source and operation", capture: validCapture, captureFound: true, want: true},
+		{name: "missing capture", capture: validCapture, captureFound: false, want: false},
+		{name: "missing source token", capture: actualCLIChildCapture{operationSHA256: validCapture.operationSHA256}, captureFound: true, want: false},
+		{name: "wrong source token", capture: actualCLIChildCapture{sourceSHA256: digest([]byte("kosis")), operationSHA256: validCapture.operationSHA256}, captureFound: true, want: false},
+		{name: "wrong operation token", capture: actualCLIChildCapture{sourceSHA256: validCapture.sourceSHA256, operationSHA256: digest([]byte("other-operation"))}, captureFound: true, want: false},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := actualCLIChildArgumentTokensMatch(testCase.capture, testCase.captureFound, sourceID, operationID)
+			if got != testCase.want {
+				t.Fatalf("source-qualified child argument check mismatch: got=%t want=%t", got, testCase.want)
 			}
 		})
 	}
