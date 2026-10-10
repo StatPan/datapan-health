@@ -10,6 +10,15 @@
 
 Compatibility tests validate every accepted fixture with this copy and assert its digest. Update the copy and provenance together only after a reviewed CLI schema change.
 
+`datapan.operation-observation-plan.v1.schema.json` is the pinned Registry-owned
+contract for the bounded full-operation observation-plan reader in Health
+issue #95. It is copied byte-for-byte from `StatPan/datapan-registry` source
+revision `da02fccaee4989c5c6dcf3b60e8e627ecd477cca`; its exact SHA-256 is
+`cafa93014d7a32ef072f74df1a730f681e5b206440e4a83e9cdf426f6686e162`.
+`config/registry/operation-observation-plan-contract-pin.json` records the
+same source revision and digest. This schema pin is separate from the
+Registry release manifest and operation-plan index pins loaded at runtime.
+
 `datapan.health-public-status.v1.schema.json` is Health-owned. Issue #20 adds
 it as the default-deny public projection of the exact Registry/Health identity
 proof merged by PR #23. It is not copied from Gatus and intentionally excludes
@@ -22,6 +31,12 @@ issue #27. It is an internal atomic input to the existing public status adapter,
 not a new public response version. Its exact Registry, vocabulary, correlation
 rule, assertion policy, and ten-operation identities are fail-closed.
 
+`datapan.health-self-readiness.v1` is a Health-owned private scheduler input
+contract used only by the Korean HTML adapter to show aggregate pipeline
+readiness. It accepts the scheduler's bounded `/status` report, then discards
+canary identities and per-canary fields. It is not a public response schema,
+deployment identity, or proof of external public-route readback.
+
 `datapan.service-status.v1`, `datapan.dependency-observation.v1`, and
 `datapan.dependency-status-legacy.v1` are Health-owned route contracts from
 issue #41. The service schema is limited to the four named Datapan-owned
@@ -30,3 +45,25 @@ surfaces and requires an immutable deployment identity before `operational` or
 observations. The legacy schema is dependency-only and has a separate
 deprecation/removal gate; no external observation may be converted to a
 Datapan service state.
+
+`datapan.health-registry-operations-page.v2.schema.json` is a Health-owned,
+bounded full-operation read-model contract from issue #95. It is a separate
+projection from the fixed ten-canary v1 DTO and binds the pinned Registry
+operation-plan source and the independently pinned Korean metadata source.
+Its protocol label preserves the source value (`HTTP`, `REST`, or `SOAP`); it
+does not normalize one protocol into another or imply request-method evidence.
+The page schema's exact digest is recorded in
+`config/registry/operation-read-model-v2-contract-pin.json`. Its synthetic
+fixtures establish type/schema and pagination behavior only; they are not
+evidence that a current Registry plan is released or that any provider call
+has run.
+
+`datapan.health-operation-plan-probe.v1.schema.json` is the redacted child
+receipt contract consumed from the CLI #184 source checkpoint
+`3600bac9464a603c6470e58e6cf6f8cf3b9e199f`; its exact digest is
+`23fcac6ae7b47852f36e47fea24dd5d0dbeb795bef279529998233a835eefad9`.
+Observation-only receipts can report only an indeterminate 2xx with
+`response_semantics_unestablished`, or an unhealthy non-2xx with
+`response_http_failure`. The schema does not treat either as a complete API
+availability or credential diagnosis, and synthetic schema fixtures do not
+prove live provider behavior.

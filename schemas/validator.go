@@ -2,7 +2,9 @@
 package schemas
 
 import (
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -37,46 +39,70 @@ var healthBoundedObservationRunSchema []byte
 //go:embed datapan.health-schedule-coverage.v1.schema.json
 var healthScheduleCoverageSchema []byte
 
+//go:embed datapan.health-self-readiness.v1.schema.json
+var healthSelfReadinessSchema []byte
+
+//go:embed datapan.operation-observation-plan.v1.schema.json
+var operationObservationPlanSchema []byte
+
+//go:embed datapan.health-registry-operations-page.v2.schema.json
+var healthRegistryOperationsPageV2Schema []byte
+
 //go:embed datapan.health-registry-api-metadata.v1.schema.json
 var healthRegistryAPIMetadataSchema []byte
 
 //go:embed datapan.health-registry-api-metadata-source-pin.v1.schema.json
 var healthRegistryAPIMetadataSourcePinSchema []byte
 
+//go:embed datapan.health-operation-plan-probe.v1.schema.json
+var healthOperationPlanProbeV1Schema []byte
+
 var (
-	healthProbeOnce                   sync.Once
-	healthProbe                       *jsonschema.Schema
-	healthProbeErr                    error
-	healthArchiveOnce                 sync.Once
-	healthArchive                     *jsonschema.Schema
-	healthArchiveErr                  error
-	healthPublicStatusOnce            sync.Once
-	healthPublicStatus                *jsonschema.Schema
-	healthPublicStatusErr             error
-	serviceStatusOnce                 sync.Once
-	serviceStatus                     *jsonschema.Schema
-	serviceStatusErr                  error
-	dependencyObservationOnce         sync.Once
-	dependencyObservation             *jsonschema.Schema
-	dependencyObservationErr          error
-	legacyDependencyOnce              sync.Once
-	legacyDependency                  *jsonschema.Schema
-	legacyDependencyErr               error
-	healthPublicDiagnosisSnapshotOnce sync.Once
-	healthPublicDiagnosisSnapshot     *jsonschema.Schema
-	healthPublicDiagnosisSnapshotErr  error
-	healthBoundedObservationRunOnce   sync.Once
-	healthBoundedObservationRun       *jsonschema.Schema
-	healthBoundedObservationRunErr    error
-	healthScheduleCoverageOnce        sync.Once
-	healthScheduleCoverage            *jsonschema.Schema
-	healthScheduleCoverageErr         error
-	healthRegistryAPIMetadataOnce     sync.Once
-	healthRegistryAPIMetadata         *jsonschema.Schema
-	healthRegistryAPIMetadataErr      error
-	healthRegistryMetadataPinOnce     sync.Once
-	healthRegistryMetadataPin         *jsonschema.Schema
-	healthRegistryMetadataPinErr      error
+	healthProbeOnce                    sync.Once
+	healthProbe                        *jsonschema.Schema
+	healthProbeErr                     error
+	healthArchiveOnce                  sync.Once
+	healthArchive                      *jsonschema.Schema
+	healthArchiveErr                   error
+	healthPublicStatusOnce             sync.Once
+	healthPublicStatus                 *jsonschema.Schema
+	healthPublicStatusErr              error
+	serviceStatusOnce                  sync.Once
+	serviceStatus                      *jsonschema.Schema
+	serviceStatusErr                   error
+	dependencyObservationOnce          sync.Once
+	dependencyObservation              *jsonschema.Schema
+	dependencyObservationErr           error
+	legacyDependencyOnce               sync.Once
+	legacyDependency                   *jsonschema.Schema
+	legacyDependencyErr                error
+	healthPublicDiagnosisSnapshotOnce  sync.Once
+	healthPublicDiagnosisSnapshot      *jsonschema.Schema
+	healthPublicDiagnosisSnapshotErr   error
+	healthBoundedObservationRunOnce    sync.Once
+	healthBoundedObservationRun        *jsonschema.Schema
+	healthBoundedObservationRunErr     error
+	healthScheduleCoverageOnce         sync.Once
+	healthScheduleCoverage             *jsonschema.Schema
+	healthScheduleCoverageErr          error
+	healthSelfReadinessOnce            sync.Once
+	healthSelfReadiness                *jsonschema.Schema
+	healthSelfReadinessErr             error
+	operationObservationPlanOnce       sync.Once
+	operationObservationPlan           *jsonschema.Schema
+	operationObservationPlanErr        error
+	healthRegistryOperationsPageV2Once sync.Once
+	healthRegistryOperationsPageV2     *jsonschema.Schema
+	healthRegistryOperationsPageV2Err  error
+	healthRegistryAPIMetadataOnce      sync.Once
+	healthRegistryAPIMetadata          *jsonschema.Schema
+	healthRegistryAPIMetadataErr       error
+	healthRegistryMetadataPinOnce      sync.Once
+	healthRegistryMetadataPin          *jsonschema.Schema
+	healthRegistryMetadataPinErr       error
+	healthOperationPlanProbeV1Once     sync.Once
+	healthOperationPlanProbeV1         *jsonschema.Schema
+	healthOperationPlanProbeV1Err      error
 )
 
 func ValidateHealthProbeV1(data []byte) error {
@@ -150,6 +176,64 @@ func ValidateHealthScheduleCoverageV1(data []byte) error {
 	return validate(data, healthScheduleCoverage, healthScheduleCoverageErr, "schedule coverage")
 }
 
+// ValidateHealthSelfReadinessV1 validates the private scheduler's aggregate
+// readiness response before any status fields are projected to public HTML.
+func ValidateHealthSelfReadinessV1(data []byte) error {
+	healthSelfReadinessOnce.Do(func() {
+		healthSelfReadiness, healthSelfReadinessErr = compile(healthSelfReadinessSchema, "https://schemas.datapan.dev/datapan.health-self-readiness.v1.schema.json")
+	})
+	return validate(data, healthSelfReadiness, healthSelfReadinessErr, "Health self-readiness")
+}
+
+// ValidateOperationObservationPlanV1 validates a Registry-owned operation
+// plan, shard, or index against the exact schema pinned by Health.
+func ValidateOperationObservationPlanV1(data []byte) error {
+	operationObservationPlanOnce.Do(func() {
+		operationObservationPlan, operationObservationPlanErr = compile(operationObservationPlanSchema, "https://schemas.datapan.dev/datapan.operation-observation-plan.v1.schema.json")
+	})
+	return validate(data, operationObservationPlan, operationObservationPlanErr, "operation observation plan")
+}
+
+// ValidateHealthOperationPlanProbeV1 validates the CLI's redacted per-attempt
+// receipt contract. Callers must also check its identity against their pinned
+// plan and attempt.
+func ValidateHealthOperationPlanProbeV1(data []byte) error {
+	healthOperationPlanProbeV1Once.Do(func() {
+		healthOperationPlanProbeV1, healthOperationPlanProbeV1Err = compile(healthOperationPlanProbeV1Schema, "https://schemas.datapan.dev/datapan.health-operation-plan-probe.v1.schema.json")
+	})
+	return validate(data, healthOperationPlanProbeV1, healthOperationPlanProbeV1Err, "health operation-plan probe receipt")
+}
+
+// ValidateHealthRegistryOperationsPageV2 validates the bounded public
+// Registry operation read model. The existing v1 canary DTO remains separate.
+func ValidateHealthRegistryOperationsPageV2(data []byte) error {
+	healthRegistryOperationsPageV2Once.Do(func() {
+		healthRegistryOperationsPageV2, healthRegistryOperationsPageV2Err = compile(healthRegistryOperationsPageV2Schema, "https://schemas.datapan.dev/datapan.health-registry-operations-page.v2.schema.json")
+	})
+	return validate(data, healthRegistryOperationsPageV2, healthRegistryOperationsPageV2Err, "Registry operations page v2")
+}
+
+// HealthRegistryOperationsPageV2SchemaSHA256 returns the exact Health-owned
+// bounded Registry-operation page contract embedded in this build.
+func HealthRegistryOperationsPageV2SchemaSHA256() string {
+	sum := sha256.Sum256(healthRegistryOperationsPageV2Schema)
+	return hex.EncodeToString(sum[:])
+}
+
+// OperationObservationPlanV1SchemaSHA256 returns the digest of the exact
+// embedded Registry contract bytes pinned into this Health build.
+func OperationObservationPlanV1SchemaSHA256() string {
+	sum := sha256.Sum256(operationObservationPlanSchema)
+	return hex.EncodeToString(sum[:])
+}
+
+// HealthOperationPlanProbeV1SchemaSHA256 returns the exact CLI receipt schema
+// bytes embedded in this Health build.
+func HealthOperationPlanProbeV1SchemaSHA256() string {
+	sum := sha256.Sum256(healthOperationPlanProbeV1Schema)
+	return hex.EncodeToString(sum[:])
+}
+
 func ValidateHealthRegistryAPIMetadataV1(data []byte) error {
 	healthRegistryAPIMetadataOnce.Do(func() {
 		healthRegistryAPIMetadata, healthRegistryAPIMetadataErr = compile(healthRegistryAPIMetadataSchema, "https://schemas.datapan.dev/datapan.health-registry-api-metadata.v1.schema.json")
@@ -162,6 +246,18 @@ func ValidateHealthRegistryAPIMetadataSourcePinV1(data []byte) error {
 		healthRegistryMetadataPin, healthRegistryMetadataPinErr = compile(healthRegistryAPIMetadataSourcePinSchema, "https://schemas.datapan.dev/datapan.health-registry-api-metadata-source-pin.v1.schema.json")
 	})
 	return validate(data, healthRegistryMetadataPin, healthRegistryMetadataPinErr, "Registry API metadata source pin")
+}
+
+// ValidateRegistryOperationDocumentEvidenceV2 validates an exact Registry
+// release-bound operation-document schema copy and one bounded evidence row.
+func ValidateRegistryOperationDocumentEvidenceV2(data, sourceSchema []byte) error {
+	const schemaSHA256 = "d6edb7dad63b9d7cdac6753fc02cba962cb8d96d7c01119c031935abfc973108"
+	sum := sha256.Sum256(sourceSchema)
+	if hex.EncodeToString(sum[:]) != schemaSHA256 {
+		return errors.New("Registry operation evidence schema digest mismatch")
+	}
+	compiled, err := compile(sourceSchema, "https://schemas.datapan.dev/datapan.operation-document-evidence.v2.schema.json")
+	return validate(data, compiled, err, "Registry operation document evidence")
 }
 
 func compile(source []byte, uri string) (*jsonschema.Schema, error) {

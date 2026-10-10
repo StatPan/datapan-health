@@ -1,0 +1,4147 @@
+{
+  "schema_version": "datapan.operation-document-evidence.v2",
+  "parser": {
+    "id": "registered-operation-document-parser",
+    "version": "2.1.1"
+  },
+  "identity": {
+    "source_id": "seoul_open_data",
+    "operation_id": "seoul-open-data-subway-station-list",
+    "provider": "data.seoul.go.kr",
+    "protocol": "REST",
+    "operation_name": "SearchSTNBySubwayLineInfo",
+    "source_refs": [
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 1,
+          "row_index": 3,
+          "cell_index": 0
+        },
+        "evidence_kind": "operation_service_parameter_name"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 1,
+          "row_index": 3,
+          "cell_index": 3
+        },
+        "evidence_kind": "operation_service_name"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_dataset_view",
+          "kind": "html_byte_range",
+          "byte_start": 51505,
+          "byte_end": 51657
+        },
+        "evidence_kind": "official_operation_title"
+      }
+    ]
+  },
+  "operation_document": {
+    "title": {
+      "value": "서울교통공사_노선별 지하철역 정보",
+      "status": "documented",
+      "source_refs": [
+        {
+          "locator": {
+            "source_id": "seoul_official_dataset_view",
+            "kind": "html_byte_range",
+            "byte_start": 51505,
+            "byte_end": 51657
+          },
+          "evidence_kind": "official_operation_title"
+        }
+      ]
+    },
+    "purpose": {
+      "value": "서울교통공사에서 제공하는 1~8호선, 9호선 2~3단계(언주~중앙보훈병원) 노선별 지하철역을 제공하는 서비스 입니다.",
+      "status": "documented",
+      "source_refs": [
+        {
+          "locator": {
+            "source_id": "seoul_official_dataset_view",
+            "kind": "html_byte_range",
+            "byte_start": 51716,
+            "byte_end": 51869
+          },
+          "evidence_kind": "official_operation_purpose"
+        }
+      ]
+    },
+    "service_status": {
+      "classification": "terminated",
+      "status": "documented",
+      "source_refs": [
+        {
+          "locator": {
+            "source_id": "seoul_official_dataset_view",
+            "kind": "html_byte_range",
+            "byte_start": 85007,
+            "byte_end": 85057
+          },
+          "evidence_kind": "official_service_termination_notice"
+        }
+      ]
+    }
+  },
+  "source_bindings": [
+    {
+      "source_id": "seoul_official_openapi_view",
+      "origin": {
+        "scheme": "https",
+        "host": "data.seoul.go.kr",
+        "path": "/dataList/openApiView.do",
+        "method": "GET",
+        "query_values_stored": false,
+        "body_values_stored": false
+      },
+      "media_type": "text/html",
+      "bytes": 21944,
+      "sha256": "2eab13968d479529f427c7ffe6455d529923911dde381235e36b13ca51d4aa14",
+      "retrieved_at": "2026-10-07T06:23:10Z",
+      "capture_role": "operation_parameter_output_and_result_code_tables",
+      "parser": {
+        "id": "registered-operation-document-parser",
+        "version": "2.1.1"
+      }
+    },
+    {
+      "source_id": "seoul_official_dataset_view",
+      "origin": {
+        "scheme": "https",
+        "host": "data.seoul.go.kr",
+        "path": "/dataList/OA-15442/S/1/datasetView.do",
+        "method": "GET",
+        "query_values_stored": false,
+        "body_values_stored": false
+      },
+      "media_type": "text/html",
+      "bytes": 86145,
+      "sha256": "dd5f5121c02b7f3678f44dc7bee2ae23799e3e0765a2102eb4c7862dd0d45a21",
+      "retrieved_at": "2026-10-07T06:18:44Z",
+      "capture_role": "official_dataset_title_and_purpose",
+      "parser": {
+        "id": "registered-operation-document-parser",
+        "version": "2.1.1"
+      }
+    }
+  ],
+  "parse_status": "parsed_with_unknowns",
+  "transport": {
+    "protocol": {
+      "value": "REST",
+      "status": "registered_manifest",
+      "source_refs": []
+    },
+    "scheme": {
+      "value": "http",
+      "status": "documented",
+      "source_refs": [
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 0,
+            "row_index": 0,
+            "cell_index": 1,
+            "column_label": "샘플 URL"
+          },
+          "evidence_kind": "operation_path_parameters_demonstrated_by_example"
+        }
+      ]
+    },
+    "host": {
+      "value": "openapi.seoul.go.kr",
+      "status": "documented",
+      "source_refs": [
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 0,
+            "row_index": 0,
+            "cell_index": 1,
+            "column_label": "샘플 URL"
+          },
+          "evidence_kind": "operation_path_parameters_demonstrated_by_example"
+        }
+      ]
+    },
+    "port": 8088,
+    "port_source_refs": [
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 0,
+          "row_index": 0,
+          "cell_index": 1,
+          "column_label": "샘플 URL"
+        },
+        "evidence_kind": "operation_path_parameters_demonstrated_by_example"
+      }
+    ],
+    "path": {
+      "value": "/{KEY}/{TYPE}/{SERVICE}/{START_INDEX}/{END_INDEX}",
+      "status": "documented",
+      "source_refs": [
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 0,
+            "row_index": 0,
+            "cell_index": 1,
+            "column_label": "샘플 URL"
+          },
+          "evidence_kind": "operation_path_parameters_demonstrated_by_example"
+        }
+      ]
+    },
+    "http_method": {
+      "value": null,
+      "status": "unknown",
+      "authority_scope": "not_found_in_parsed_operation_sources",
+      "source_refs": []
+    },
+    "soap_action": {
+      "value": null,
+      "status": "not_applicable",
+      "source_refs": []
+    },
+    "soap_version": {
+      "value": null,
+      "status": "not_applicable",
+      "source_refs": []
+    },
+    "envelope_namespace": {
+      "value": null,
+      "status": "not_applicable",
+      "source_refs": []
+    },
+    "operation_qname": {
+      "value": null,
+      "status": "not_applicable",
+      "source_refs": []
+    },
+    "body_encoding": {
+      "value": null,
+      "status": "not_applicable",
+      "source_refs": []
+    },
+    "fixed_query_selectors": []
+  },
+  "effect": {
+    "classification": null,
+    "status": "unknown",
+    "authority": "operation_document",
+    "source_refs": []
+  },
+  "parameters": [
+    {
+      "name": "KEY",
+      "location": {
+        "value": "path",
+        "status": "demonstrated_by_example",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 0,
+              "row_index": 0,
+              "cell_index": 1,
+              "column_label": "샘플 URL"
+            },
+            "evidence_kind": "operation_path_parameters_demonstrated_by_example"
+          }
+        ]
+      },
+      "cardinality": {
+        "minimum": 1,
+        "maximum": null,
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 1,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "requiredness": {
+        "value": "required",
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 1,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "size": {
+        "value": null,
+        "observed_values": [],
+        "status": "unknown",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 1,
+              "cell_index": 2
+            },
+            "evidence_kind": "parameter_description"
+          }
+        ]
+      },
+      "data_type": {
+        "value": "string",
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 1,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "enum": {
+        "values": [],
+        "status": "not_established",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 1,
+              "cell_index": 0
+            },
+            "evidence_kind": "parameter_name"
+          }
+        ]
+      },
+      "default": {
+        "value": null,
+        "status": "unknown",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 1,
+              "cell_index": 0
+            },
+            "evidence_kind": "parameter_name"
+          }
+        ]
+      },
+      "sample": {
+        "present": true,
+        "value_stored": false,
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 0,
+              "row_index": 0,
+              "cell_index": 1,
+              "column_label": "샘플 URL"
+            },
+            "evidence_kind": "operation_path_parameters_demonstrated_by_example"
+          }
+        ]
+      },
+      "source_refs": [
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 1,
+            "cell_index": 0
+          },
+          "evidence_kind": "parameter_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 1,
+            "cell_index": 1
+          },
+          "evidence_kind": "parameter_data_type_and_requiredness"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 1,
+            "cell_index": 2
+          },
+          "evidence_kind": "parameter_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 1,
+            "cell_index": 3
+          },
+          "evidence_kind": "parameter_values"
+        }
+      ]
+    },
+    {
+      "name": "TYPE",
+      "location": {
+        "value": "path",
+        "status": "demonstrated_by_example",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 0,
+              "row_index": 0,
+              "cell_index": 1,
+              "column_label": "샘플 URL"
+            },
+            "evidence_kind": "operation_path_parameters_demonstrated_by_example"
+          }
+        ]
+      },
+      "cardinality": {
+        "minimum": 1,
+        "maximum": null,
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 2,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "requiredness": {
+        "value": "required",
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 2,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "size": {
+        "value": null,
+        "observed_values": [],
+        "status": "unknown",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 2,
+              "cell_index": 2
+            },
+            "evidence_kind": "parameter_description"
+          }
+        ]
+      },
+      "data_type": {
+        "value": "string",
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 2,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "enum": {
+        "values": [
+          "xml",
+          "xmlf",
+          "xls",
+          "json"
+        ],
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 2,
+              "cell_index": 3
+            },
+            "evidence_kind": "parameter_values"
+          }
+        ]
+      },
+      "default": {
+        "value": null,
+        "status": "unknown",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 2,
+              "cell_index": 0
+            },
+            "evidence_kind": "parameter_name"
+          }
+        ]
+      },
+      "sample": {
+        "present": true,
+        "value_stored": false,
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 0,
+              "row_index": 0,
+              "cell_index": 1,
+              "column_label": "샘플 URL"
+            },
+            "evidence_kind": "operation_path_parameters_demonstrated_by_example"
+          }
+        ]
+      },
+      "source_refs": [
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 2,
+            "cell_index": 0
+          },
+          "evidence_kind": "parameter_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 2,
+            "cell_index": 1
+          },
+          "evidence_kind": "parameter_data_type_and_requiredness"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 2,
+            "cell_index": 2
+          },
+          "evidence_kind": "parameter_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 2,
+            "cell_index": 3
+          },
+          "evidence_kind": "parameter_values"
+        }
+      ]
+    },
+    {
+      "name": "SERVICE",
+      "location": {
+        "value": "path",
+        "status": "demonstrated_by_example",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 0,
+              "row_index": 0,
+              "cell_index": 1,
+              "column_label": "샘플 URL"
+            },
+            "evidence_kind": "operation_path_parameters_demonstrated_by_example"
+          }
+        ]
+      },
+      "cardinality": {
+        "minimum": 1,
+        "maximum": null,
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 3,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "requiredness": {
+        "value": "required",
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 3,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "size": {
+        "value": null,
+        "observed_values": [],
+        "status": "unknown",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 3,
+              "cell_index": 2
+            },
+            "evidence_kind": "parameter_description"
+          }
+        ]
+      },
+      "data_type": {
+        "value": "string",
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 3,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "enum": {
+        "values": [
+          "SearchSTNBySubwayLineInfo"
+        ],
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 3,
+              "cell_index": 3
+            },
+            "evidence_kind": "parameter_values"
+          }
+        ]
+      },
+      "default": {
+        "value": null,
+        "status": "unknown",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 3,
+              "cell_index": 0
+            },
+            "evidence_kind": "parameter_name"
+          }
+        ]
+      },
+      "sample": {
+        "present": true,
+        "value_stored": false,
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 0,
+              "row_index": 0,
+              "cell_index": 1,
+              "column_label": "샘플 URL"
+            },
+            "evidence_kind": "operation_path_parameters_demonstrated_by_example"
+          }
+        ]
+      },
+      "source_refs": [
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 3,
+            "cell_index": 0
+          },
+          "evidence_kind": "parameter_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 3,
+            "cell_index": 1
+          },
+          "evidence_kind": "parameter_data_type_and_requiredness"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 3,
+            "cell_index": 2
+          },
+          "evidence_kind": "parameter_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 3,
+            "cell_index": 3
+          },
+          "evidence_kind": "parameter_values"
+        }
+      ]
+    },
+    {
+      "name": "START_INDEX",
+      "location": {
+        "value": "path",
+        "status": "demonstrated_by_example",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 0,
+              "row_index": 0,
+              "cell_index": 1,
+              "column_label": "샘플 URL"
+            },
+            "evidence_kind": "operation_path_parameters_demonstrated_by_example"
+          }
+        ]
+      },
+      "cardinality": {
+        "minimum": 1,
+        "maximum": null,
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 4,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "requiredness": {
+        "value": "required",
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 4,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "size": {
+        "value": null,
+        "observed_values": [],
+        "status": "unknown",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 4,
+              "cell_index": 2
+            },
+            "evidence_kind": "parameter_description"
+          }
+        ]
+      },
+      "data_type": {
+        "value": "integer",
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 4,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "enum": {
+        "values": [],
+        "status": "not_established",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 4,
+              "cell_index": 0
+            },
+            "evidence_kind": "parameter_name"
+          }
+        ]
+      },
+      "default": {
+        "value": null,
+        "status": "unknown",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 4,
+              "cell_index": 0
+            },
+            "evidence_kind": "parameter_name"
+          }
+        ]
+      },
+      "sample": {
+        "present": true,
+        "value_stored": false,
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 0,
+              "row_index": 0,
+              "cell_index": 1,
+              "column_label": "샘플 URL"
+            },
+            "evidence_kind": "operation_path_parameters_demonstrated_by_example"
+          }
+        ]
+      },
+      "source_refs": [
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 4,
+            "cell_index": 0
+          },
+          "evidence_kind": "parameter_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 4,
+            "cell_index": 1
+          },
+          "evidence_kind": "parameter_data_type_and_requiredness"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 4,
+            "cell_index": 2
+          },
+          "evidence_kind": "parameter_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 4,
+            "cell_index": 3
+          },
+          "evidence_kind": "parameter_values"
+        }
+      ]
+    },
+    {
+      "name": "END_INDEX",
+      "location": {
+        "value": "path",
+        "status": "demonstrated_by_example",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 0,
+              "row_index": 0,
+              "cell_index": 1,
+              "column_label": "샘플 URL"
+            },
+            "evidence_kind": "operation_path_parameters_demonstrated_by_example"
+          }
+        ]
+      },
+      "cardinality": {
+        "minimum": 1,
+        "maximum": null,
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 5,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "requiredness": {
+        "value": "required",
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 5,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "size": {
+        "value": null,
+        "observed_values": [],
+        "status": "unknown",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 5,
+              "cell_index": 2
+            },
+            "evidence_kind": "parameter_description"
+          }
+        ]
+      },
+      "data_type": {
+        "value": "integer",
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 5,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "enum": {
+        "values": [],
+        "status": "not_established",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 5,
+              "cell_index": 0
+            },
+            "evidence_kind": "parameter_name"
+          }
+        ]
+      },
+      "default": {
+        "value": null,
+        "status": "unknown",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 5,
+              "cell_index": 0
+            },
+            "evidence_kind": "parameter_name"
+          }
+        ]
+      },
+      "sample": {
+        "present": true,
+        "value_stored": false,
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 0,
+              "row_index": 0,
+              "cell_index": 1,
+              "column_label": "샘플 URL"
+            },
+            "evidence_kind": "operation_path_parameters_demonstrated_by_example"
+          }
+        ]
+      },
+      "source_refs": [
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 5,
+            "cell_index": 0
+          },
+          "evidence_kind": "parameter_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 5,
+            "cell_index": 1
+          },
+          "evidence_kind": "parameter_data_type_and_requiredness"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 5,
+            "cell_index": 2
+          },
+          "evidence_kind": "parameter_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 5,
+            "cell_index": 3
+          },
+          "evidence_kind": "parameter_values"
+        }
+      ]
+    },
+    {
+      "name": "STATION_CD",
+      "location": {
+        "value": null,
+        "status": "unknown",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 6,
+              "cell_index": 0
+            },
+            "evidence_kind": "parameter_name"
+          }
+        ]
+      },
+      "cardinality": {
+        "minimum": 0,
+        "maximum": null,
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 6,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "requiredness": {
+        "value": "optional",
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 6,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "size": {
+        "value": null,
+        "observed_values": [],
+        "status": "unknown",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 6,
+              "cell_index": 2
+            },
+            "evidence_kind": "parameter_description"
+          }
+        ]
+      },
+      "data_type": {
+        "value": "string",
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 6,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "enum": {
+        "values": [],
+        "status": "not_established",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 6,
+              "cell_index": 0
+            },
+            "evidence_kind": "parameter_name"
+          }
+        ]
+      },
+      "default": {
+        "value": null,
+        "status": "unknown",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 6,
+              "cell_index": 0
+            },
+            "evidence_kind": "parameter_name"
+          }
+        ]
+      },
+      "sample": {
+        "present": false,
+        "value_stored": false,
+        "source_refs": []
+      },
+      "source_refs": [
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 6,
+            "cell_index": 0
+          },
+          "evidence_kind": "parameter_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 6,
+            "cell_index": 1
+          },
+          "evidence_kind": "parameter_data_type_and_requiredness"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 6,
+            "cell_index": 2
+          },
+          "evidence_kind": "parameter_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 6,
+            "cell_index": 3
+          },
+          "evidence_kind": "parameter_values"
+        }
+      ]
+    },
+    {
+      "name": "STATION_NM",
+      "location": {
+        "value": null,
+        "status": "unknown",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 7,
+              "cell_index": 0
+            },
+            "evidence_kind": "parameter_name"
+          }
+        ]
+      },
+      "cardinality": {
+        "minimum": 0,
+        "maximum": null,
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 7,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "requiredness": {
+        "value": "optional",
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 7,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "size": {
+        "value": null,
+        "observed_values": [],
+        "status": "unknown",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 7,
+              "cell_index": 2
+            },
+            "evidence_kind": "parameter_description"
+          }
+        ]
+      },
+      "data_type": {
+        "value": "string",
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 7,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "enum": {
+        "values": [],
+        "status": "not_established",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 7,
+              "cell_index": 0
+            },
+            "evidence_kind": "parameter_name"
+          }
+        ]
+      },
+      "default": {
+        "value": null,
+        "status": "unknown",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 7,
+              "cell_index": 0
+            },
+            "evidence_kind": "parameter_name"
+          }
+        ]
+      },
+      "sample": {
+        "present": false,
+        "value_stored": false,
+        "source_refs": []
+      },
+      "source_refs": [
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 7,
+            "cell_index": 0
+          },
+          "evidence_kind": "parameter_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 7,
+            "cell_index": 1
+          },
+          "evidence_kind": "parameter_data_type_and_requiredness"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 7,
+            "cell_index": 2
+          },
+          "evidence_kind": "parameter_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 7,
+            "cell_index": 3
+          },
+          "evidence_kind": "parameter_values"
+        }
+      ]
+    },
+    {
+      "name": "LINE_NUM",
+      "location": {
+        "value": null,
+        "status": "unknown",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 8,
+              "cell_index": 0
+            },
+            "evidence_kind": "parameter_name"
+          }
+        ]
+      },
+      "cardinality": {
+        "minimum": 0,
+        "maximum": null,
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 8,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "requiredness": {
+        "value": "optional",
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 8,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "size": {
+        "value": null,
+        "observed_values": [],
+        "status": "unknown",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 8,
+              "cell_index": 2
+            },
+            "evidence_kind": "parameter_description"
+          }
+        ]
+      },
+      "data_type": {
+        "value": "string",
+        "status": "documented",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 8,
+              "cell_index": 1
+            },
+            "evidence_kind": "parameter_data_type_and_requiredness"
+          }
+        ]
+      },
+      "enum": {
+        "values": [],
+        "status": "not_established",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 8,
+              "cell_index": 0
+            },
+            "evidence_kind": "parameter_name"
+          }
+        ]
+      },
+      "default": {
+        "value": null,
+        "status": "unknown",
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 1,
+              "row_index": 8,
+              "cell_index": 0
+            },
+            "evidence_kind": "parameter_name"
+          }
+        ]
+      },
+      "sample": {
+        "present": false,
+        "value_stored": false,
+        "source_refs": []
+      },
+      "source_refs": [
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 8,
+            "cell_index": 0
+          },
+          "evidence_kind": "parameter_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 8,
+            "cell_index": 1
+          },
+          "evidence_kind": "parameter_data_type_and_requiredness"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 8,
+            "cell_index": 2
+          },
+          "evidence_kind": "parameter_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 1,
+            "row_index": 8,
+            "cell_index": 3
+          },
+          "evidence_kind": "parameter_values"
+        }
+      ]
+    }
+  ],
+  "authentication": {
+    "requirement": "required",
+    "status": "documented",
+    "mechanism": "service_key",
+    "parameter_names": [
+      "KEY"
+    ],
+    "placement": "path",
+    "source_refs": [
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 1,
+          "row_index": 1,
+          "cell_index": 0
+        },
+        "evidence_kind": "parameter_name"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 1,
+          "row_index": 1,
+          "cell_index": 1
+        },
+        "evidence_kind": "parameter_data_type_and_requiredness"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 1,
+          "row_index": 1,
+          "cell_index": 2
+        },
+        "evidence_kind": "parameter_description"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 0,
+          "row_index": 0,
+          "cell_index": 1,
+          "column_label": "샘플 URL"
+        },
+        "evidence_kind": "operation_path_parameters_demonstrated_by_example"
+      }
+    ]
+  },
+  "limits": {
+    "provider_quota": {
+      "value": null,
+      "unit": null,
+      "status": "not_parsed",
+      "source_refs": [],
+      "scope": {
+        "value": null,
+        "status": "unknown",
+        "source_refs": []
+      },
+      "account_tier": {
+        "value": null,
+        "status": "unknown",
+        "source_refs": []
+      }
+    },
+    "request_budget": {
+      "value": null,
+      "status": "not_a_provider_fact",
+      "source_refs": []
+    }
+  },
+  "response_assertion": {
+    "kind": "documented_response_fields",
+    "fields": [
+      "list_total_count",
+      "RESULT.CODE",
+      "RESULT.MESSAGE",
+      "STATION_CD",
+      "STATION_NM",
+      "STATION_NM_ENG",
+      "LINE_NUM",
+      "FR_CODE",
+      "STATION_NM_CHN",
+      "STATION_NM_JPN"
+    ],
+    "empty_result_semantics": {
+      "value": null,
+      "status": "unknown",
+      "source_refs": [
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 14,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_no_matching_data_code_semantics"
+        }
+      ]
+    },
+    "source_refs": [
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 2,
+          "row_index": 1,
+          "cell_index": 1
+        },
+        "evidence_kind": "declared_output_field_name"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 2,
+          "row_index": 1,
+          "cell_index": 2
+        },
+        "evidence_kind": "declared_output_field_description"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 2,
+          "row_index": 2,
+          "cell_index": 1
+        },
+        "evidence_kind": "declared_output_field_name"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 2,
+          "row_index": 2,
+          "cell_index": 2
+        },
+        "evidence_kind": "declared_output_field_description"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 2,
+          "row_index": 3,
+          "cell_index": 1
+        },
+        "evidence_kind": "declared_output_field_name"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 2,
+          "row_index": 3,
+          "cell_index": 2
+        },
+        "evidence_kind": "declared_output_field_description"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 2,
+          "row_index": 4,
+          "cell_index": 1
+        },
+        "evidence_kind": "declared_output_field_name"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 2,
+          "row_index": 4,
+          "cell_index": 2
+        },
+        "evidence_kind": "declared_output_field_description"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 2,
+          "row_index": 5,
+          "cell_index": 1
+        },
+        "evidence_kind": "declared_output_field_name"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 2,
+          "row_index": 5,
+          "cell_index": 2
+        },
+        "evidence_kind": "declared_output_field_description"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 2,
+          "row_index": 6,
+          "cell_index": 1
+        },
+        "evidence_kind": "declared_output_field_name"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 2,
+          "row_index": 6,
+          "cell_index": 2
+        },
+        "evidence_kind": "declared_output_field_description"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 2,
+          "row_index": 7,
+          "cell_index": 1
+        },
+        "evidence_kind": "declared_output_field_name"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 2,
+          "row_index": 7,
+          "cell_index": 2
+        },
+        "evidence_kind": "declared_output_field_description"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 2,
+          "row_index": 8,
+          "cell_index": 1
+        },
+        "evidence_kind": "declared_output_field_name"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 2,
+          "row_index": 8,
+          "cell_index": 2
+        },
+        "evidence_kind": "declared_output_field_description"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 2,
+          "row_index": 9,
+          "cell_index": 1
+        },
+        "evidence_kind": "declared_output_field_name"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 2,
+          "row_index": 9,
+          "cell_index": 2
+        },
+        "evidence_kind": "declared_output_field_description"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 2,
+          "row_index": 10,
+          "cell_index": 1
+        },
+        "evidence_kind": "declared_output_field_name"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 2,
+          "row_index": 10,
+          "cell_index": 2
+        },
+        "evidence_kind": "declared_output_field_description"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 0,
+          "cell_index": 0
+        },
+        "evidence_kind": "provider_result_code"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 0,
+          "cell_index": 1
+        },
+        "evidence_kind": "provider_result_code_semantics"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 1,
+          "cell_index": 0
+        },
+        "evidence_kind": "provider_result_code"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 1,
+          "cell_index": 1
+        },
+        "evidence_kind": "provider_result_code_semantics"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 2,
+          "cell_index": 0
+        },
+        "evidence_kind": "provider_result_code"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 2,
+          "cell_index": 1
+        },
+        "evidence_kind": "provider_result_code_semantics"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 3,
+          "cell_index": 0
+        },
+        "evidence_kind": "provider_result_code"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 3,
+          "cell_index": 1
+        },
+        "evidence_kind": "provider_result_code_semantics"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 4,
+          "cell_index": 0
+        },
+        "evidence_kind": "provider_result_code"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 4,
+          "cell_index": 1
+        },
+        "evidence_kind": "provider_result_code_semantics"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 5,
+          "cell_index": 0
+        },
+        "evidence_kind": "provider_result_code"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 5,
+          "cell_index": 1
+        },
+        "evidence_kind": "provider_result_code_semantics"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 6,
+          "cell_index": 0
+        },
+        "evidence_kind": "provider_result_code"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 6,
+          "cell_index": 1
+        },
+        "evidence_kind": "provider_result_code_semantics"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 7,
+          "cell_index": 0
+        },
+        "evidence_kind": "provider_result_code"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 7,
+          "cell_index": 1
+        },
+        "evidence_kind": "provider_result_code_semantics"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 8,
+          "cell_index": 0
+        },
+        "evidence_kind": "provider_result_code"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 8,
+          "cell_index": 1
+        },
+        "evidence_kind": "provider_result_code_semantics"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 9,
+          "cell_index": 0
+        },
+        "evidence_kind": "provider_result_code"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 9,
+          "cell_index": 1
+        },
+        "evidence_kind": "provider_result_code_semantics"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 10,
+          "cell_index": 0
+        },
+        "evidence_kind": "provider_result_code"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 10,
+          "cell_index": 1
+        },
+        "evidence_kind": "provider_result_code_semantics"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 11,
+          "cell_index": 0
+        },
+        "evidence_kind": "provider_result_code"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 11,
+          "cell_index": 1
+        },
+        "evidence_kind": "provider_result_code_semantics"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 12,
+          "cell_index": 0
+        },
+        "evidence_kind": "provider_result_code"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 12,
+          "cell_index": 1
+        },
+        "evidence_kind": "provider_result_code_semantics"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 13,
+          "cell_index": 0
+        },
+        "evidence_kind": "provider_result_code"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 13,
+          "cell_index": 1
+        },
+        "evidence_kind": "provider_result_code_semantics"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 14,
+          "cell_index": 0
+        },
+        "evidence_kind": "provider_result_code"
+      },
+      {
+        "locator": {
+          "source_id": "seoul_official_openapi_view",
+          "kind": "html_table_cell",
+          "table_index": 5,
+          "row_index": 14,
+          "cell_index": 1
+        },
+        "evidence_kind": "provider_result_code_semantics"
+      }
+    ]
+  },
+  "response_contract": {
+    "accepted_http_status_codes": {
+      "status": "unknown",
+      "values": [],
+      "source_refs": []
+    },
+    "payload": {
+      "status": "unknown",
+      "kind": "unknown",
+      "media_types": [],
+      "source_refs": []
+    },
+    "schema_shape": {
+      "status": "unknown",
+      "source_refs": []
+    },
+    "coded_result_field_inventory": {
+      "status": "unknown",
+      "candidates": [],
+      "source_refs": [
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 1,
+            "cell_index": 1
+          },
+          "evidence_kind": "declared_output_field_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 1,
+            "cell_index": 2
+          },
+          "evidence_kind": "declared_output_field_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 2,
+            "cell_index": 1
+          },
+          "evidence_kind": "declared_output_field_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 2,
+            "cell_index": 2
+          },
+          "evidence_kind": "declared_output_field_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 3,
+            "cell_index": 1
+          },
+          "evidence_kind": "declared_output_field_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 3,
+            "cell_index": 2
+          },
+          "evidence_kind": "declared_output_field_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 4,
+            "cell_index": 1
+          },
+          "evidence_kind": "declared_output_field_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 4,
+            "cell_index": 2
+          },
+          "evidence_kind": "declared_output_field_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 5,
+            "cell_index": 1
+          },
+          "evidence_kind": "declared_output_field_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 5,
+            "cell_index": 2
+          },
+          "evidence_kind": "declared_output_field_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 6,
+            "cell_index": 1
+          },
+          "evidence_kind": "declared_output_field_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 6,
+            "cell_index": 2
+          },
+          "evidence_kind": "declared_output_field_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 7,
+            "cell_index": 1
+          },
+          "evidence_kind": "declared_output_field_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 7,
+            "cell_index": 2
+          },
+          "evidence_kind": "declared_output_field_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 8,
+            "cell_index": 1
+          },
+          "evidence_kind": "declared_output_field_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 8,
+            "cell_index": 2
+          },
+          "evidence_kind": "declared_output_field_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 9,
+            "cell_index": 1
+          },
+          "evidence_kind": "declared_output_field_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 9,
+            "cell_index": 2
+          },
+          "evidence_kind": "declared_output_field_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 10,
+            "cell_index": 1
+          },
+          "evidence_kind": "declared_output_field_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 10,
+            "cell_index": 2
+          },
+          "evidence_kind": "declared_output_field_description"
+        }
+      ]
+    },
+    "success_branches": [],
+    "documented_http_error_branches": [],
+    "documented_fields": [],
+    "required_fields": [],
+    "provider_result_codes": {
+      "status": "documented",
+      "evidence_strength": "explicit_documentation",
+      "path": null,
+      "value_type": "string",
+      "success_values": {
+        "status": "documented",
+        "values": [
+          "INFO-000"
+        ],
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 5,
+              "row_index": 0,
+              "cell_index": 0
+            },
+            "evidence_kind": "provider_result_code"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 5,
+              "row_index": 0,
+              "cell_index": 1
+            },
+            "evidence_kind": "provider_result_code_semantics"
+          }
+        ]
+      },
+      "error_values": {
+        "status": "documented",
+        "values": [
+          "ERROR-300",
+          "ERROR-301",
+          "ERROR-310",
+          "ERROR-331",
+          "ERROR-332",
+          "ERROR-333",
+          "ERROR-334",
+          "ERROR-335"
+        ],
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 5,
+              "row_index": 1,
+              "cell_index": 0
+            },
+            "evidence_kind": "provider_result_code"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 5,
+              "row_index": 1,
+              "cell_index": 1
+            },
+            "evidence_kind": "provider_result_code_semantics"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 5,
+              "row_index": 3,
+              "cell_index": 0
+            },
+            "evidence_kind": "provider_result_code"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 5,
+              "row_index": 3,
+              "cell_index": 1
+            },
+            "evidence_kind": "provider_result_code_semantics"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 5,
+              "row_index": 4,
+              "cell_index": 0
+            },
+            "evidence_kind": "provider_result_code"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 5,
+              "row_index": 4,
+              "cell_index": 1
+            },
+            "evidence_kind": "provider_result_code_semantics"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 5,
+              "row_index": 5,
+              "cell_index": 0
+            },
+            "evidence_kind": "provider_result_code"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 5,
+              "row_index": 5,
+              "cell_index": 1
+            },
+            "evidence_kind": "provider_result_code_semantics"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 5,
+              "row_index": 6,
+              "cell_index": 0
+            },
+            "evidence_kind": "provider_result_code"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 5,
+              "row_index": 6,
+              "cell_index": 1
+            },
+            "evidence_kind": "provider_result_code_semantics"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 5,
+              "row_index": 7,
+              "cell_index": 0
+            },
+            "evidence_kind": "provider_result_code"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 5,
+              "row_index": 7,
+              "cell_index": 1
+            },
+            "evidence_kind": "provider_result_code_semantics"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 5,
+              "row_index": 8,
+              "cell_index": 0
+            },
+            "evidence_kind": "provider_result_code"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 5,
+              "row_index": 8,
+              "cell_index": 1
+            },
+            "evidence_kind": "provider_result_code_semantics"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 5,
+              "row_index": 9,
+              "cell_index": 0
+            },
+            "evidence_kind": "provider_result_code"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 5,
+              "row_index": 9,
+              "cell_index": 1
+            },
+            "evidence_kind": "provider_result_code_semantics"
+          }
+        ]
+      },
+      "source_refs": [
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 0,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 0,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 1,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 1,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 2,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 2,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 3,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 3,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 4,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 4,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 5,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 5,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 6,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 6,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 7,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 7,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 8,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 8,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 9,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 9,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 10,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 10,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 11,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 11,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 12,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 12,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 13,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 13,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 14,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 14,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 1,
+            "cell_index": 1
+          },
+          "evidence_kind": "declared_output_field_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 1,
+            "cell_index": 2
+          },
+          "evidence_kind": "declared_output_field_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 2,
+            "cell_index": 1
+          },
+          "evidence_kind": "declared_output_field_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 2,
+            "cell_index": 2
+          },
+          "evidence_kind": "declared_output_field_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 3,
+            "cell_index": 1
+          },
+          "evidence_kind": "declared_output_field_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 3,
+            "cell_index": 2
+          },
+          "evidence_kind": "declared_output_field_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 4,
+            "cell_index": 1
+          },
+          "evidence_kind": "declared_output_field_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 4,
+            "cell_index": 2
+          },
+          "evidence_kind": "declared_output_field_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 5,
+            "cell_index": 1
+          },
+          "evidence_kind": "declared_output_field_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 5,
+            "cell_index": 2
+          },
+          "evidence_kind": "declared_output_field_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 6,
+            "cell_index": 1
+          },
+          "evidence_kind": "declared_output_field_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 6,
+            "cell_index": 2
+          },
+          "evidence_kind": "declared_output_field_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 7,
+            "cell_index": 1
+          },
+          "evidence_kind": "declared_output_field_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 7,
+            "cell_index": 2
+          },
+          "evidence_kind": "declared_output_field_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 8,
+            "cell_index": 1
+          },
+          "evidence_kind": "declared_output_field_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 8,
+            "cell_index": 2
+          },
+          "evidence_kind": "declared_output_field_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 9,
+            "cell_index": 1
+          },
+          "evidence_kind": "declared_output_field_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 9,
+            "cell_index": 2
+          },
+          "evidence_kind": "declared_output_field_description"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 10,
+            "cell_index": 1
+          },
+          "evidence_kind": "declared_output_field_name"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 2,
+            "row_index": 10,
+            "cell_index": 2
+          },
+          "evidence_kind": "declared_output_field_description"
+        }
+      ]
+    },
+    "result_collection": {
+      "status": "unknown",
+      "path": null,
+      "container_path": null,
+      "item_path": null,
+      "container_cardinality": {
+        "status": "unknown",
+        "minimum": null,
+        "maximum": null,
+        "source_refs": []
+      },
+      "value_type": null,
+      "source_refs": []
+    },
+    "declared_output_fields": [
+      {
+        "name": "list_total_count",
+        "data_type": "not_declared_in_output_table",
+        "size": null,
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 2,
+              "row_index": 1,
+              "cell_index": 1
+            },
+            "evidence_kind": "declared_output_field_name"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 2,
+              "row_index": 1,
+              "cell_index": 2
+            },
+            "evidence_kind": "declared_output_field_description"
+          }
+        ]
+      },
+      {
+        "name": "RESULT.CODE",
+        "data_type": "not_declared_in_output_table",
+        "size": null,
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 2,
+              "row_index": 2,
+              "cell_index": 1
+            },
+            "evidence_kind": "declared_output_field_name"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 2,
+              "row_index": 2,
+              "cell_index": 2
+            },
+            "evidence_kind": "declared_output_field_description"
+          }
+        ]
+      },
+      {
+        "name": "RESULT.MESSAGE",
+        "data_type": "not_declared_in_output_table",
+        "size": null,
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 2,
+              "row_index": 3,
+              "cell_index": 1
+            },
+            "evidence_kind": "declared_output_field_name"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 2,
+              "row_index": 3,
+              "cell_index": 2
+            },
+            "evidence_kind": "declared_output_field_description"
+          }
+        ]
+      },
+      {
+        "name": "STATION_CD",
+        "data_type": "not_declared_in_output_table",
+        "size": null,
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 2,
+              "row_index": 4,
+              "cell_index": 1
+            },
+            "evidence_kind": "declared_output_field_name"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 2,
+              "row_index": 4,
+              "cell_index": 2
+            },
+            "evidence_kind": "declared_output_field_description"
+          }
+        ]
+      },
+      {
+        "name": "STATION_NM",
+        "data_type": "not_declared_in_output_table",
+        "size": null,
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 2,
+              "row_index": 5,
+              "cell_index": 1
+            },
+            "evidence_kind": "declared_output_field_name"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 2,
+              "row_index": 5,
+              "cell_index": 2
+            },
+            "evidence_kind": "declared_output_field_description"
+          }
+        ]
+      },
+      {
+        "name": "STATION_NM_ENG",
+        "data_type": "not_declared_in_output_table",
+        "size": null,
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 2,
+              "row_index": 6,
+              "cell_index": 1
+            },
+            "evidence_kind": "declared_output_field_name"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 2,
+              "row_index": 6,
+              "cell_index": 2
+            },
+            "evidence_kind": "declared_output_field_description"
+          }
+        ]
+      },
+      {
+        "name": "LINE_NUM",
+        "data_type": "not_declared_in_output_table",
+        "size": null,
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 2,
+              "row_index": 7,
+              "cell_index": 1
+            },
+            "evidence_kind": "declared_output_field_name"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 2,
+              "row_index": 7,
+              "cell_index": 2
+            },
+            "evidence_kind": "declared_output_field_description"
+          }
+        ]
+      },
+      {
+        "name": "FR_CODE",
+        "data_type": "not_declared_in_output_table",
+        "size": null,
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 2,
+              "row_index": 8,
+              "cell_index": 1
+            },
+            "evidence_kind": "declared_output_field_name"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 2,
+              "row_index": 8,
+              "cell_index": 2
+            },
+            "evidence_kind": "declared_output_field_description"
+          }
+        ]
+      },
+      {
+        "name": "STATION_NM_CHN",
+        "data_type": "not_declared_in_output_table",
+        "size": null,
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 2,
+              "row_index": 9,
+              "cell_index": 1
+            },
+            "evidence_kind": "declared_output_field_name"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 2,
+              "row_index": 9,
+              "cell_index": 2
+            },
+            "evidence_kind": "declared_output_field_description"
+          }
+        ]
+      },
+      {
+        "name": "STATION_NM_JPN",
+        "data_type": "not_declared_in_output_table",
+        "size": null,
+        "source_refs": [
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 2,
+              "row_index": 10,
+              "cell_index": 1
+            },
+            "evidence_kind": "declared_output_field_name"
+          },
+          {
+            "locator": {
+              "source_id": "seoul_official_openapi_view",
+              "kind": "html_table_cell",
+              "table_index": 2,
+              "row_index": 10,
+              "cell_index": 2
+            },
+            "evidence_kind": "declared_output_field_description"
+          }
+        ]
+      }
+    ],
+    "documented_error_contract": {
+      "status": "documented",
+      "format": "unknown",
+      "code_path": null,
+      "message_path": null,
+      "codes": [
+        {
+          "value": "ERROR-300",
+          "classification": "bad_request",
+          "source_refs": [
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 1,
+                "cell_index": 0
+              },
+              "evidence_kind": "provider_result_code"
+            },
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 1,
+                "cell_index": 1
+              },
+              "evidence_kind": "provider_result_code_semantics"
+            }
+          ]
+        },
+        {
+          "value": "INFO-100",
+          "classification": "unknown",
+          "source_refs": [
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 2,
+                "cell_index": 0
+              },
+              "evidence_kind": "provider_result_code"
+            },
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 2,
+                "cell_index": 1
+              },
+              "evidence_kind": "provider_result_code_semantics"
+            }
+          ]
+        },
+        {
+          "value": "ERROR-301",
+          "classification": "bad_request",
+          "source_refs": [
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 3,
+                "cell_index": 0
+              },
+              "evidence_kind": "provider_result_code"
+            },
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 3,
+                "cell_index": 1
+              },
+              "evidence_kind": "provider_result_code_semantics"
+            }
+          ]
+        },
+        {
+          "value": "ERROR-310",
+          "classification": "bad_request",
+          "source_refs": [
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 4,
+                "cell_index": 0
+              },
+              "evidence_kind": "provider_result_code"
+            },
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 4,
+                "cell_index": 1
+              },
+              "evidence_kind": "provider_result_code_semantics"
+            }
+          ]
+        },
+        {
+          "value": "ERROR-331",
+          "classification": "bad_request",
+          "source_refs": [
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 5,
+                "cell_index": 0
+              },
+              "evidence_kind": "provider_result_code"
+            },
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 5,
+                "cell_index": 1
+              },
+              "evidence_kind": "provider_result_code_semantics"
+            }
+          ]
+        },
+        {
+          "value": "ERROR-332",
+          "classification": "bad_request",
+          "source_refs": [
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 6,
+                "cell_index": 0
+              },
+              "evidence_kind": "provider_result_code"
+            },
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 6,
+                "cell_index": 1
+              },
+              "evidence_kind": "provider_result_code_semantics"
+            }
+          ]
+        },
+        {
+          "value": "ERROR-333",
+          "classification": "bad_request",
+          "source_refs": [
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 7,
+                "cell_index": 0
+              },
+              "evidence_kind": "provider_result_code"
+            },
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 7,
+                "cell_index": 1
+              },
+              "evidence_kind": "provider_result_code_semantics"
+            }
+          ]
+        },
+        {
+          "value": "ERROR-334",
+          "classification": "bad_request",
+          "source_refs": [
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 8,
+                "cell_index": 0
+              },
+              "evidence_kind": "provider_result_code"
+            },
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 8,
+                "cell_index": 1
+              },
+              "evidence_kind": "provider_result_code_semantics"
+            }
+          ]
+        },
+        {
+          "value": "ERROR-335",
+          "classification": "bad_request",
+          "source_refs": [
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 9,
+                "cell_index": 0
+              },
+              "evidence_kind": "provider_result_code"
+            },
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 9,
+                "cell_index": 1
+              },
+              "evidence_kind": "provider_result_code_semantics"
+            }
+          ]
+        },
+        {
+          "value": "ERROR-336",
+          "classification": "size_limit",
+          "source_refs": [
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 10,
+                "cell_index": 0
+              },
+              "evidence_kind": "provider_result_code"
+            },
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 10,
+                "cell_index": 1
+              },
+              "evidence_kind": "provider_result_code_semantics"
+            }
+          ]
+        },
+        {
+          "value": "ERROR-500",
+          "classification": "server",
+          "source_refs": [
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 11,
+                "cell_index": 0
+              },
+              "evidence_kind": "provider_result_code"
+            },
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 11,
+                "cell_index": 1
+              },
+              "evidence_kind": "provider_result_code_semantics"
+            }
+          ]
+        },
+        {
+          "value": "ERROR-600",
+          "classification": "server",
+          "source_refs": [
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 12,
+                "cell_index": 0
+              },
+              "evidence_kind": "provider_result_code"
+            },
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 12,
+                "cell_index": 1
+              },
+              "evidence_kind": "provider_result_code_semantics"
+            }
+          ]
+        },
+        {
+          "value": "ERROR-601",
+          "classification": "server",
+          "source_refs": [
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 13,
+                "cell_index": 0
+              },
+              "evidence_kind": "provider_result_code"
+            },
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 13,
+                "cell_index": 1
+              },
+              "evidence_kind": "provider_result_code_semantics"
+            }
+          ]
+        },
+        {
+          "value": "INFO-200",
+          "classification": "empty_result",
+          "source_refs": [
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 14,
+                "cell_index": 0
+              },
+              "evidence_kind": "provider_result_code"
+            },
+            {
+              "locator": {
+                "source_id": "seoul_official_openapi_view",
+                "kind": "html_table_cell",
+                "table_index": 5,
+                "row_index": 14,
+                "cell_index": 1
+              },
+              "evidence_kind": "provider_result_code_semantics"
+            }
+          ]
+        }
+      ],
+      "source_refs": [
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 0,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 0,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 1,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 1,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 2,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 2,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 3,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 3,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 4,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 4,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 5,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 5,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 6,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 6,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 7,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 7,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 8,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 8,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 9,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 9,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 10,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 10,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 11,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 11,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 12,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 12,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 13,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 13,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 14,
+            "cell_index": 0
+          },
+          "evidence_kind": "provider_result_code"
+        },
+        {
+          "locator": {
+            "source_id": "seoul_official_openapi_view",
+            "kind": "html_table_cell",
+            "table_index": 5,
+            "row_index": 14,
+            "cell_index": 1
+          },
+          "evidence_kind": "provider_result_code_semantics"
+        }
+      ]
+    }
+  },
+  "explicit_unknowns": [
+    "operation_http_method_not_established",
+    "provider_quota_scope_not_established",
+    "provider_quota_account_tier_not_established",
+    "provider_max_rows_per_request_is_described_by_error_code_336_but_not_normalized_as_a_limit_fact",
+    "response_http_status_not_established",
+    "response_format_is_selected_by_TYPE_but_exact_success_payload_shape_is_not_declared",
+    "response_result_code_path_depends_on_selected_format_and_is_not_normalized",
+    "success_result_collection_and_empty_collection_shape_not_established"
+  ]
+}

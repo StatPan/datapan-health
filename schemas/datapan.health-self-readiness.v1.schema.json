@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.datapan.dev/datapan.health-self-readiness.v1.schema.json",
+  "title": "Datapan Health private scheduler readiness",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "ready", "state", "reason", "state_failures", "canaries", "public_readback", "deployment_identity"],
+  "properties": {
+    "schema_version": { "const": "datapan.health-self-readiness.v1" },
+    "ready": { "type": "boolean" },
+    "state": { "enum": ["ready", "startup", "degraded"] },
+    "reason": { "$ref": "#/$defs/readiness_reason" },
+    "last_loop": { "type": "string", "format": "date-time" },
+    "state_failures": { "type": "integer", "minimum": 0 },
+    "canaries": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["operation_id", "state", "reason"],
+        "properties": {
+          "operation_id": { "type": "string", "pattern": "^dpr-op-[0-9]{8}$" },
+          "last_started": { "type": "string", "format": "date-time" },
+          "last_accepted": { "type": "string", "format": "date-time" },
+          "last_delivered": { "type": "string", "format": "date-time" },
+          "original_observed_at": { "type": "string", "format": "date-time" },
+          "state": { "enum": ["ready", "startup", "degraded"] },
+          "reason": { "$ref": "#/$defs/readiness_reason" }
+        }
+      }
+    },
+    "public_readback": { "const": "not_checked" },
+    "deployment_identity": { "const": "not_checked" }
+  },
+  "$defs": {
+    "readiness_reason": {
+      "enum": [
+        "pipeline_current", "awaiting_first_delivery", "delivery_stale",
+        "awaiting_first_loop", "scheduler_loop_stale", "scheduler_state_unavailable",
+        "runtime_dependencies_unavailable", "delivery_failed", "cli_receipt_missing",
+        "receipt_storage_unavailable", "receipt_unavailable", "scheduled_identity",
+        "release_binding", "operation_identity", "catalog_identity", "registry_identity",
+        "policy_identity", "policy_ceiling", "future_observation", "stale_observation",
+        "receipt_contract", "delivered"
+      ]
+    }
+  }
+}

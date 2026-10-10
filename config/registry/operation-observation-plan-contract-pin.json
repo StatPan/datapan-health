@@ -1,0 +1,10 @@
+{
+  "schema_version": "datapan.health-operation-observation-plan-contract-pin.v1",
+  "registry_repository": "StatPan/datapan-registry",
+  "registry_revision": "da02fccaee4989c5c6dcf3b60e8e627ecd477cca",
+  "schema_contract": {
+    "path": "schemas/datapan.operation-observation-plan.v1.schema.json",
+    "sha256": "cafa93014d7a32ef072f74df1a730f681e5b206440e4a83e9cdf426f6686e162"
+  },
+  "quota_scope_digest_algorithm": "sha256-utf8-datapan.quota-scope.v1-nul-kind-nul-key"
+}

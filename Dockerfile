@@ -19,6 +19,7 @@ COPY schemas ./schemas
 RUN CGO_ENABLED=0 GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-runner ./cmd/health-runner \
  && CGO_ENABLED=0 GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-scheduler ./cmd/health-scheduler \
  && CGO_ENABLED=0 GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-public ./cmd/health-public \
+ && CGO_ENABLED=0 GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-gatus-config ./cmd/health-gatus-config \
  && CGO_ENABLED=0 GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags='-s -w' -o /health-runtime-dependencies ./cmd/health-runtime-dependencies \
  && CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags='-s -w' -o /dependency-installer ./cmd/health-runtime-dependencies
 
@@ -47,12 +48,16 @@ LABEL org.opencontainers.image.title="Datapan Health runtime" \
 COPY --from=live-build /health-runner /health-runner
 COPY --from=live-build /health-scheduler /health-scheduler
 COPY --from=live-build /health-public /health-public
+COPY --from=live-build /health-gatus-config /health-gatus-config
 COPY --from=live-build /health-runtime-dependencies /health-runtime-dependencies
 COPY --from=runtime-inputs /runtime-cli /opt/datapan-cli
 COPY config /opt/datapan-health/config
 ENV DATAPAN_BIN=/opt/datapan-cli/datapan \
     HEALTH_RUNNER_BIN=/health-runner \
     CANARY_CONFIG=/opt/datapan-health/config/canaries.json \
+    REGISTRY_API_METADATA=/opt/datapan-health/config/registry/api-metadata.v1.json \
+    REGISTRY_API_METADATA_PIN=/opt/datapan-health/config/registry/api-metadata-source-pin.v1.json \
+    HEALTH_SELF_READINESS_URL=http://scheduler:8081/status \
     ASSERTION_POLICY_PIN=/opt/datapan-health/config/registry/assertion-policy-contract-pin.json \
     RUNTIME_DEPENDENCY_LOCK=/opt/datapan-health/config/runtime-dependencies.json
 WORKDIR /opt/datapan-cli

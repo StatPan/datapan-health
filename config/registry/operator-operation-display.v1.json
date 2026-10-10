@@ -1,0 +1,155 @@
+{
+  "schema_version": "datapan.health-operator-operation-display.v1",
+  "authority": "operator_interpretation",
+  "document_evidence": {
+    "registry_revision": "6e52aa59d79afa0371423ead8c287a05c4ab6210",
+    "registry_manifest_sha256": "9b95b298a8186d0f71624869bb9d7bd4317ee736ae236797c56c2af69de216cc",
+    "registry_schema_sha256": "d6edb7dad63b9d7cdac6753fc02cba962cb8d96d7c01119c031935abfc973108"
+  },
+  "entries": [
+    {
+      "source_id": "ecos",
+      "registry_operation_id": "ecos-statistic-search-102y004",
+      "operator_label_ko": "ECOS 통계 검색",
+      "operator_label_authority": "operator_interpretation",
+      "official_api_title": {
+        "value": "",
+        "state": "missing"
+      },
+      "official_purpose": {
+        "value": "",
+        "state": "missing"
+      },
+      "guide_title": {
+        "value": "",
+        "state": "missing"
+      },
+      "service_status": {
+        "value": "",
+        "state": "unknown"
+      },
+      "document_source": null
+    },
+    {
+      "source_id": "kosis",
+      "registry_operation_id": "kosis-statistics-data-dt-1b41",
+      "operator_label_ko": "KOSIS 통계 자료",
+      "operator_label_authority": "operator_interpretation",
+      "official_api_title": {
+        "value": "",
+        "state": "missing"
+      },
+      "official_purpose": {
+        "value": "",
+        "state": "missing"
+      },
+      "guide_title": {
+        "value": "통계표선택 방법",
+        "state": "documented"
+      },
+      "service_status": {
+        "value": "",
+        "state": "unknown"
+      },
+      "document_source": {
+        "path": "reports/operation-document-evidence/source-scopes/kosis-statistics-data-dt-1b41.json",
+        "sha256": "74c32e047d9421894ca952d4820b9310336d1a827551c90c49a0427bb9ac5b4f",
+        "size_bytes": 111121,
+        "facts": [
+          {
+            "field": "guide_title",
+            "status": "documented",
+            "source_id": "kosis_official_devguide",
+            "evidence_kind": "official_operation_title",
+            "byte_start": 26473,
+            "byte_end": 26495
+          },
+          {
+            "field": "official_purpose",
+            "status": "not_found_in_parsed_operation_sources",
+            "source_id": "",
+            "evidence_kind": "",
+            "byte_start": 0,
+            "byte_end": 0
+          }
+        ]
+      }
+    },
+    {
+      "source_id": "open_assembly",
+      "registry_operation_id": "open-assembly-opensrvapi-list",
+      "operator_label_ko": "국회 Open API 목록",
+      "operator_label_authority": "operator_interpretation",
+      "official_api_title": {
+        "value": "",
+        "state": "missing"
+      },
+      "official_purpose": {
+        "value": "",
+        "state": "missing"
+      },
+      "guide_title": {
+        "value": "",
+        "state": "missing"
+      },
+      "service_status": {
+        "value": "",
+        "state": "unknown"
+      },
+      "document_source": null
+    },
+    {
+      "source_id": "seoul_open_data",
+      "registry_operation_id": "seoul-open-data-subway-station-list",
+      "operator_label_ko": "서울 지하철역 목록",
+      "operator_label_authority": "operator_interpretation",
+      "official_api_title": {
+        "value": "서울교통공사_노선별 지하철역 정보",
+        "state": "documented"
+      },
+      "official_purpose": {
+        "value": "서울교통공사에서 제공하는 1~8호선, 9호선 2~3단계(언주~중앙보훈병원) 노선별 지하철역을 제공하는 서비스 입니다.",
+        "state": "documented"
+      },
+      "guide_title": {
+        "value": "",
+        "state": "missing"
+      },
+      "service_status": {
+        "value": "terminated",
+        "state": "documented"
+      },
+      "document_source": {
+        "path": "reports/operation-document-evidence/source-scopes/seoul-open-data-subway-station-list.json",
+        "sha256": "498dc88551ce046316f1e3a233bc1cceead3ae3d7d856b01e01b50ebd0ee00c4",
+        "size_bytes": 117708,
+        "facts": [
+          {
+            "field": "official_api_title",
+            "status": "documented",
+            "source_id": "seoul_official_dataset_view",
+            "evidence_kind": "official_operation_title",
+            "byte_start": 51505,
+            "byte_end": 51657
+          },
+          {
+            "field": "official_purpose",
+            "status": "documented",
+            "source_id": "seoul_official_dataset_view",
+            "evidence_kind": "official_operation_purpose",
+            "byte_start": 51716,
+            "byte_end": 51869
+          },
+          {
+            "field": "service_status",
+            "status": "documented",
+            "source_id": "seoul_official_dataset_view",
+            "evidence_kind": "official_service_termination_notice",
+            "byte_start": 85007,
+            "byte_end": 85057
+          }
+        ]
+      }
+    }
+  ]
+}

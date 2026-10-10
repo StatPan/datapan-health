@@ -160,9 +160,10 @@ type CatalogEntry struct {
 		MaxLevel  string `json:"max_level"`
 	} `json:"policy"`
 	Aliases struct {
-		DatasetID       string `json:"dataset_id"`
-		OperationName   string `json:"operation_name"`
-		CLIOperationKey string `json:"cli_operation_key"`
+		DatasetID            string `json:"dataset_id"`
+		OperationName        string `json:"operation_name"`
+		UpstreamOperationSeq string `json:"upstream_operation_seq"`
+		CLIOperationKey      string `json:"cli_operation_key"`
 	} `json:"aliases"`
 	Provider string `json:"provider"`
 	Endpoint struct {

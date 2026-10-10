@@ -13,18 +13,72 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/StatPan/datapan-health/schemas"
 )
 
 const (
-	PublicStatusSchemaVersion = "datapan.health-public-status.v1"
-	maxGatusStatusBytes       = 2 * 1024 * 1024
+	PublicStatusSchemaVersion     = "datapan.health-public-status.v1"
+	maxGatusEndpointStatusBytes   = 128 * 1024
+	maxGatusEndpointStatusResults = 50
+	maxGatusEndpointStatusEvents  = 100
+	maxGatusStatusReadConcurrency = 2
+	maxGatusStatusCanaries        = 32
+	maxPublicHistoryPoints        = 50
 )
 
-var publicActionIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,95}$`)
+var (
+	publicActionIDPattern        = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,95}$`)
+	publicOperationCursorPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+)
+
+func parsePublicOperationPageQuery(parsed *url.URL) (OperationPageQuery, error) {
+	if parsed == nil || len(parsed.RawQuery) > maxPublicHTMLRawQueryBytes {
+		return OperationPageQuery{}, ErrOperationReadModelQuery
+	}
+	values, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return OperationPageQuery{}, ErrOperationReadModelQuery
+	}
+	query := OperationPageQuery{Limit: operationReadModelMaximumPage}
+	for key, entries := range values {
+		if len(entries) != 1 {
+			return OperationPageQuery{}, ErrOperationReadModelQuery
+		}
+		value := entries[0]
+		switch key {
+		case "api_id":
+			if !operationReadModelAPIIDPattern.MatchString(value) {
+				return OperationPageQuery{}, ErrOperationReadModelQuery
+			}
+			query.APIID = value
+		case "cursor":
+			if len(value) > 1024 || !publicOperationCursorPattern.MatchString(value) {
+				return OperationPageQuery{}, ErrOperationReadModelQuery
+			}
+			query.Cursor = value
+		case "limit":
+			limit, parseErr := strconv.Atoi(value)
+			if parseErr != nil || limit < 1 || limit > operationReadModelMaximumPage {
+				return OperationPageQuery{}, ErrOperationReadModelQuery
+			}
+			query.Limit = limit
+		case "q":
+			if len(value) > operationReadModelMaximumQueryBytes || !utf8.ValidString(value) || unsafePublicHTMLSearch(value) {
+				return OperationPageQuery{}, ErrOperationReadModelQuery
+			}
+			query.Query = strings.TrimSpace(value)
+		default:
+			return OperationPageQuery{}, ErrOperationReadModelQuery
+		}
+	}
+	return query, nil
+}
 
 type PublicStatusDocument struct {
 	SchemaVersion              string                  `json:"schema_version"`
@@ -35,15 +89,25 @@ type PublicStatusDocument struct {
 }
 
 type PublicOperationStatus struct {
-	OperationID                 string          `json:"operation_id"`
-	ObservedAt                  *time.Time      `json:"observed_at,omitempty"`
-	ObservationState            string          `json:"observation_state"`
-	RawObservationState         string          `json:"raw_observation_state"`
-	IncidentState               string          `json:"incident_state"`
-	ConsecutiveFailureThreshold int             `json:"consecutive_failure_threshold"`
-	PendingCount                int             `json:"pending_count"`
-	Availability                string          `json:"availability"`
-	Diagnosis                   PublicDiagnosis `json:"diagnosis"`
+	OperationID                 string                     `json:"operation_id"`
+	ObservedAt                  *time.Time                 `json:"observed_at,omitempty"`
+	HistoryStartedAt            *time.Time                 `json:"-"`
+	History                     []PublicResultHistoryPoint `json:"-"`
+	ObservationState            string                     `json:"observation_state"`
+	RawObservationState         string                     `json:"raw_observation_state"`
+	IncidentState               string                     `json:"incident_state"`
+	ConsecutiveFailureThreshold int                        `json:"consecutive_failure_threshold"`
+	PendingCount                int                        `json:"pending_count"`
+	Availability                string                     `json:"availability"`
+	Diagnosis                   PublicDiagnosis            `json:"diagnosis"`
+}
+
+// PublicResultHistoryPoint keeps only the timestamp Gatus assigned when a
+// result reached the monitor and the boolean outcome. It intentionally omits
+// provider receipt times, response data, errors, and endpoint identity.
+type PublicResultHistoryPoint struct {
+	ReceivedAt time.Time
+	Success    bool
 }
 
 type PublicDiagnosis struct {
@@ -142,68 +206,176 @@ type PublicStatusSource interface {
 }
 
 type GatusPublicStatusSource struct {
-	statusURL string
-	client    *http.Client
-	canaries  CanaryConfig
-	now       func() time.Time
+	statusBaseURL *url.URL
+	client        *http.Client
+	timeout       time.Duration
+	canaries      CanaryConfig
+	now           func() time.Time
 }
 
 func NewGatusPublicStatusSource(statusURL string, canaries CanaryConfig, timeout time.Duration) (*GatusPublicStatusSource, error) {
 	parsed, err := url.Parse(statusURL)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+	if err != nil || parsed == nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.RawPath != "" || timeout <= 0 || len(canaries.Canaries) == 0 || len(canaries.Canaries) > maxGatusStatusCanaries {
 		return nil, errors.New("invalid Gatus status URL")
 	}
+	basePath, ok := gatusStatusBasePath(parsed.Path)
+	if !ok {
+		return nil, errors.New("invalid Gatus status URL")
+	}
+	canaryCopy := canaries
+	canaryCopy.Canaries = append([]Canary(nil), canaries.Canaries...)
+	seenKeys := make(map[string]struct{}, len(canaryCopy.Canaries))
+	seenOperations := make(map[string]struct{}, len(canaryCopy.Canaries))
+	for _, canary := range canaryCopy.Canaries {
+		if !catalogOperationIDPattern.MatchString(canary.OperationID) || !gatusKeyPattern.MatchString(canary.GatusEndpointKey) || !validCadence(canary) {
+			return nil, errors.New("invalid Gatus status URL")
+		}
+		if _, duplicate := seenKeys[canary.GatusEndpointKey]; duplicate {
+			return nil, errors.New("invalid Gatus status URL")
+		}
+		if _, duplicate := seenOperations[canary.OperationID]; duplicate {
+			return nil, errors.New("invalid Gatus status URL")
+		}
+		seenKeys[canary.GatusEndpointKey] = struct{}{}
+		seenOperations[canary.OperationID] = struct{}{}
+	}
+	baseURL := *parsed
+	baseURL.Path = basePath
+	baseURL.RawPath = ""
+	baseURL.RawQuery = ""
+	baseURL.Fragment = ""
 	client := &http.Client{Timeout: timeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	return &GatusPublicStatusSource{statusURL: statusURL, client: client, canaries: canaries, now: time.Now}, nil
+	return &GatusPublicStatusSource{statusBaseURL: &baseURL, client: client, timeout: timeout, canaries: canaryCopy, now: time.Now}, nil
+}
+
+func gatusStatusBasePath(path string) (string, bool) {
+	const aggregateRoute = "/api/v1/endpoints/statuses"
+	if path == "" || path == "/" {
+		return "", true
+	}
+	if !strings.HasSuffix(path, aggregateRoute) {
+		return "", false
+	}
+	prefix := strings.TrimSuffix(path, aggregateRoute)
+	if prefix == "" {
+		return "", true
+	}
+	if !strings.HasPrefix(prefix, "/") || strings.HasSuffix(prefix, "/") {
+		return "", false
+	}
+	for _, segment := range strings.Split(strings.TrimPrefix(prefix, "/"), "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return "", false
+		}
+		for _, r := range segment {
+			if !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') && r != '-' && r != '_' {
+				return "", false
+			}
+		}
+	}
+	return prefix, true
 }
 
 type gatusPublicEndpoint struct {
-	Key     string              `json:"key"`
-	Results []gatusPublicResult `json:"results"`
+	Name    string          `json:"name,omitempty"`
+	Group   string          `json:"group,omitempty"`
+	Key     string          `json:"key"`
+	Results json.RawMessage `json:"results"`
+	Events  json.RawMessage `json:"events,omitempty"`
 }
+
 type gatusPublicResult struct {
-	Success   bool      `json:"success"`
+	Status           int                    `json:"status,omitempty"`
+	Hostname         string                 `json:"hostname,omitempty"`
+	Duration         int64                  `json:"duration"`
+	Errors           []string               `json:"errors,omitempty"`
+	ConditionResults []gatusPublicCondition `json:"conditionResults,omitempty"`
+	Success          bool                   `json:"success"`
+	Timestamp        time.Time              `json:"timestamp"`
+	Name             string                 `json:"name,omitempty"`
+}
+
+type gatusPublicCondition struct {
+	Condition string `json:"condition"`
+	Success   bool   `json:"success"`
+}
+
+type gatusPublicEvent struct {
+	Type      string    `json:"type"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
+func exactGatusJSONMember(member string) bool {
+	switch member {
+	case "name", "group", "key", "results", "events", "status", "hostname", "duration", "errors", "conditionResults", "success", "timestamp", "condition", "type":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *GatusPublicStatusSource) Snapshot(ctx context.Context) (PublicStatusDocument, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.statusURL, nil)
-	if err != nil {
+	if s == nil || s.statusBaseURL == nil || s.client == nil || s.timeout <= 0 {
 		return PublicStatusDocument{}, errors.New("public status source unavailable")
 	}
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return PublicStatusDocument{}, errors.New("public status source unavailable")
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "application/json") {
-		return PublicStatusDocument{}, errors.New("public status source unavailable")
+	snapshotCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+	resultsByCanary := make([][]gatusPublicResult, len(s.canaries.Canaries))
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	var firstErr error
+	var firstErrOnce sync.Once
+	workerCount := min(maxGatusStatusReadConcurrency, len(s.canaries.Canaries))
+	for range workerCount {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				canary := s.canaries.Canaries[index]
+				results, err := s.readEndpointStatus(snapshotCtx, canary.GatusEndpointKey)
+				if err != nil {
+					firstErrOnce.Do(func() {
+						firstErr = err
+						cancel()
+					})
+					continue
+				}
+				resultsByCanary[index] = results
+			}
+		}()
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxGatusStatusBytes+1))
-	if err != nil || len(data) > maxGatusStatusBytes {
-		return PublicStatusDocument{}, errors.New("public status source unavailable")
-	}
-	var endpoints []gatusPublicEndpoint
-	if err := json.Unmarshal(data, &endpoints); err != nil {
-		return PublicStatusDocument{}, errors.New("public status source unavailable")
-	}
-	resultsByKey := map[string][]gatusPublicResult{}
-	seen := map[string]bool{}
-	for _, endpoint := range endpoints {
-		if seen[endpoint.Key] {
-			return PublicStatusDocument{}, errors.New("public status source unavailable")
+
+	for index := range s.canaries.Canaries {
+		select {
+		case jobs <- index:
+		case <-snapshotCtx.Done():
+			break
 		}
-		seen[endpoint.Key] = true
-		resultsByKey[endpoint.Key] = append([]gatusPublicResult(nil), endpoint.Results...)
+		if snapshotCtx.Err() != nil {
+			break
+		}
+	}
+	close(jobs)
+	workers.Wait()
+	if firstErr != nil || snapshotCtx.Err() != nil {
+		return PublicStatusDocument{}, errors.New("public status source unavailable")
 	}
 	now := s.now().UTC()
 	if now.IsZero() || now.Year() < 2020 {
 		return PublicStatusDocument{}, errors.New("public status source unavailable")
 	}
 	operations := make([]PublicOperationStatus, 0, len(s.canaries.Canaries))
-	for _, canary := range s.canaries.Canaries {
+	for index, canary := range s.canaries.Canaries {
 		operation := PublicOperationStatus{OperationID: canary.OperationID, ObservationState: "not_observed", RawObservationState: "unknown", IncidentState: "unknown", ConsecutiveFailureThreshold: canary.ConsecutiveFailuresBeforeIncident, Availability: "unknown", Diagnosis: unknownPublicDiagnosis()}
-		results := resultsByKey[canary.GatusEndpointKey]
+		results := resultsByCanary[index]
+		operation.History = boundedPublicResultHistory(results, now)
+		if len(operation.History) > 0 {
+			started := operation.History[0].ReceivedAt
+			operation.HistoryStartedAt = &started
+		}
 		if result, ok := latestGatusPublicResult(results); ok {
 			observed := result.Timestamp.UTC()
 			operation.ObservedAt = &observed
@@ -231,6 +403,155 @@ func (s *GatusPublicStatusSource) Snapshot(ctx context.Context) (PublicStatusDoc
 	return document, nil
 }
 
+func (s *GatusPublicStatusSource) readEndpointStatus(ctx context.Context, key string) ([]gatusPublicResult, error) {
+	if !gatusKeyPattern.MatchString(key) {
+		return nil, errors.New("public status source unavailable")
+	}
+	target := *s.statusBaseURL
+	target.Path = strings.TrimSuffix(target.Path, "/") + "/api/v1/endpoints/" + url.PathEscape(key) + "/statuses"
+	target.RawQuery = "page=1&pageSize=50"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	if err != nil {
+		return nil, errors.New("public status source unavailable")
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, errors.New("public status source unavailable")
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxGatusEndpointStatusBytes+1))
+	if err != nil || len(data) > maxGatusEndpointStatusBytes {
+		return nil, errors.New("public status source unavailable")
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return []gatusPublicResult{}, nil
+	}
+	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "application/json") || validateUniqueJSONMembers(data) != nil {
+		return nil, errors.New("public status source unavailable")
+	}
+	var endpoint gatusPublicEndpoint
+	if err := decodeStrictJSON(data, &endpoint); err != nil || endpoint.Key != key || len(endpoint.Results) == 0 {
+		return nil, errors.New("public status source unavailable")
+	}
+	var rawResults []json.RawMessage
+	if err := decodeStrictJSON(endpoint.Results, &rawResults); err != nil || rawResults == nil || len(rawResults) > maxGatusEndpointStatusResults {
+		return nil, errors.New("public status source unavailable")
+	}
+	results := make([]gatusPublicResult, len(rawResults))
+	for index, rawResult := range rawResults {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(rawResult, &fields); err != nil {
+			return nil, errors.New("public status source unavailable")
+		}
+		successValue, present := fields["success"]
+		if !present || len(successValue) == 0 || string(successValue) == "null" {
+			return nil, errors.New("public status source unavailable")
+		}
+		var success bool
+		if err := json.Unmarshal(successValue, &success); err != nil {
+			return nil, errors.New("public status source unavailable")
+		}
+		if err := decodeStrictJSON(rawResult, &results[index]); err != nil || results[index].Timestamp.IsZero() {
+			return nil, errors.New("public status source unavailable")
+		}
+		results[index].Success = success
+	}
+	if len(endpoint.Events) > 0 && string(endpoint.Events) != "null" {
+		var events []gatusPublicEvent
+		if err := decodeStrictJSON(endpoint.Events, &events); err != nil || events == nil || len(events) > maxGatusEndpointStatusEvents {
+			return nil, errors.New("public status source unavailable")
+		}
+		for _, event := range events {
+			if event.Timestamp.IsZero() || (event.Type != "START" && event.Type != "HEALTHY" && event.Type != "UNHEALTHY") {
+				return nil, errors.New("public status source unavailable")
+			}
+		}
+	}
+	return results, nil
+}
+
+func validateUniqueJSONMembers(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := scanUniqueJSONValue(decoder, 0); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return errors.New("invalid JSON document")
+	}
+	return nil
+}
+
+func scanUniqueJSONValue(decoder *json.Decoder, depth int) error {
+	if depth > 32 {
+		return errors.New("JSON nesting limit exceeded")
+	}
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, isDelimiter := token.(json.Delim)
+	if !isDelimiter {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := make(map[string]struct{})
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok || !exactGatusJSONMember(key) {
+				return errors.New("invalid JSON object key")
+			}
+			if _, duplicate := seen[key]; duplicate {
+				return errors.New("duplicate JSON object key")
+			}
+			seen[key] = struct{}{}
+			if err := scanUniqueJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil || closing != json.Delim('}') {
+			return errors.New("invalid JSON object")
+		}
+	case '[':
+		for decoder.More() {
+			if err := scanUniqueJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil || closing != json.Delim(']') {
+			return errors.New("invalid JSON array")
+		}
+	default:
+		return errors.New("unexpected JSON delimiter")
+	}
+	return nil
+}
+
+func boundedPublicResultHistory(results []gatusPublicResult, now time.Time) []PublicResultHistoryPoint {
+	ordered := make([]gatusPublicResult, 0, len(results))
+	for _, result := range results {
+		if !result.Timestamp.IsZero() && !result.Timestamp.After(now.Add(30*time.Second)) {
+			ordered = append(ordered, result)
+		}
+	}
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Timestamp.Before(ordered[j].Timestamp) })
+	if len(ordered) > maxPublicHistoryPoints {
+		ordered = ordered[len(ordered)-maxPublicHistoryPoints:]
+	}
+	history := make([]PublicResultHistoryPoint, 0, len(ordered))
+	for _, result := range ordered {
+		history = append(history, PublicResultHistoryPoint{ReceivedAt: result.Timestamp.UTC(), Success: result.Success})
+	}
+	return history
+}
+
 func latestGatusPublicResult(results []gatusPublicResult) (gatusPublicResult, bool) {
 	var latest gatusPublicResult
 	for _, result := range results {
@@ -239,6 +560,16 @@ func latestGatusPublicResult(results []gatusPublicResult) (gatusPublicResult, bo
 		}
 	}
 	return latest, !latest.Timestamp.IsZero()
+}
+
+func oldestGatusPublicResult(results []gatusPublicResult) (gatusPublicResult, bool) {
+	var oldest gatusPublicResult
+	for _, result := range results {
+		if !result.Timestamp.IsZero() && (oldest.Timestamp.IsZero() || result.Timestamp.Before(oldest.Timestamp)) {
+			oldest = result
+		}
+	}
+	return oldest, !oldest.Timestamp.IsZero()
 }
 
 // projectIncidentState replays the most recent contiguous result runs against
@@ -287,9 +618,32 @@ func projectIncidentState(results []gatusPublicResult, threshold int) (rawState,
 }
 
 type PublicStatusHandler struct {
-	source   PublicStatusSource
-	services PublicServiceStatusSource
-	origins  map[string]bool
+	source     PublicStatusSource
+	services   PublicServiceStatusSource
+	readiness  HealthSelfReadinessSource
+	origins    map[string]bool
+	registry   *RegistryAPIMetadata
+	operations PublicRegistryOperationsSource
+	display    *PublicOperationDisplayMetadata
+}
+
+// PublicRegistryOperationsSource serves a bounded page over the already
+// verified in-memory operation projection. Implementations must not call
+// providers, Gatus, or scan durable state during a request.
+type PublicRegistryOperationsSource interface {
+	LookupAPIProgress(apiIDs []string, at time.Time) ([]OperationAPIProgress, error)
+	PageOperations(query OperationPageQuery, at time.Time) (OperationReadModelPage, error)
+}
+
+type RegistryOperationLookupIdentity struct {
+	SourceID    string
+	OperationID string
+}
+
+// PublicRegistryOperationLookupSource performs a bounded exact-identity lookup
+// against the same verified in-memory plan used by the public page reader.
+type PublicRegistryOperationLookupSource interface {
+	LookupPublicOperationRows(identities []RegistryOperationLookupIdentity, at time.Time) ([]OperationReadModelRow, error)
 }
 
 func NewPublicStatusHandler(source PublicStatusSource, origins []string) (*PublicStatusHandler, error) {
@@ -307,13 +661,60 @@ func NewPublicStatusHandler(source PublicStatusSource, origins []string) (*Publi
 	return &PublicStatusHandler{source: source, services: DefaultOwnedServiceStatusSource(), origins: allowed}, nil
 }
 
+func NewPublicStatusHandlerWithRegistryMetadata(source PublicStatusSource, origins []string, metadata RegistryAPIMetadata) (*PublicStatusHandler, error) {
+	return NewPublicStatusHandlerWithRegistryMetadataAndSelfReadiness(source, origins, metadata, nil)
+}
+
+func NewPublicStatusHandlerWithRegistryMetadataAndSelfReadiness(source PublicStatusSource, origins []string, metadata RegistryAPIMetadata, readiness HealthSelfReadinessSource) (*PublicStatusHandler, error) {
+	handler, err := NewPublicStatusHandler(source, origins)
+	if err != nil {
+		return nil, err
+	}
+	frozenMetadata, err := cloneVerifiedRegistryAPIMetadata(metadata)
+	if err != nil {
+		return nil, errors.New("verified Registry API metadata is required")
+	}
+	handler.registry = &frozenMetadata
+	handler.readiness = readiness
+	return handler, nil
+}
+
+// NewPublicStatusHandlerWithRegistryOperations composes the current ten-canary
+// v1 views with a separately pinned, bounded full-operation read model.
+func NewPublicStatusHandlerWithRegistryOperations(source PublicStatusSource, origins []string, metadata RegistryAPIMetadata, readiness HealthSelfReadinessSource, operations PublicRegistryOperationsSource) (*PublicStatusHandler, error) {
+	handler, err := NewPublicStatusHandlerWithRegistryMetadataAndSelfReadiness(source, origins, metadata, readiness)
+	if err != nil {
+		return nil, err
+	}
+	handler.operations = operations
+	return handler, nil
+}
+
+// NewPublicStatusHandlerWithOperationDisplay adds a separately pinned,
+// operator-authored identity label and verified source-document facts for the
+// partial Registry scopes. It leaves the underlying operation read model
+// unchanged.
+func NewPublicStatusHandlerWithOperationDisplay(source PublicStatusSource, origins []string, metadata RegistryAPIMetadata, readiness HealthSelfReadinessSource, operations PublicRegistryOperationsSource, display PublicOperationDisplayMetadata) (*PublicStatusHandler, error) {
+	frozenDisplay, err := clonePublicOperationDisplayMetadata(display)
+	if err != nil {
+		return nil, err
+	}
+	handler, err := NewPublicStatusHandlerWithRegistryOperations(source, origins, metadata, readiness, operations)
+	if err != nil {
+		return nil, err
+	}
+	handler.display = &frozenDisplay
+	return handler, nil
+}
+
 func (h *PublicStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.RawQuery != "" {
-		writePublicError(w, http.StatusNotFound)
+	if isDatapanHTMLRoute(r.URL.Path) {
+		h.serveDatapanHTML(w, r)
 		return
 	}
-	if isDatapanHTMLRoute(r.URL.Path) {
-		serveDatapanHTML(w, r)
+	operationPageRoute := r.URL.Path == "/datapan/v2/operations"
+	if r.URL.RawQuery != "" && !operationPageRoute {
+		writePublicError(w, http.StatusNotFound)
 		return
 	}
 	if !isDatapanJSONRoute(r.URL.Path) {
@@ -331,6 +732,15 @@ func (h *PublicStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	}
 	if origin != "" {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
+	}
+	var operationQuery OperationPageQuery
+	if operationPageRoute {
+		var queryErr error
+		operationQuery, queryErr = parsePublicOperationPageQuery(r.URL)
+		if queryErr != nil {
+			writePublicError(w, http.StatusBadRequest)
+			return
+		}
 	}
 	if r.Method == http.MethodOptions {
 		if origin == "" || (r.Header.Get("Access-Control-Request-Method") != http.MethodGet && r.Header.Get("Access-Control-Request-Method") != http.MethodHead) || r.Header.Get("Access-Control-Request-Headers") != "" {
@@ -350,6 +760,19 @@ func (h *PublicStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	var data []byte
 	var err error
 	switch r.URL.Path {
+	case "/datapan/v2/operations":
+		if h.operations == nil {
+			err = ErrOperationReadModelUnavailable
+		} else {
+			var document OperationReadModelPage
+			document, err = h.operations.PageOperations(operationQuery, time.Now().UTC())
+			if err == nil {
+				data, err = json.Marshal(document)
+				if err == nil && schemas.ValidateHealthRegistryOperationsPageV2(data) != nil {
+					err = errors.New("Registry operations page invalid")
+				}
+			}
+		}
 	case "/datapan/v1/services":
 		var document ServiceStatusDocument
 		document, err = h.services.Snapshot(r.Context())
@@ -379,7 +802,11 @@ func (h *PublicStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if err != nil {
-		writePublicError(w, http.StatusServiceUnavailable)
+		if operationPageRoute && errors.Is(err, ErrOperationReadModelQuery) {
+			writePublicError(w, http.StatusBadRequest)
+		} else {
+			writePublicError(w, http.StatusServiceUnavailable)
+		}
 		return
 	}
 	data = append(data, '\n')
@@ -406,42 +833,11 @@ func isDatapanJSONRoute(path string) bool {
 	// The installed Infra adapter strips /datapan before forwarding this
 	// existing status route. Keep that private contract on the same read-only
 	// handler and admission budget; public ingress still owns its allowlist.
-	return path == "/datapan/v1/services" || path == "/datapan/v1/dependencies" || path == "/datapan/v1/status" || path == "/v1/status"
+	return path == "/datapan/v1/services" || path == "/datapan/v1/dependencies" || path == "/datapan/v1/status" || path == "/v1/status" || path == "/datapan/v2/operations"
 }
 
 func isDatapanHTMLRoute(path string) bool {
-	return path == "/datapan/" || path == "/datapan/services/" || path == "/datapan/dependencies/"
-}
-
-func serveDatapanHTML(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", "GET, HEAD")
-		writePublicError(w, http.StatusMethodNotAllowed)
-		return
-	}
-	copy := map[string]struct{ title, body string }{
-		"/datapan/":              {"Datapan 상태 개요", "Datapan 서비스와 외부 데이터 의존성 관측을 분리해 표시합니다."},
-		"/datapan/services/":     {"Datapan 서비스", "Dataset API, Registry 배포, Datapan Web/Atlas, Health 자체 상태만 표시합니다. 배포 identity가 없으면 unknown입니다."},
-		"/datapan/dependencies/": {"외부 데이터 의존성", "data.go.kr canary 관측은 외부 의존성 표본이며 Datapan 서비스 SLA나 전체 카탈로그 상태가 아닙니다."},
-	}
-	page := copy[r.URL.Path]
-	body := "<!doctype html><html lang=\"ko\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>" + page.title + "</title><style>body{font:16px system-ui;margin:0;background:#f8fafc;color:#0f172a}main{max-width:760px;margin:48px auto;padding:24px}nav{display:flex;gap:16px;flex-wrap:wrap}a{color:#2563eb}section{background:#fff;border:1px solid #dbe3ef;border-radius:12px;padding:24px;margin-top:24px}small{color:#475569}</style><main><nav><a href=\"/datapan/\">개요</a><a href=\"/datapan/services/\">서비스</a><a href=\"/datapan/dependencies/\">외부 의존성</a></nav><section><h1>" + page.title + "</h1><p>" + page.body + "</p><small>JSON: /datapan/v1/services · /datapan/v1/dependencies</small></section></main></html>"
-	w.Header().Set("Cache-Control", "public, max-age=30, stale-if-error=60, no-transform")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	sum := sha256.Sum256([]byte(body))
-	etag := `"sha256-` + hex.EncodeToString(sum[:]) + `"`
-	w.Header().Set("ETag", etag)
-	if r.Header.Get("If-None-Match") == etag {
-		w.WriteHeader(http.StatusNotModified)
-		return
-	}
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
-	if r.Method == http.MethodHead {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	_, _ = io.WriteString(w, body)
+	return path == "/datapan/" || path == "/datapan/apis/" || path == "/datapan/services/" || path == "/datapan/dependencies/" || (strings.HasPrefix(path, "/datapan/apis/") && strings.HasSuffix(path, "/"))
 }
 
 func mergeVary(header http.Header, fields ...string) {

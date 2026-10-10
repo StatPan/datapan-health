@@ -1,6 +1,6 @@
 # Datapan Status
 
-공공데이터 API가 고장 난 것처럼 보일 때 가장 먼저 확인하는 공개 상태 페이지의 최소 구현입니다. UI는 익숙한 한 열 세로 목록을 유지하며, [upstream Gatus v5.36.0](https://github.com/TwiN/gatus/releases/tag/v5.36.0)을 수정 없이 사용합니다.
+공공데이터 API가 어떤 기관의 어떤 기능을 제공하는지, 연결된 기능의 검사 결과가 어떤지 한국어로 보여주는 공개 상태 페이지입니다. `/datapan/`은 고정된 Registry 원본 시점의 `data.go.kr` 목록을 페이지로 나누어 표시하며, 다른 제공처와 나머지 API 기능은 연결 중인 상태를 그대로 보여줍니다. 익숙한 한 열 세로 목록과 API 상태·이력은 고정된 [upstream Gatus v5.36.0](https://github.com/TwiN/gatus/releases/tag/v5.36.0)을 사용합니다. Health의 한국어 화면은 저장된 API 설명과 Gatus 결과를 읽기 전용으로 연결합니다.
 
 ## Governance
 
@@ -31,11 +31,14 @@ make archive-smoke
 ```
 
 `docker compose --profile scheduler up scheduler` starts the separate
-scheduler health surface on `:8081` (`/live`, `/ready`, `/metrics`). The local
+scheduler health surface on `:8081` (`/live`, `/ready`, `/status`, `/metrics`). The local
 profile deliberately has no Datapan CLI credential or provider executable, so
 it cannot call a real provider.
 
-`health-public` provides separate versioned browser contracts defined in
+`health-public` renders the Korean read-only pages at `/datapan/`,
+`/datapan/dependencies/` and `/datapan/services/`; it reads the scheduler's
+private `/status` aggregate to show Health pipeline readiness separately from
+API results. It also provides separate versioned browser contracts defined in
 [docs/public-status-api.md](docs/public-status-api.md): owned service status at
 `/datapan/v1/services` and external canary observations at
 `/datapan/v1/dependencies`. The latter maps exact Registry operation identity
@@ -167,6 +170,47 @@ default receipt and fixture remain on the July commit. Neither verification
 proves provider entitlement, quota, call safety, or live provider health; the
 ten service canaries remain a separate observation input and scheduler boundary.
 The current manifest is not a runtime probe-admission pin.
+
+## Registry API metadata directory
+
+`config/registry/api-metadata.v1.json` is a bounded, redacted projection of the
+complete pinned `data.go.kr` source snapshot. Its source pin records immutable
+Registry snapshot revision `d7dba637a06e345cba7ae058cba96fe53d3e532b`, the source SHA-256
+and byte count, the ten-entry Health catalog SHA-256, expected category counts,
+and the generated artifact SHA-256. The snapshot contains 12,282 API entities,
+12,662 REST/SOAP API operations (12,627 REST and 35 SOAP), and 8,871 separate
+LINK operations. It has 473 operationless entities, no filedata entities, and
+416 distinct source institution names. Those counts describe different source
+objects and do not assert that an operation is safe to call or is being
+observed. The current Gatus observations still cover only the ten canaries.
+
+This metadata source is provider-scoped, not a Registry-wide catalogue of every
+adapter: `scope.registry_wide_metadata_complete` is false. Its API, operation,
+institution, and purpose fields are copied only from the pinned source and have
+explicit state values when absent, blank, malformed, or unsafe to show. The
+projection omits endpoint addresses and paths, query data, credentials,
+request/response examples, and response rows. A canary link joins by exact
+dataset ID, upstream operation sequence, and operation name. Its CLI operation
+key remains a Health-local selector; the link alone is not a provider
+observation.
+
+Regenerate from a local copy of the exact pinned Registry source with:
+
+```sh
+go run ./cmd/health-registry-metadata \
+  --source /path/to/data-go-kr.registry.json
+```
+
+The command makes no network or provider calls. It streams the top-level source
+array, verifies source and catalog hashes, and bounds input at 160 MiB, each
+record at 16 MiB, JSON nesting at 128, all operation values (including LINK)
+at 50,000, and the artifact at 32 MiB. Operation arrays are counted before
+typed decoding; duplicate case-insensitive `operations` fields fail closed.
+Prose projection removes
+credential assignments and authorization tokens along with URLs, paths, and
+structured examples. It writes the pinned metadata artifact and a receipt
+containing the generated timestamp, source/catalog and artifact hashes, and
+separate counts. Runtime code does not load the 139 MB Registry source.
 
 ## Registry API metadata directory
 

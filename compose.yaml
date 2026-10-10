@@ -8,10 +8,20 @@ services:
       GATUS_DATABASE_URL: ${GATUS_DATABASE_URL:-postgres://datapan_health:local-dev-only@postgres:5432/datapan_health?sslmode=disable}
       GATUS_INCIDENT_WEBHOOK_URL: ${GATUS_INCIDENT_WEBHOOK_URL:-http://gatus:8080/health}
     volumes:
-      - ./config/gatus.yaml:/config/config.yaml:ro
+      - gatus-config-data:/config:ro
     depends_on:
+      gatus-config-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
+
+  gatus-config-init:
+    build:
+      context: .
+    entrypoint: ["/health-gatus-config"]
+    command: ["-base-config", "/opt/datapan-health/config/gatus.yaml", "-output-dir", "/generated"]
+    volumes:
+      - gatus-config-data:/generated
 
   postgres:
     image: postgres:17.5-alpine@sha256:ec68817297c5984a00c85c9e3bbd88079d0217284f1a3f0525603a6f9b883916
@@ -71,6 +81,7 @@ services:
     environment:
       CANARY_CONFIG: /config/canaries.json
       SCHEDULER_STATE: /data/scheduler-state.json
+      HEALTH_OPERATION_ATTEMPT_STATE: /operation-attempts
       # Local smoke deliberately has no CLI credentials or executable. It only
       # checks startup/readiness; it can never call a real provider.
       DATAPAN_BIN: /not-a-cli
@@ -78,6 +89,7 @@ services:
     volumes:
       - ./config:/config:ro
       - scheduler-data:/data
+      - operation-attempt-data:/operation-attempts
     ports:
       - "127.0.0.1:8081:8081"
 
@@ -88,10 +100,15 @@ services:
     entrypoint: ["/health-public"]
     environment:
       CANARY_CONFIG: /config/canaries.json
+      REGISTRY_API_METADATA: /config/registry/api-metadata.v1.json
+      REGISTRY_API_METADATA_PIN: /config/registry/api-metadata-source-pin.v1.json
       GATUS_STATUS_URL: http://gatus:8080/api/v1/endpoints/statuses
+      HEALTH_SELF_READINESS_URL: http://scheduler:8081/status
+      HEALTH_OPERATION_ATTEMPT_STATE: /operation-attempts
       PUBLIC_STATUS_ALLOWED_ORIGINS: https://datapan.statpan.com
     volumes:
       - ./config:/config:ro
+      - operation-attempt-data:/operation-attempts:ro
     ports:
       - "127.0.0.1:8082:8082"
     depends_on:
@@ -101,3 +118,5 @@ services:
 volumes:
   receipt-data:
   scheduler-data:
+  operation-attempt-data:
+  gatus-config-data:
