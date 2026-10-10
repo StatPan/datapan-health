@@ -77,7 +77,7 @@ const publicStatusHTMLTemplate = `<!doctype html>
     header{padding:12px 0 20px}
     nav{display:flex;flex-wrap:wrap;gap:8px 20px;border-bottom:1px solid #d6deea;padding:0 0 14px;margin:0 0 24px}
     a{color:#145bb8;text-underline-offset:3px}
-    a:focus-visible,button:focus-visible,input:focus-visible{outline:3px solid #145bb8;outline-offset:3px;border-radius:4px}
+    a:focus-visible,button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid #145bb8;outline-offset:3px;border-radius:4px}
     h1{font-size:clamp(1.6rem,5vw,2.1rem);line-height:1.25;margin:0 0 10px;overflow-wrap:anywhere}
     h2{font-size:1.2rem;line-height:1.35;margin:0 0 12px}
     h3{font-size:1.05rem;line-height:1.4;margin:0 0 8px;overflow-wrap:anywhere}
