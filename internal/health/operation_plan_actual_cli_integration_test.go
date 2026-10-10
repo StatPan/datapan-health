@@ -1201,11 +1201,11 @@ func actualCLIFullPopulation(t *testing.T, worker *OperationPlanWorker, attempts
 	}
 	expectedReadbacks := govUnavailableCount + typedErrorCount + typedSuccessCount
 	expectedNotApplicable := len(identities) - expectedReadbacks
-	if typedErrorCount != 2 || typedSuccessCount != 2 || status.ReadbacksSinceStart != uint64(expectedReadbacks) || status.NotApplicableSinceStart != uint64(expectedNotApplicable) {
-		t.Fatalf("durable Gatus and observation-only outcomes do not reconcile: readbacks=%d expected=%d not_applicable=%d expected=%d typed_errors=%d typed_successes=%d", status.ReadbacksSinceStart, expectedReadbacks, status.NotApplicableSinceStart, expectedNotApplicable, typedErrorCount, typedSuccessCount)
+	if govUnavailableCount != 2 || typedErrorCount != 2 || typedSuccessCount != 2 || expectedReadbacks != 6 || expectedNotApplicable != 12660 || status.ReadbacksSinceStart != 6 || status.NotApplicableSinceStart != 12660 {
+		t.Fatalf("durable Gatus and observation-only outcomes do not match the exact synthetic profile: readbacks=%d expected=6 not_applicable=%d expected=12660 provider_503=%d typed_errors=%d typed_successes=%d", status.ReadbacksSinceStart, status.NotApplicableSinceStart, govUnavailableCount, typedErrorCount, typedSuccessCount)
 	}
 	metrics := actualCLIProviderMetrics(t, metricsURL, caPath)
-	if metrics["requests"] != len(identities) || metrics["unique"] != len(identities) || metrics["duplicates"] != 0 || metrics["allowed_routes"] != len(identities) || metrics["rest_get"] != 12631 || metrics["soap_post"] != 35 || metrics["status_2xx"]+metrics["status_503"] != len(identities) || metrics["invalid"] != 0 {
+	if metrics["requests"] != len(identities) || metrics["unique"] != len(identities) || metrics["duplicates"] != 0 || metrics["allowed_routes"] != len(identities) || metrics["rest_get"] != 12631 || metrics["soap_post"] != 35 || metrics["status_2xx"] != 12664 || metrics["status_503"] != 2 || metrics["invalid"] != 0 {
 		t.Fatalf("isolated provider aggregates do not match the exact pinned route set: requests=%d unique=%d duplicates=%d allowed=%d rest=%d soap=%d 2xx=%d 503=%d invalid=%d", metrics["requests"], metrics["unique"], metrics["duplicates"], metrics["allowed_routes"], metrics["rest_get"], metrics["soap_post"], metrics["status_2xx"], metrics["status_503"], metrics["invalid"])
 	}
 	if metrics["status_503"] != govUnavailableCount || metrics["status_2xx"] != len(identities)-govUnavailableCount {
