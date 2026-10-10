@@ -4,11 +4,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/StatPan/datapan-health/internal/runtimebundle"
 )
 
 func testOperationPlanProbeExpectation(now time.Time) OperationPlanProbeExpectation {
@@ -184,4 +188,137 @@ func TestOperationPlanProbeRunnerFailsClosedOnCredentialFileMode(t *testing.T) {
 	if err := checkOperationCredentialBindingFile(credential); err == nil {
 		t.Fatal("group/world-readable credential binding file accepted")
 	}
+}
+
+func TestOperationPlanProbeExpectationUsesLoaderVerifiedGenerationInputPins(t *testing.T) {
+	planRoot, binding, _, _ := writeGatusPlanFixture(t)
+	plan, err := LoadPinnedOperationObservationPlan(planRoot, binding)
+	if err != nil {
+		t.Fatal("could not load the pinned probe plan:", err)
+	}
+	var inputs operationObservationPlanGenerationInputs
+	if err := json.Unmarshal(plan.state.index.GenerationInputs, &inputs); err != nil || inputs.ProviderIndex == nil {
+		t.Fatal("fixture must contain the already-validated operation-manifest and provider-index references")
+	}
+	if plan.state.operationManifestRef != inputs.OperationManifest || !plan.state.providerIndexRefExists || plan.state.providerIndexRef != *inputs.ProviderIndex {
+		t.Fatal("plan loader did not retain the exact validated generation-input artifact references")
+	}
+	records, err := plan.ReadShard(0)
+	if err != nil || len(records) == 0 {
+		t.Fatal("could not read the pinned operation record:", err)
+	}
+	lock := testOperationPlanRuntimeLock(strings.Repeat("9", 64))
+	expected, err := operationPlanProbeExpected(plan, records[0], plan.state.index.Shards[0].SHA256, "817c7c1d-f844-4b79-bdad-891a273c1a4e", lock, "amd64", time.Unix(1, 0).UTC())
+	if err != nil || expected.OperationManifestSHA256 != inputs.OperationManifest.SHA256 || expected.ProviderIndexSHA256 != inputs.ProviderIndex.SHA256 {
+		t.Fatalf("probe identity did not use the loader-verified input pins: %#v (%v)", expected, err)
+	}
+
+	t.Run("tampered cached manifest pin", func(t *testing.T) {
+		mutated := plan
+		state := *plan.state
+		mutated.state = &state
+		mutated.state.operationManifestRef.SHA256 = strings.Repeat("f", 64)
+		if _, err := operationPlanProbeExpected(mutated, records[0], mutated.state.index.Shards[0].SHA256, expected.AttemptID, lock, "amd64", expected.StartedAt); err == nil {
+			t.Fatal("probe expectation accepted a cached manifest pin outside the verified release manifest")
+		}
+	})
+	t.Run("missing optional provider index remains non-executable", func(t *testing.T) {
+		mutated := plan
+		state := *plan.state
+		mutated.state = &state
+		mutated.state.providerIndexRef = operationPlanArtifactRef{}
+		mutated.state.providerIndexRefExists = false
+		if _, err := operationPlanProbeExpected(mutated, records[0], mutated.state.index.Shards[0].SHA256, expected.AttemptID, lock, "amd64", expected.StartedAt); err == nil {
+			t.Fatal("probe expectation accepted a plan with no provider-index reference")
+		}
+	})
+	t.Run("resolver binds cached refs to exact generation inputs", func(t *testing.T) {
+		for _, field := range []string{"operation manifest", "provider index"} {
+			t.Run(field, func(t *testing.T) {
+				mutated := plan
+				state := *plan.state
+				state.manifest = make(map[string]RegistryReleaseManifestArtifact, len(plan.state.manifest)+1)
+				for path, artifact := range plan.state.manifest {
+					state.manifest[path] = artifact
+				}
+				var original operationPlanArtifactRef
+				if field == "operation manifest" {
+					original = state.operationManifestRef
+				} else {
+					original = state.providerIndexRef
+				}
+				alternate := original
+				alternate.Path = "reports/alternate-" + filepath.Base(original.Path)
+				artifact := state.manifest[original.Path]
+				artifact.Path = alternate.Path
+				state.manifest[alternate.Path] = artifact
+				if !releaseManifestBinds(state.manifest, alternate.Path, alternate.Bytes, alternate.SHA256) {
+					t.Fatal("fixture did not create an alternate reference bound by the release manifest")
+				}
+				if field == "operation manifest" {
+					state.operationManifestRef = alternate
+				} else {
+					state.providerIndexRef = alternate
+				}
+				mutated.state = &state
+				if !validOperationPlanProbeGenerationInputPins(mutated.state) {
+					t.Fatal("alternate fixture reference must pass the O(1) manifest-membership guard")
+				}
+				if _, err := NewPinnedOperationPlanProbeExpectationResolver(mutated, lock, "amd64"); err == nil {
+					t.Fatal("resolver accepted a cached pin different from the signed generation-input bytes")
+				}
+			})
+		}
+	})
+}
+
+func BenchmarkOperationPlanProbeExpectedCachedGenerationInputs(b *testing.B) {
+	for _, documentRefs := range []int{1, 12666} {
+		b.Run("document_refs="+strconv.Itoa(documentRefs), func(b *testing.B) {
+			plan, record, lock := benchmarkOperationPlanProbePlan(documentRefs)
+			shardSHA := strings.Repeat("4", 64)
+			started := time.Unix(1, 0).UTC()
+			b.ReportAllocs()
+			b.ReportMetric(float64(len(plan.state.index.GenerationInputs)), "generation_input_bytes")
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if _, err := operationPlanProbeExpected(plan, record, shardSHA, "817c7c1d-f844-4b79-bdad-891a273c1a4e", lock, "amd64", started); err != nil {
+					b.Fatal("cached probe expectation failed:", err)
+				}
+			}
+		})
+	}
+}
+
+func benchmarkOperationPlanProbePlan(documentRefs int) (PinnedOperationObservationPlan, OperationObservationPlanRecord, runtimebundle.Lock) {
+	manifestRef := operationPlanArtifactRef{Path: "reports/operation-manifest.json", Bytes: 1, SHA256: strings.Repeat("a", 64)}
+	providerRef := operationPlanArtifactRef{Path: "reports/provider-index.json", Bytes: 1, SHA256: strings.Repeat("b", 64)}
+	documents := make([]operationPlanArtifactRef, documentRefs)
+	for index := range documents {
+		documents[index] = operationPlanArtifactRef{Path: fmt.Sprintf("reports/documents/%05d.json", index), Bytes: 1, SHA256: strings.Repeat("c", 64)}
+	}
+	generationInputs, _ := json.Marshal(operationObservationPlanGenerationInputs{
+		GeneratorPath: "reports/generator.py", GeneratorSHA256: strings.Repeat("d", 64),
+		OperationManifest: manifestRef, LegacyPolicy: operationPlanArtifactRef{Path: "reports/legacy-policy.json", Bytes: 1, SHA256: strings.Repeat("e", 64)},
+		ProviderIndex: &providerRef, DocumentEvidence: documents,
+	})
+	manifest := map[string]RegistryReleaseManifestArtifact{
+		manifestRef.Path: {Path: manifestRef.Path, Bytes: manifestRef.Bytes, SHA256: manifestRef.SHA256},
+		providerRef.Path: {Path: providerRef.Path, Bytes: providerRef.Bytes, SHA256: providerRef.SHA256},
+	}
+	const sourceID = "data_go_kr"
+	state := &operationPlanIndexState{
+		index:    operationObservationPlanIndex{RegistryRevision: strings.Repeat("1", 40), GenerationInputs: generationInputs},
+		manifest: manifest, byScope: map[string]OperationObservationPlanSourceScope{
+			sourceID: {SourceID: sourceID, Provider: "data.go.kr", AdapterID: "data-go-kr", IdentitySetSHA256: strings.Repeat("2", 64)},
+		}, operationManifestRef: manifestRef, providerIndexRef: providerRef, providerIndexRefExists: true, verified: true,
+	}
+	plan := PinnedOperationObservationPlan{binding: OperationObservationPlanBinding{
+		RegistryRevision: strings.Repeat("1", 40), ReleaseManifestSHA256: strings.Repeat("3", 64), IndexSHA256: strings.Repeat("4", 64),
+	}, state: state}
+	record := OperationObservationPlanRecord{
+		SourceID: sourceID, OperationID: strings.Repeat("5", 64), Provider: "data.go.kr", AdapterID: "data-go-kr",
+		Protocol: "REST", ResponseAssertionKind: "observation_only", RequestTimeout: time.Second, ExecutionEligible: true,
+	}
+	return plan, record, testOperationPlanRuntimeLock(strings.Repeat("6", 64))
 }

@@ -161,6 +161,9 @@ type operationPlanRuntimeSealWire struct {
 	RegistryRevision      string                      `json:"registry_revision"`
 	ReleaseManifestSHA256 string                      `json:"release_manifest_sha256"`
 	IndexSHA256           string                      `json:"index_sha256"`
+	OperationManifestRef  operationPlanArtifactRef    `json:"operation_manifest_ref"`
+	ProviderIndexRef      operationPlanArtifactRef    `json:"provider_index_ref"`
+	ProviderIndexBound    bool                        `json:"provider_index_bound"`
 	ConfigSHA256          string                      `json:"config_sha256"`
 	MappingSHA256         string                      `json:"mapping_sha256"`
 	RuntimePinSHA256      string                      `json:"runtime_pin_sha256"`
@@ -188,7 +191,9 @@ func operationPlanRuntimeSeal(runtime *VerifiedOperationPlanRuntime) string {
 	}
 	wire := operationPlanRuntimeSealWire{
 		RegistryRevision: runtime.Plan.RegistryRevision(), ReleaseManifestSHA256: runtime.Plan.binding.ReleaseManifestSHA256,
-		IndexSHA256: runtime.Plan.IndexSHA256(), ConfigSHA256: digestOperationGatusBytes(runtime.Artifacts.Config),
+		IndexSHA256: runtime.Plan.IndexSHA256(), OperationManifestRef: runtime.Plan.state.operationManifestRef,
+		ProviderIndexRef: runtime.Plan.state.providerIndexRef, ProviderIndexBound: runtime.Plan.state.providerIndexRefExists,
+		ConfigSHA256:  digestOperationGatusBytes(runtime.Artifacts.Config),
 		MappingSHA256: digestOperationGatusBytes(runtime.Artifacts.Mapping), RuntimePinSHA256: digestOperationGatusBytes(runtime.Artifacts.RuntimePin),
 		DeclaredConfigSHA256: runtime.Artifacts.ConfigSHA256, DeclaredMappingSHA256: runtime.Artifacts.MappingSHA256,
 		DeclaredPinSHA256: runtime.Artifacts.RuntimePinSHA256, MappingObjectSHA256: digestOperationGatusBytes(mappingRaw),
