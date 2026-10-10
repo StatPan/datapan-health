@@ -377,8 +377,13 @@ func actualCLIReadReceiptCapture(receiptRoot, outputPath string) []byte {
 	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.Base(relative) != "receipt.json" {
 		return nil
 	}
-	parent := filepath.Base(filepath.Dir(path))
-	if !strings.HasPrefix(parent, ".attempt-") || len(parent) < len(".attempt-x") {
+	parent := filepath.Dir(relative)
+	if filepath.Base(parent) != parent || !strings.HasPrefix(parent, ".attempt-") || len(parent) < len(".attempt-x") {
+		return nil
+	}
+	parentPath := filepath.Join(root, parent)
+	parentInfo, parentErr := os.Lstat(parentPath)
+	if parentErr != nil || !parentInfo.IsDir() || parentInfo.Mode()&os.ModeSymlink != 0 || parentInfo.Mode().Perm() != 0o700 {
 		return nil
 	}
 	info, err := os.Lstat(path)
@@ -830,7 +835,7 @@ func actualCLIHistoricalUnresolvedIdentity(t *testing.T, historicalRoot string, 
 	var selected operationPlanPopulationIdentity
 	unknowns := 0
 	for _, identity := range identities {
-		latest, found, readErr := readOnlyStore.Latest(identity.SourceID, identity.OperationID)
+		latest, found, readErr := readOnlyStore.LatestSnapshotContext(context.Background(), identity.SourceID, identity.OperationID)
 		if readErr != nil {
 			t.Fatal("actual CLI reproduction could not inspect the historical attempt snapshot")
 		}
@@ -1144,6 +1149,85 @@ func TestActualCLIReceiptCaptureRequiresPrivateInRootFile(t *testing.T) {
 	}
 	if got := actualCLIReadReceiptCapture(root, linkPath); len(got) != 0 {
 		t.Fatal("bounded capture followed a symlinked receipt")
+	}
+	outsideRoot := t.TempDir()
+	if err := os.Chmod(outsideRoot, 0o700); err != nil {
+		t.Fatal("could not make the outside receipt directory private")
+	}
+	outsideAttempt := filepath.Join(outsideRoot, ".attempt-outside")
+	if err := os.Mkdir(outsideAttempt, 0o700); err != nil {
+		t.Fatal("could not create the outside attempt directory")
+	}
+	outsideReceipt := filepath.Join(outsideAttempt, "receipt.json")
+	if err := os.WriteFile(outsideReceipt, receipt, 0o600); err != nil {
+		t.Fatal("could not create the outside receipt")
+	}
+	symlinkAttempt := filepath.Join(root, ".attempt-parent-link")
+	if err := os.Symlink(outsideAttempt, symlinkAttempt); err != nil {
+		t.Fatal("could not create the symlinked attempt directory")
+	}
+	if got := actualCLIReadReceiptCapture(root, filepath.Join(symlinkAttempt, "receipt.json")); len(got) != 0 {
+		t.Fatal("bounded capture followed a symlinked attempt directory outside its private root")
+	}
+	nestedAttempt := filepath.Join(root, "nested", ".attempt-nested")
+	if err := os.MkdirAll(nestedAttempt, 0o700); err != nil {
+		t.Fatal("could not create a nested attempt path")
+	}
+	if err := os.WriteFile(filepath.Join(nestedAttempt, "receipt.json"), receipt, 0o600); err != nil {
+		t.Fatal("could not create a nested receipt")
+	}
+	if got := actualCLIReadReceiptCapture(root, filepath.Join(nestedAttempt, "receipt.json")); len(got) != 0 {
+		t.Fatal("bounded capture accepted a nested attempt path")
+	}
+}
+
+func TestActualCLIHistoricalUnresolvedIdentityUsesReadOnlySnapshot(t *testing.T) {
+	historicalRoot, err := os.MkdirTemp("", "datapan-health-actual-cli-selector-")
+	if err != nil {
+		t.Fatal("could not create a private historical selector fixture")
+	}
+	defer os.RemoveAll(historicalRoot)
+	if err := os.Chmod(historicalRoot, 0o700); err != nil {
+		t.Fatal("could not make the historical selector fixture private")
+	}
+	operationID := strings.Repeat("d", 64)
+	manifestSHA := strings.Repeat("a", 64)
+	indexSHA := strings.Repeat("b", 64)
+	registryRevision := strings.Repeat("c", 40)
+	binding := OperationAttemptBinding{
+		SourceID: "ecos", OperationID: operationID, RegistryRevision: registryRevision,
+		ReleaseManifestSHA: manifestSHA, IndexSHA: indexSHA, ShardSHA: strings.Repeat("e", 64),
+		GatusKey: "ecos_synthetic", ObservationPeriod: 4 * time.Hour,
+	}
+	writable, err := OpenOperationAttemptStore(filepath.Join(historicalRoot, "attempts"))
+	if err != nil {
+		t.Fatal("could not seed the historical selector attempt store")
+	}
+	startedAt := time.Now().UTC().Add(-time.Minute)
+	claim, err := writable.BeginAttempt(binding, strings.Repeat("f", 64), startedAt, time.Minute)
+	if err != nil {
+		t.Fatal("could not seed the historical unresolved attempt")
+	}
+	if err := writable.FailAttempt(claim, startedAt.Add(time.Second)); err != nil {
+		t.Fatal("could not transition the historical attempt to unknown")
+	}
+	statePath := writable.statePath(binding.SourceID, binding.OperationID)
+	stateBefore, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal("could not snapshot the historical attempt bytes")
+	}
+	plan := PinnedOperationObservationPlan{
+		binding: OperationObservationPlanBinding{ReleaseManifestSHA256: manifestSHA, IndexSHA256: indexSHA},
+		state:   &operationPlanIndexState{},
+	}
+	selected := actualCLIHistoricalUnresolvedIdentity(t, historicalRoot,
+		[]operationPlanPopulationIdentity{{SourceID: "ecos", OperationID: operationID, Protocol: "HTTP", InventoryUnknown: true}}, plan)
+	stateAfter, err := os.ReadFile(statePath)
+	if err != nil || !bytes.Equal(stateBefore, stateAfter) {
+		t.Fatal("read-only identity selection changed the retained historical attempt bytes")
+	}
+	if selected.SourceID != "ecos" || selected.OperationID != operationID || selected.Protocol != "HTTP" || !selected.InventoryUnknown {
+		t.Fatal("read-only identity selection returned a different historical unknown source scope")
 	}
 }
 
