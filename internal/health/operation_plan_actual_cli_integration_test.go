@@ -248,14 +248,14 @@ func actualCLIProbeReasonCodeClass(reason string) string {
 // TestOperationPlanActualCLIProviderGatusIntegration is the opt-in source-QA
 // proof for the compiled, exact-pinned CLI child, a no-egress synthetic REST/
 // SOAP provider, durable operation receipts, and the pinned native Gatus API.
-// Use HEALTH_OPERATION_ACTUAL_CLI_MODE=smoke first, then full for all 12,666
-// manifest-derived identities. It never reads provider credentials or calls
-// provider infrastructure.
+// Use HEALTH_OPERATION_ACTUAL_CLI_MODE=recovery and smoke before full for all
+// 12,666 manifest-derived identities. It never reads provider credentials or
+// calls provider infrastructure.
 func TestOperationPlanActualCLIProviderGatusIntegration(t *testing.T) {
 	qaStarted := time.Now()
 	mode := os.Getenv("HEALTH_OPERATION_ACTUAL_CLI_MODE")
-	if mode != "smoke" && mode != "diagnostic" && mode != "full" {
-		t.Skip("set HEALTH_OPERATION_ACTUAL_CLI_MODE=smoke, diagnostic, or full for isolated actual-CLI source QA")
+	if mode != "recovery" && mode != "smoke" && mode != "diagnostic" && mode != "full" {
+		t.Skip("set HEALTH_OPERATION_ACTUAL_CLI_MODE=recovery, smoke, diagnostic, or full for isolated actual-CLI source QA")
 	}
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		t.Skip("the pinned child execution and Docker fixture require Linux amd64")
@@ -396,12 +396,126 @@ func TestOperationPlanActualCLIProviderGatusIntegration(t *testing.T) {
 		t.Logf("actual CLI source-QA smoke passed: cli_source=%s cli_source_tree_verified=true cli_version=%s cli_sha256=%s go_build=%q registry_revision=%s registry_manifest_sha256=%s registry_index_sha256=%s provider_route_sha256=%s full_identities=%d registry_rest=%d registry_soap=%d inventory_unknown=%d synthetic_rest=4 synthetic_soap=4 synthetic_smoke_requests=8 cancellation_probe_requests=1 provider_requests=%d gatus_readbacks=6 external_provider_destinations=0 bound_artifact_bytes=%d manifest_bytes=%d physical_projection_bytes=%d manifest_artifact_count=%d cli_peak_before_cancel_bytes=%d cli_current_before_cancel_bytes=%d cli_memory_limit_bytes=%d cli_memory_source_before_cancel=%s cli_peak_before_cancel_exact=%t cli_oom_events_before_cancel=%d cli_oom_kill_events_before_cancel=%d cli_memory_samples_before_cancel=%d cli_memory_read_errors_before_cancel=%d cli_children=%d cli_child_total=%s cli_child_max=%s cli_child_timeouts=%d cli_child_exit_errors=%d cli_child_other_errors=%d cli_child_stdout_bytes=%d cli_child_stderr_bytes=%d cancellation_probe_elapsed=%s smoke_elapsed=%s", sourceRevision, actualCLIExpectedVersion, binarySHA, goBuildVersion, plan.binding.RegistryRevision, plan.binding.ReleaseManifestSHA256, plan.IndexSHA256(), providerRoutesSHA256, len(identities), protocolCounts["REST"], protocolCounts["SOAP"], unknownInventoryCount, metrics["requests"], projection.BoundArtifactBytes, projection.ManifestBytes, projection.PhysicalBytes, projection.ManifestArtifactCount, classificationMemory.PeakBytes, classificationMemory.CurrentBytes, classificationMemory.LimitBytes, classificationMemory.Source, classificationMemory.ExactPeak, classificationMemory.OOMEvents, classificationMemory.OOMKillEvents, classificationMemory.Samples, classificationMemory.ReadErrors, smokeChildren.Calls, smokeChildren.TotalElapsed.Round(time.Millisecond), smokeChildren.MaxElapsed.Round(time.Millisecond), smokeChildren.ContextTimeout, smokeChildren.ExitErrors, smokeChildren.OtherErrors, smokeChildren.StdoutBytes, smokeChildren.StderrBytes, cancellationElapsed.Round(time.Millisecond), time.Since(smokeStarted).Round(time.Second))
 		return
 	}
+	if mode == "recovery" {
+		actualCLIWindowDrainRecoverySmoke(t, worker, attempts, quotas, history, identities, metricsURL, providerCA, childTelemetry, monitor)
+		return
+	}
 	if mode == "diagnostic" {
 		actualCLIDiagnosticPopulation(t, worker, attempts, history, identities, metricsURL, providerCA, childTelemetry, monitor)
 		return
 	}
 
 	actualCLIFullPopulation(t, worker, attempts, history, plan, metadata, identities, metricsURL, providerCA, providerRoutesSHA256, paths, sourceRevision, binarySHA, goBuildVersion, projection, monitor)
+}
+
+// actualCLIWindowDrainRecoverySmoke seeds valid same-policy quota ledgers in a
+// prior window with a live synthetic lease, then exercises the production
+// worker's no-dispatch deferral and 30-second retry using the actual CLI child.
+// The injected lease affects only this closed local fixture and is released
+// through the durable quota API before retry; it creates no provider request.
+func actualCLIWindowDrainRecoverySmoke(t *testing.T, worker *OperationPlanWorker, attempts *OperationAttemptStore, quotas *OperationQuotaAuthority, history *OperationHistoryStore, identities []operationPlanPopulationIdentity, metricsURL, caPath string, children *actualCLIInvocationTelemetry, monitor *actualCLIContainerMonitor) {
+	t.Helper()
+	identity, found := actualCLISmokeIdentity(identities, actualCLIGovRESTTypedSuccess, "REST", nil)
+	if !found {
+		t.Fatal("actual CLI recovery case is not present in the pinned Gov identity set")
+	}
+	target, found := worker.targets[operationReadModelIdentityKey(identity.SourceID, identity.OperationID)]
+	if !found || len(target.Record.QuotaPolicies) < 1 || len(target.Record.QuotaPolicies) > maxOperationQuotaScopesPerCall {
+		t.Fatal("actual CLI recovery case has no bounded bound quota scopes")
+	}
+	baseline := actualCLIProviderMetrics(t, metricsURL, caPath)
+	if baseline["requests"] != 0 || baseline["unique"] != 0 || baseline["duplicates"] != 0 || baseline["invalid"] != 0 {
+		t.Fatalf("actual CLI recovery fixture provider was not idle before the controlled drain: requests=%d unique=%d duplicates=%d invalid=%d", baseline["requests"], baseline["unique"], baseline["duplicates"], baseline["invalid"])
+	}
+
+	seededAt := time.Now().UTC()
+	seedID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	seedExpiry := seededAt.Add(time.Minute)
+	seededClaims := make([]OperationQuotaClaim, 0, len(target.Record.QuotaPolicies))
+	for _, policy := range target.Record.QuotaPolicies {
+		state := operationQuotaState{
+			SchemaVersion: OperationQuotaStateSchemaVersion,
+			ScopeSHA256:   policy.ScopeSHA256,
+			PolicySHA256:  operationQuotaPolicyDigest(policy),
+			WindowStarted: seededAt.Truncate(policy.Window).Add(-policy.Window),
+			RequestsUsed:  1,
+			LastClaimAt:   seededAt.Add(-time.Second),
+			Generation:    1,
+			UpdatedAt:     seededAt.Add(-time.Second),
+			Active:        map[string]operationQuotaLease{seedID: {Generation: 1, ExpiresAt: seedExpiry}},
+		}
+		if err := writeOperationQuotaState(quotas.statePath(policy.ScopeSHA256), state); err != nil {
+			t.Fatal("could not seed the exact bound policy with one live prior-window fixture lease")
+		}
+		seededClaims = append(seededClaims, OperationQuotaClaim{ScopeSHA256: policy.ScopeSHA256, AttemptID: seedID, Generation: 1, ExpiresAt: seedExpiry})
+	}
+
+	deferred, err := worker.ExecuteOne(context.Background(), identity.SourceID, identity.OperationID, time.Now().UTC())
+	if err != nil || deferred.AttemptState != "deferred" || deferred.ExecutionBlockReason != operationAttemptReasonQuotaWindowDrain || deferred.RequestStarted {
+		t.Fatalf("actual CLI worker did not record the seeded window drain before child dispatch: state=%s block=%s request_started=%t worker_error=%t", deferred.AttemptState, deferred.ExecutionBlockReason, deferred.RequestStarted, err != nil)
+	}
+	storedDefer, found, err := attempts.Latest(identity.SourceID, identity.OperationID)
+	if err != nil || !found || storedDefer.AttemptID != deferred.AttemptID || storedDefer.Generation != deferred.Generation || storedDefer.State != "deferred" || storedDefer.BlockReason != operationAttemptReasonQuotaWindowDrain || storedDefer.DeferredStage != operationAttemptDeferredStageQuota || storedDefer.DeferredCategory != operationAttemptDeferredCategoryWindow || storedDefer.RequestStarted == nil || *storedDefer.RequestStarted || storedDefer.ReceiptValidated || storedDefer.ReceiptSHA256 != "" || storedDefer.Result != nil || storedDefer.DeliveryState != "not_ready" {
+		t.Fatal("actual CLI worker did not persist the exact no-request retry marker")
+	}
+	if usage, usageErr := history.Usage(context.Background()); usageErr != nil || usage.RecordCount != 0 || usage.ReservationCount != 0 {
+		t.Fatalf("actual CLI window drain retained a receipt or history reservation: records=%d reservations=%d", usage.RecordCount, usage.ReservationCount)
+	}
+	afterDefer := actualCLIProviderMetrics(t, metricsURL, caPath)
+	if afterDefer["requests"] != 0 || afterDefer["unique"] != 0 || afterDefer["duplicates"] != 0 || afterDefer["invalid"] != 0 {
+		t.Fatalf("actual CLI window drain dispatched a provider request: requests=%d unique=%d duplicates=%d invalid=%d", afterDefer["requests"], afterDefer["unique"], afterDefer["duplicates"], afterDefer["invalid"])
+	}
+
+	if err := quotas.ReleaseMany(seededClaims, time.Now().UTC()); err != nil {
+		t.Fatal("could not release the local seeded quota leases through the durable authority")
+	}
+	retryAt := storedDefer.FinishedAt.Add(operationAttemptDeferredRetryDelay)
+	if wait := time.Until(retryAt); wait > 0 {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-t.Context().Done():
+			t.Fatal("actual CLI recovery smoke was canceled before the persisted retry boundary")
+		}
+	}
+
+	recovered, err := worker.ExecuteOne(context.Background(), identity.SourceID, identity.OperationID, time.Now().UTC())
+	if err != nil || recovered.AttemptState != "observed" || !recovered.RequestStarted || recovered.AttemptID == deferred.AttemptID || recovered.Generation != deferred.Generation+1 {
+		t.Fatalf("actual CLI did not complete exactly one fresh child after the persisted cooldown: state=%s generation=%d request_started=%t worker_error=%t", recovered.AttemptState, recovered.Generation, recovered.RequestStarted, err != nil)
+	}
+	latest, found, err := attempts.Latest(identity.SourceID, identity.OperationID)
+	if err != nil || !found || latest.AttemptID != recovered.AttemptID || latest.Generation != recovered.Generation || latest.State != "observed" || !latest.ReceiptValidated || latest.Result == nil || latest.Result.State != "healthy" || latest.Result.Category != "healthy" || latest.DeliveryState == "not_applicable" {
+		t.Fatal("actual CLI recovery did not persist the validated typed-success receipt")
+	}
+	summary, summaryErr := actualCLIHistoricalAttemptSummary(attempts, []operationPlanPopulationIdentity{identity}, history)
+	if summaryErr != nil || summary.Identities != 1 || summary.Attempts != 2 || summary.Deferred != 1 || summary.WindowDrainDeferred != 1 || summary.RecoveredDeferrals != 1 || summary.UnresolvedDeferrals != 0 || summary.UnclassifiedDeferred != 0 || summary.InvalidDeferred != 0 || summary.HistoryMatches != 0 {
+		t.Fatalf("actual CLI recovery did not reconcile the deferred generation to the later receipt without matching history: deferred=%d recovered=%d unresolved=%d unclassified=%d invalid=%d history_matches=%d code=%v", summary.Deferred, summary.RecoveredDeferrals, summary.UnresolvedDeferrals, summary.UnclassifiedDeferred, summary.InvalidDeferred, summary.HistoryMatches, summaryErr)
+	}
+	usage, err := history.Usage(context.Background())
+	if err != nil || usage.RecordCount != 1 || usage.ReservationCount != 0 {
+		t.Fatalf("actual CLI recovery did not produce exactly one durable receipt: records=%d reservations=%d", usage.RecordCount, usage.ReservationCount)
+	}
+	if err := worker.DeliverOne(context.Background(), identity.SourceID, identity.OperationID, latest.AttemptID, latest.Generation, time.Now().UTC(), time.Minute); err != nil {
+		t.Fatal("pinned native Gatus did not accept the recovered actual CLI receipt")
+	}
+	latest, found, err = attempts.Latest(identity.SourceID, identity.OperationID)
+	if err != nil || !found || latest.DeliveryState != "readback_verified" || latest.GatusReceivedAt.IsZero() {
+		t.Fatal("native Gatus exact-key readback was not persisted for the recovered actual CLI receipt")
+	}
+	metrics := actualCLIProviderMetrics(t, metricsURL, caPath)
+	if metrics["requests"] != 1 || metrics["unique"] != 1 || metrics["duplicates"] != 0 || metrics["invalid"] != 0 || metrics["rest_get"] != 1 || metrics["status_2xx"] != 1 || metrics["allowed_routes"] != len(identities) {
+		t.Fatalf("actual CLI quota-window recovery did not issue exactly one unique synthetic request: requests=%d unique=%d duplicates=%d invalid=%d rest=%d status_2xx=%d allowed=%d", metrics["requests"], metrics["unique"], metrics["duplicates"], metrics["invalid"], metrics["rest_get"], metrics["status_2xx"], metrics["allowed_routes"])
+	}
+	memory := monitor.Snapshot()
+	if code := actualCLIExactCapacitySnapshotFailure(memory); code != "" {
+		t.Fatalf("actual CLI recovery capacity snapshot failed: code=%s", code)
+	}
+	child := children.snapshot()
+	if child.Calls != 1 || child.ContextTimeout != 0 || child.ExitErrors != 0 || child.OtherErrors != 0 {
+		t.Fatalf("actual CLI recovery executed an unexpected number of clean children: calls=%d timeouts=%d exit_errors=%d other_errors=%d", child.Calls, child.ContextTimeout, child.ExitErrors, child.OtherErrors)
+	}
+	t.Logf("actual CLI window-drain recovery source-QA passed: deferred_attempts=1 recovered_attempts=1 unresolved_deferrals=0 seeded_quota_scopes=%d provider_requests=%d provider_unique=%d provider_duplicates=%d actual_cli_children=%d actual_cli_child_max=%s durable_receipts=%d gatus_readbacks=1 external_provider_destinations=0 cli_peak_bytes=%d cli_current_bytes=%d cli_memory_limit_bytes=%d cli_memory_source=%s cli_peak_exact=%t cli_oom_events=%d cli_oom_kill_events=%d", len(seededClaims), metrics["requests"], metrics["unique"], metrics["duplicates"], child.Calls, child.MaxElapsed.Round(time.Millisecond), usage.RecordCount, memory.PeakBytes, memory.CurrentBytes, memory.LimitBytes, memory.Source, memory.ExactPeak, memory.OOMEvents, memory.OOMKillEvents)
 }
 
 // actualCLIDiagnosticPopulation runs a bounded sample through the same
@@ -1227,6 +1341,7 @@ func actualCLIFullPopulation(t *testing.T, worker *OperationPlanWorker, attempts
 	startedAt := time.Now().UTC()
 	lastProgressAt := time.Now()
 	status := preflight
+	lastDeferredScan := uint64(0)
 	completed := false
 	for controllerCtx.Err() == nil {
 		before := status.PassesSinceStart
@@ -1235,9 +1350,20 @@ func actualCLIFullPopulation(t *testing.T, worker *OperationPlanWorker, attempts
 			t.Fatalf("bounded production pass failed after %s with no provider call outside the isolated fixture: %v", time.Since(startedAt).Round(time.Second), err)
 		}
 		status = scheduler.Status(time.Now().UTC())
+		if status.DeferredSinceStart > lastDeferredScan {
+			deferredEvidence, evidenceErr := actualCLIHistoricalAttemptSummary(attempts, identities, nil)
+			if evidenceErr != nil {
+				t.Fatalf("actual CLI source-QA could not classify durable pre-request deferrals: code=%s", evidenceErr.Code)
+			}
+			if deferredEvidence.UnclassifiedDeferred != 0 || deferredEvidence.InvalidDeferred != 0 || deferredEvidence.Deferred < int(status.DeferredSinceStart) {
+				t.Fatalf("actual CLI produced an unclassified or inconsistent pre-request deferral: deferred=%d retryable_window_drains=%d unclassified=%d invalid=%d missing=%d scheduler_deferred=%d", deferredEvidence.Deferred, deferredEvidence.WindowDrainDeferred, deferredEvidence.UnclassifiedDeferred, deferredEvidence.InvalidDeferred, deferredEvidence.MissingIdentities, status.DeferredSinceStart)
+			}
+			lastDeferredScan = status.DeferredSinceStart
+			t.Logf("actual CLI full source-QA deferred evidence: deferred=%d retryable_window_drains=%d recovered=%d unresolved=%d", deferredEvidence.Deferred, deferredEvidence.WindowDrainDeferred, deferredEvidence.RecoveredDeferrals, deferredEvidence.UnresolvedDeferrals)
+		}
 		if time.Since(lastProgressAt) >= 30*time.Second {
 			usage, _ := history.Usage(context.Background())
-			t.Logf("actual CLI full source-QA progress: starts=%d observations=%d readbacks=%d not_applicable=%d active=%d execution_failures=%d delivery_failures=%d receipt_records=%d elapsed=%s", status.RequestStartsSinceStart, status.ObservationsSinceStart, status.ReadbacksSinceStart, status.NotApplicableSinceStart, status.ActiveWork, status.ExecutionFailuresSinceStart, status.DeliveryFailuresSinceStart, usage.RecordCount, time.Since(startedAt).Round(time.Second))
+			t.Logf("actual CLI full source-QA progress: starts=%d observations=%d deferred=%d readbacks=%d not_applicable=%d active=%d execution_failures=%d delivery_failures=%d receipt_records=%d elapsed=%s", status.RequestStartsSinceStart, status.ObservationsSinceStart, status.DeferredSinceStart, status.ReadbacksSinceStart, status.NotApplicableSinceStart, status.ActiveWork, status.ExecutionFailuresSinceStart, status.DeliveryFailuresSinceStart, usage.RecordCount, time.Since(startedAt).Round(time.Second))
 			lastProgressAt = time.Now()
 		}
 		if status.RequestStartsSinceStart == uint64(len(identities)) && status.ObservationsSinceStart == uint64(len(identities)) && status.ReadbacksSinceStart+status.NotApplicableSinceStart == uint64(len(identities)) && status.ActiveWork == 0 && status.EvidenceCurrentOperations == len(identities) && status.Ready {
@@ -1260,12 +1386,20 @@ func actualCLIFullPopulation(t *testing.T, worker *OperationPlanWorker, attempts
 		scheduler.Wait()
 		usage, _ := history.Usage(context.Background())
 		elapsed := time.Since(startedAt)
-		t.Fatalf("actual CLI did not reconcile all pinned identities within the 90-minute source-QA controller bound: starts=%d observations=%d readbacks=%d not_applicable=%d execution_failures=%d delivery_failures=%d active=%d expected=%d elapsed=%s receipts=%d history_bytes=%d", status.RequestStartsSinceStart, status.ObservationsSinceStart, status.ReadbacksSinceStart, status.NotApplicableSinceStart, status.ExecutionFailuresSinceStart, status.DeliveryFailuresSinceStart, status.ActiveWork, len(identities), elapsed.Round(time.Second), usage.RecordCount, usage.UsedBytes)
+		t.Fatalf("actual CLI did not reconcile all pinned identities within the 90-minute source-QA controller bound: starts=%d observations=%d deferred=%d readbacks=%d not_applicable=%d execution_failures=%d delivery_failures=%d active=%d expected=%d elapsed=%s receipts=%d history_bytes=%d", status.RequestStartsSinceStart, status.ObservationsSinceStart, status.DeferredSinceStart, status.ReadbacksSinceStart, status.NotApplicableSinceStart, status.ExecutionFailuresSinceStart, status.DeliveryFailuresSinceStart, status.ActiveWork, len(identities), elapsed.Round(time.Second), usage.RecordCount, usage.UsedBytes)
 	}
 	scheduler.Wait()
 	status = scheduler.Status(time.Now().UTC())
 	if status.ExecutionFailuresSinceStart != 0 || status.DeliveryFailuresSinceStart != 0 || status.IdentityScanFailuresSinceStart != 0 || status.PendingDeliveryScanFailures != 0 || status.EvidenceCurrentOperations != len(identities) || !status.Ready {
 		t.Fatalf("actual CLI readiness sweep did not prove a current exact receipt for every identity: ready=%t evidence=%d/%d execution_failures=%d delivery_failures=%d identity_scan_failures=%d delivery_scan_failures=%d", status.Ready, status.EvidenceCurrentOperations, len(identities), status.ExecutionFailuresSinceStart, status.DeliveryFailuresSinceStart, status.IdentityScanFailuresSinceStart, status.PendingDeliveryScanFailures)
+	}
+	deferredEvidence, deferredEvidenceErr := actualCLIHistoricalAttemptSummary(attempts, identities, history)
+	if deferredEvidenceErr != nil || deferredEvidence.Identities != len(identities) || deferredEvidence.Attempts < len(identities) || deferredEvidence.MissingIdentities != 0 || deferredEvidence.Deferred != int(status.DeferredSinceStart) || deferredEvidence.UnclassifiedDeferred != 0 || deferredEvidence.InvalidDeferred != 0 || deferredEvidence.UnresolvedDeferrals != 0 || deferredEvidence.RecoveredDeferrals != deferredEvidence.Deferred || deferredEvidence.HistoryMatches != 0 {
+		code := "deferred_evidence_mismatch"
+		if deferredEvidenceErr != nil {
+			code = deferredEvidenceErr.Code
+		}
+		t.Fatalf("actual CLI full source-QA did not reconcile every explicit no-request defer to a later same-binding observation: code=%s identities=%d expected_identities=%d attempts=%d deferred=%d retryable_window_drains=%d recovered=%d unresolved=%d unclassified=%d invalid=%d history_matches=%d missing=%d scheduler_deferred=%d", code, deferredEvidence.Identities, len(identities), deferredEvidence.Attempts, deferredEvidence.Deferred, deferredEvidence.WindowDrainDeferred, deferredEvidence.RecoveredDeferrals, deferredEvidence.UnresolvedDeferrals, deferredEvidence.UnclassifiedDeferred, deferredEvidence.InvalidDeferred, deferredEvidence.HistoryMatches, deferredEvidence.MissingIdentities, status.DeferredSinceStart)
 	}
 	usage, err := history.Usage(context.Background())
 	if err != nil || usage.RecordCount != int64(len(identities)) || usage.ReservationCount != 0 {
@@ -1390,7 +1524,267 @@ func actualCLIFullPopulation(t *testing.T, worker *OperationPlanWorker, attempts
 	if code := actualCLIExactCapacitySnapshotFailure(memory); code != "" {
 		t.Fatalf("actual CLI full source-QA capacity measurement failed: code=%s", code)
 	}
-	t.Logf("actual CLI full source-QA passed: cli_source=%s cli_source_tree_verified=true cli_version=%s cli_sha256=%s go_build=%q registry_revision=%s registry_manifest_sha256=%s registry_index_sha256=%s provider_route_sha256=%s identity_mapping_sha256=%s runtime_pin_sha256=%s gatus_config_sha256=%s identities=%d registry_rest=%d registry_soap=%d inventory_unknown_scopes=%d inventory_unknown_operations=%d synthetic_rest=%d synthetic_soap=%d requests=%d provider_503=%d typed_successes=%d typed_errors=%d indeterminate_2xx=%d gatus_readbacks=%d not_applicable=%d scheduler_passes=%d elapsed=%s requests_per_second=%.2f history_records=%d history_bytes=%d runtime_store_bytes=%d public_pages=%d bound_artifact_bytes=%d manifest_bytes=%d physical_projection_bytes=%d manifest_artifact_count=%d external_provider_destinations=0 cli_peak_bytes=%d cli_current_bytes=%d cli_memory_limit_bytes=%d cli_memory_source=%s cli_peak_exact=%t cli_oom_events=%d cli_oom_kill_events=%d cli_memory_samples=%d cli_memory_read_errors=%d", sourceRevision, actualCLIExpectedVersion, binarySHA, goBuildVersion, plan.RegistryRevision(), plan.binding.ReleaseManifestSHA256, plan.IndexSHA256(), providerRoutesSHA256, identityMappingSHA256, runtimePinSHA256, gatusConfigSHA256, len(identities), 12627, 35, plan.Counts().InventoryUnknownScopes, unknownOperationCount(identities), metrics["rest_get"], metrics["soap_post"], metrics["requests"], metrics["status_503"], typedSuccessCount, typedErrorCount, metrics["status_2xx"]-typedSuccessCount-typedErrorCount, status.ReadbacksSinceStart, status.NotApplicableSinceStart, status.PassesSinceStart, elapsed.Round(time.Second), float64(len(identities))/max(elapsed.Seconds(), 1), usage.RecordCount, usage.UsedBytes, storeBytes, (len(seen)+operationReadModelMaximumPage-1)/operationReadModelMaximumPage, projection.BoundArtifactBytes, projection.ManifestBytes, projection.PhysicalBytes, projection.ManifestArtifactCount, memory.PeakBytes, memory.CurrentBytes, memory.LimitBytes, memory.Source, memory.ExactPeak, memory.OOMEvents, memory.OOMKillEvents, memory.Samples, memory.ReadErrors)
+	t.Logf("actual CLI full source-QA passed: cli_source=%s cli_source_tree_verified=true cli_version=%s cli_sha256=%s go_build=%q registry_revision=%s registry_manifest_sha256=%s registry_index_sha256=%s provider_route_sha256=%s identity_mapping_sha256=%s runtime_pin_sha256=%s gatus_config_sha256=%s identities=%d registry_rest=%d registry_soap=%d inventory_unknown_scopes=%d inventory_unknown_operations=%d synthetic_rest=%d synthetic_soap=%d requests=%d provider_503=%d typed_successes=%d typed_errors=%d indeterminate_2xx=%d gatus_readbacks=%d not_applicable=%d deferred=%d recovered_deferred_retries=%d unresolved_deferred=0 scheduler_passes=%d elapsed=%s requests_per_second=%.2f history_records=%d history_bytes=%d runtime_store_bytes=%d public_pages=%d bound_artifact_bytes=%d manifest_bytes=%d physical_projection_bytes=%d manifest_artifact_count=%d external_provider_destinations=0 cli_peak_bytes=%d cli_current_bytes=%d cli_memory_limit_bytes=%d cli_memory_source=%s cli_peak_exact=%t cli_oom_events=%d cli_oom_kill_events=%d cli_memory_samples=%d cli_memory_read_errors=%d", sourceRevision, actualCLIExpectedVersion, binarySHA, goBuildVersion, plan.RegistryRevision(), plan.binding.ReleaseManifestSHA256, plan.IndexSHA256(), providerRoutesSHA256, identityMappingSHA256, runtimePinSHA256, gatusConfigSHA256, len(identities), 12627, 35, plan.Counts().InventoryUnknownScopes, unknownOperationCount(identities), metrics["rest_get"], metrics["soap_post"], metrics["requests"], metrics["status_503"], typedSuccessCount, typedErrorCount, metrics["status_2xx"]-typedSuccessCount-typedErrorCount, status.ReadbacksSinceStart, status.NotApplicableSinceStart, deferredEvidence.Deferred, deferredEvidence.RecoveredDeferrals, status.PassesSinceStart, elapsed.Round(time.Second), float64(len(identities))/max(elapsed.Seconds(), 1), usage.RecordCount, usage.UsedBytes, storeBytes, (len(seen)+operationReadModelMaximumPage-1)/operationReadModelMaximumPage, projection.BoundArtifactBytes, projection.ManifestBytes, projection.PhysicalBytes, projection.ManifestArtifactCount, memory.PeakBytes, memory.CurrentBytes, memory.LimitBytes, memory.Source, memory.ExactPeak, memory.OOMEvents, memory.OOMKillEvents, memory.Samples, memory.ReadErrors)
+}
+
+type actualCLIDeferredAttemptKey struct {
+	SourceID    string
+	OperationID string
+	AttemptID   string
+	Generation  uint64
+}
+
+type actualCLIDeferredAttemptSummary struct {
+	Identities           int
+	Attempts             int
+	Deferred             int
+	WindowDrainDeferred  int
+	RecoveredDeferrals   int
+	UnresolvedDeferrals  int
+	UnclassifiedDeferred int
+	InvalidDeferred      int
+	MissingIdentities    int
+	HistoryMatches       int
+}
+
+type actualCLIDeferredAttemptSummaryError struct {
+	Code string
+}
+
+func actualCLIHistoricalAttemptSummary(store *OperationAttemptStore, identities []operationPlanPopulationIdentity, history *OperationHistoryStore) (actualCLIDeferredAttemptSummary, *actualCLIDeferredAttemptSummaryError) {
+	var summary actualCLIDeferredAttemptSummary
+	if store == nil || len(identities) == 0 {
+		return summary, &actualCLIDeferredAttemptSummaryError{Code: "attempt_store_unavailable"}
+	}
+	deferredKeys := make(map[actualCLIDeferredAttemptKey]struct{})
+	for _, identity := range identities {
+		state, found, err := store.readState(identity.SourceID, identity.OperationID)
+		if err != nil {
+			return summary, &actualCLIDeferredAttemptSummaryError{Code: "attempt_snapshot_unavailable"}
+		}
+		if !found || len(state.Attempts) == 0 {
+			summary.MissingIdentities++
+			continue
+		}
+		if state.SourceID != identity.SourceID || state.OperationID != identity.OperationID {
+			return summary, &actualCLIDeferredAttemptSummaryError{Code: "attempt_identity_mismatch"}
+		}
+		summary.Identities++
+		var prior *OperationStoredAttempt
+		for _, attempt := range state.Attempts {
+			summary.Attempts++
+			if !validOperationAttemptBinding(attempt.Binding) || attempt.Binding.SourceID != identity.SourceID || attempt.Binding.OperationID != identity.OperationID || !quotaAttemptIDPattern.MatchString(attempt.AttemptID) || attempt.Generation == 0 || attempt.StartedAt.IsZero() || !attempt.LeaseExpiresAt.After(attempt.StartedAt) || !validOperationAttemptStateName(attempt.State) {
+				summary.InvalidDeferred++
+				priorCopy := attempt
+				prior = &priorCopy
+				continue
+			}
+			if prior != nil {
+				if attempt.Generation != prior.Generation+1 || attempt.Binding != prior.Binding || !attempt.StartedAt.After(prior.StartedAt) || !prior.FinishedAt.IsZero() && attempt.StartedAt.Before(prior.FinishedAt) {
+					summary.InvalidDeferred++
+				}
+				if prior.State == "deferred" {
+					if attempt.StartedAt.Before(prior.FinishedAt.Add(operationAttemptDeferredRetryDelay)) {
+						summary.InvalidDeferred++
+					}
+					summary.RecoveredDeferrals++
+				}
+			}
+			if attempt.State == "deferred" {
+				summary.Deferred++
+				deferredKeys[actualCLIDeferredAttemptKey{SourceID: identity.SourceID, OperationID: identity.OperationID, AttemptID: attempt.AttemptID, Generation: attempt.Generation}] = struct{}{}
+				validWindowDrain := attempt.BlockReason == operationAttemptReasonQuotaWindowDrain && attempt.DeferredStage == operationAttemptDeferredStageQuota && attempt.DeferredCategory == operationAttemptDeferredCategoryWindow
+				if validWindowDrain {
+					summary.WindowDrainDeferred++
+				} else {
+					summary.UnclassifiedDeferred++
+				}
+				if attempt.RequestStarted == nil || *attempt.RequestStarted || attempt.ReceiptValidated || attempt.ReceiptSHA256 != "" || attempt.Result != nil || attempt.DeliveryState != "not_ready" || attempt.FinishedAt.IsZero() || attempt.FinishedAt.Before(attempt.StartedAt) || !attempt.FinishedAt.Before(attempt.LeaseExpiresAt) {
+					summary.InvalidDeferred++
+				}
+				if prior == nil && attempt.Generation > 1 {
+					summary.InvalidDeferred++
+				}
+			}
+			priorCopy := attempt
+			prior = &priorCopy
+		}
+		if latest := state.Attempts[len(state.Attempts)-1]; latest.State == "deferred" {
+			summary.UnresolvedDeferrals++
+		}
+	}
+	if history != nil && len(deferredKeys) > 0 {
+		paths, err := filepath.Glob(filepath.Join(history.root, "records", "*.json"))
+		if err != nil {
+			return summary, &actualCLIDeferredAttemptSummaryError{Code: "history_snapshot_unavailable"}
+		}
+		for _, path := range paths {
+			raw, readErr := os.ReadFile(path)
+			if readErr != nil {
+				return summary, &actualCLIDeferredAttemptSummaryError{Code: "history_snapshot_unavailable"}
+			}
+			var envelope struct {
+				Record struct {
+					Identity OperationHistoryIdentity `json:"identity"`
+				} `json:"record"`
+			}
+			if json.Unmarshal(raw, &envelope) != nil || envelope.Record.Identity.AttemptID == "" || envelope.Record.Identity.Generation == 0 {
+				return summary, &actualCLIDeferredAttemptSummaryError{Code: "history_record_invalid"}
+			}
+			if _, found := deferredKeys[actualCLIDeferredAttemptKey{SourceID: envelope.Record.Identity.SourceID, OperationID: envelope.Record.Identity.OperationID, AttemptID: envelope.Record.Identity.AttemptID, Generation: envelope.Record.Identity.Generation}]; found {
+				summary.HistoryMatches++
+			}
+		}
+	}
+	return summary, nil
+}
+
+func TestActualCLIHistoricalAttemptSummaryRequiresBoundedQuotaWindowRecovery(t *testing.T) {
+	t.Run("same binding recovers after cooldown without matching history", func(t *testing.T) {
+		store, identity, deferred := actualCLISeedDeferredAttemptForSummaryTest(t, true)
+		historyRoot := filepath.Join(t.TempDir(), "history")
+		if err := os.MkdirAll(filepath.Join(historyRoot, "records"), 0o700); err != nil {
+			t.Fatal("could not prepare an empty test history directory")
+		}
+		summary, summaryErr := actualCLIHistoricalAttemptSummary(store, []operationPlanPopulationIdentity{identity}, &OperationHistoryStore{root: historyRoot})
+		if summaryErr != nil || summary.Identities != 1 || summary.Attempts != 2 || summary.Deferred != 1 || summary.WindowDrainDeferred != 1 || summary.RecoveredDeferrals != 1 || summary.UnresolvedDeferrals != 0 || summary.UnclassifiedDeferred != 0 || summary.InvalidDeferred != 0 || summary.MissingIdentities != 0 || summary.HistoryMatches != 0 {
+			t.Fatalf("valid durable same-binding window-drain recovery did not satisfy the strict summary: summary=%#v code=%v", summary, summaryErr)
+		}
+		if deferred.Generation != 1 || deferred.State != "deferred" {
+			t.Fatal("test fixture did not retain the original deferred attempt")
+		}
+	})
+
+	t.Run("generic defer remains unclassified", func(t *testing.T) {
+		store, identity, _ := actualCLISeedDeferredAttemptForSummaryTest(t, true)
+		state := actualCLIRewriteAttemptStateForSummaryTest(t, store, identity, func(state *operationAttemptState) {
+			state.Attempts[0].BlockReason = operationAttemptReasonChildUnavailable
+			state.Attempts[0].DeferredStage = "quota_acquire"
+			state.Attempts[0].DeferredCategory = "unavailable"
+		})
+		summary, summaryErr := actualCLIHistoricalAttemptSummary(store, []operationPlanPopulationIdentity{identity}, nil)
+		if summaryErr != nil || summary.UnclassifiedDeferred != 1 || summary.InvalidDeferred != 0 || summary.Deferred != 1 || state.Attempts[0].BlockReason != operationAttemptReasonChildUnavailable {
+			t.Fatalf("generic defer received quota-window retry classification: summary=%#v code=%v", summary, summaryErr)
+		}
+	})
+
+	t.Run("request-started attempt cannot claim a pre-request defer", func(t *testing.T) {
+		store, identity, _ := actualCLISeedDeferredAttemptForSummaryTest(t, false)
+		state, found, err := store.readState(identity.SourceID, identity.OperationID)
+		if err != nil || !found {
+			t.Fatal("could not read the test attempt before request-start mutation")
+		}
+		requestStarted := true
+		state.Attempts[0].RequestStarted = &requestStarted
+		raw, err := json.Marshal(state)
+		if err != nil {
+			t.Fatal("could not encode the malformed request-started defer")
+		}
+		if err := os.WriteFile(store.statePath(identity.SourceID, identity.OperationID), raw, 0o600); err != nil {
+			t.Fatal("could not persist the malformed request-started defer")
+		}
+		summary, summaryErr := actualCLIHistoricalAttemptSummary(store, []operationPlanPopulationIdentity{identity}, nil)
+		if summaryErr == nil || summaryErr.Code != "attempt_snapshot_unavailable" || summary.Deferred != 0 {
+			t.Fatalf("request-started evidence was accepted as a pre-request defer: summary=%#v code=%v", summary, summaryErr)
+		}
+	})
+
+	t.Run("retry with a different binding is invalid", func(t *testing.T) {
+		store, identity, _ := actualCLISeedDeferredAttemptForSummaryTest(t, true)
+		actualCLIRewriteAttemptStateForSummaryTest(t, store, identity, func(state *operationAttemptState) {
+			state.Attempts[1].Binding.IndexSHA = strings.Repeat("f", 64)
+			state.CurrentPlanSHA256 = operationAttemptPlanBindingSHA256(state.Attempts[1].Binding)
+		})
+		summary, summaryErr := actualCLIHistoricalAttemptSummary(store, []operationPlanPopulationIdentity{identity}, nil)
+		if summaryErr != nil || summary.InvalidDeferred == 0 {
+			t.Fatalf("mismatched retry binding was accepted as recovered: summary=%#v code=%v", summary, summaryErr)
+		}
+	})
+
+	t.Run("retry before cooldown is invalid", func(t *testing.T) {
+		store, identity, _ := actualCLISeedDeferredAttemptForSummaryTest(t, true)
+		actualCLIRewriteAttemptStateForSummaryTest(t, store, identity, func(state *operationAttemptState) {
+			state.Attempts[1].StartedAt = state.Attempts[0].FinishedAt.Add(operationAttemptDeferredRetryDelay - time.Nanosecond)
+			state.Attempts[1].LeaseExpiresAt = state.Attempts[1].StartedAt.Add(time.Minute)
+		})
+		summary, summaryErr := actualCLIHistoricalAttemptSummary(store, []operationPlanPopulationIdentity{identity}, nil)
+		if summaryErr != nil || summary.InvalidDeferred == 0 {
+			t.Fatalf("early retry was accepted as recovered: summary=%#v code=%v", summary, summaryErr)
+		}
+	})
+
+	t.Run("history cannot match a deferred generation", func(t *testing.T) {
+		store, identity, deferred := actualCLISeedDeferredAttemptForSummaryTest(t, true)
+		historyRoot := filepath.Join(t.TempDir(), "history")
+		recordsRoot := filepath.Join(historyRoot, "records")
+		if err := os.MkdirAll(recordsRoot, 0o700); err != nil {
+			t.Fatal("could not prepare a test history directory")
+		}
+		envelope := map[string]any{"record": map[string]any{"identity": OperationHistoryIdentity{
+			SourceID: identity.SourceID, OperationID: identity.OperationID, AttemptID: deferred.AttemptID, Generation: deferred.Generation,
+		}}}
+		raw, err := json.Marshal(envelope)
+		if err != nil {
+			t.Fatal("could not encode the bounded matching-history test envelope")
+		}
+		if err := os.WriteFile(filepath.Join(recordsRoot, "record.json"), raw, 0o600); err != nil {
+			t.Fatal("could not write the bounded matching-history test envelope")
+		}
+		summary, summaryErr := actualCLIHistoricalAttemptSummary(store, []operationPlanPopulationIdentity{identity}, &OperationHistoryStore{root: historyRoot})
+		if summaryErr != nil || summary.HistoryMatches != 1 {
+			t.Fatalf("matching history was not identified against the deferred attempt generation: summary=%#v code=%v", summary, summaryErr)
+		}
+	})
+
+	t.Run("latest defer remains unresolved", func(t *testing.T) {
+		store, identity, _ := actualCLISeedDeferredAttemptForSummaryTest(t, false)
+		summary, summaryErr := actualCLIHistoricalAttemptSummary(store, []operationPlanPopulationIdentity{identity}, nil)
+		if summaryErr != nil || summary.Deferred != 1 || summary.UnresolvedDeferrals != 1 || summary.RecoveredDeferrals != 0 {
+			t.Fatalf("unrecovered defer was not retained as unresolved: summary=%#v code=%v", summary, summaryErr)
+		}
+	})
+}
+
+func actualCLISeedDeferredAttemptForSummaryTest(t *testing.T, includeRetry bool) (*OperationAttemptStore, operationPlanPopulationIdentity, OperationStoredAttempt) {
+	t.Helper()
+	store, err := OpenOperationAttemptStore(t.TempDir())
+	if err != nil {
+		t.Fatal("could not open a test attempt store")
+	}
+	binding := testOperationAttemptBinding()
+	identity := operationPlanPopulationIdentity{SourceID: binding.SourceID, OperationID: binding.OperationID}
+	startedAt := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+	claim, err := store.BeginAttempt(binding, strings.Repeat("a", 64), startedAt, time.Minute)
+	if err != nil {
+		t.Fatal("could not create the initial test attempt")
+	}
+	finishedAt := startedAt.Add(time.Second)
+	if err := store.recordPreDispatchDeferredEvidenceContext(context.Background(), claim, operationAttemptReasonQuotaWindowDrain, operationAttemptDeferredStageQuota, operationAttemptDeferredCategoryWindow, finishedAt); err != nil {
+		t.Fatal("could not persist the test quota-window defer")
+	}
+	deferred, found, err := store.Latest(binding.SourceID, binding.OperationID)
+	if err != nil || !found || deferred.State != "deferred" {
+		t.Fatal("could not read the test quota-window defer")
+	}
+	if includeRetry {
+		if _, err := store.BeginAttempt(binding, strings.Repeat("b", 64), finishedAt.Add(operationAttemptDeferredRetryDelay), time.Minute); err != nil {
+			t.Fatal("could not create a same-binding test retry after cooldown")
+		}
+	}
+	return store, identity, deferred
+}
+
+func actualCLIRewriteAttemptStateForSummaryTest(t *testing.T, store *OperationAttemptStore, identity operationPlanPopulationIdentity, mutate func(*operationAttemptState)) operationAttemptState {
+	t.Helper()
+	state, found, err := store.readState(identity.SourceID, identity.OperationID)
+	if err != nil || !found {
+		t.Fatal("could not read the test attempt state for a controlled mutation")
+	}
+	mutate(&state)
+	if err := store.writeState(state); err != nil {
+		t.Fatal("could not persist the test attempt state mutation")
+	}
+	return state
 }
 
 func actualCLIFileSHA256(t *testing.T, path string) string {

@@ -2,7 +2,7 @@ RUNTIME_IMAGE ?= datapan-health-runtime:test
 ARCHIVE_IMAGE ?= datapan-health-archive:test
 TESTED_REVISION ?= $(HEALTH_HEAD)
 
-.PHONY: test quality build images image-smoke release-oci release-governance-smoke release-provenance-smoke runtime-publication-contract smoke visual archive-smoke hf-publish-smoke governance-check security-reporting-check security-reporting-check-test diagnostic-compatibility diagnostic-provenance diagnostic-provenance-check assertion-policy-compatibility correlation-replay diagnosis-snapshot-evidence public-status-doctor manifest-verify schedule-coverage schedule-coverage-doctor operation-plan-full-population operation-plan-gatus-integration operation-plan-gatus-capacity operation-plan-actual-cli-smoke operation-plan-actual-cli-full
+.PHONY: test quality build images image-smoke release-oci release-governance-smoke release-provenance-smoke runtime-publication-contract smoke visual archive-smoke hf-publish-smoke governance-check security-reporting-check security-reporting-check-test diagnostic-compatibility diagnostic-provenance diagnostic-provenance-check assertion-policy-compatibility correlation-replay diagnosis-snapshot-evidence public-status-doctor manifest-verify schedule-coverage schedule-coverage-doctor operation-plan-full-population operation-plan-gatus-integration operation-plan-gatus-capacity operation-plan-actual-cli-recovery operation-plan-actual-cli-smoke operation-plan-actual-cli-full
 
 test:
 	go test ./...
@@ -90,6 +90,9 @@ operation-plan-gatus-capacity:
 # Production child runner against an isolated local synthetic provider and
 # pinned Gatus. Smoke validates protocol fixtures; full runs the bounded
 # manifest-derived source-QA population. Neither mode contacts real providers.
+operation-plan-actual-cli-recovery:
+	HEALTH_OPERATION_ACTUAL_CLI_MODE=recovery go test ./internal/health -run '^TestOperationPlanActualCLIProviderGatusIntegration$$' -count=1 -timeout=20m -v
+
 operation-plan-actual-cli-smoke:
 	HEALTH_OPERATION_ACTUAL_CLI_MODE=smoke go test ./internal/health -run '^TestOperationPlanActualCLIProviderGatusIntegration$$' -count=1 -timeout=15m -v
 
