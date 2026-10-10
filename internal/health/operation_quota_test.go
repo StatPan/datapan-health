@@ -1,11 +1,15 @@
 package health
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -70,6 +74,249 @@ func TestOperationQuotaAuthorityEnforcesMinimumIntervalAndMonotonicTime(t *testi
 	if _, err := authority.Acquire(policy, "cccccccc-cccc-4ccc-8ccc-cccccccccccc", now.Add(9*time.Second), 5*time.Second); !errors.Is(err, ErrOperationQuotaUnavailable) {
 		t.Fatalf("clock regression was accepted: %v", err)
 	}
+}
+
+func TestOperationQuotaLiveClockFollowsLockOrderAndRetainsBackwardClockGuard(t *testing.T) {
+	base := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+	policy := operationQuotaTestPolicy(4, time.Hour, 0)
+	policy.MaxConcurrent = 4
+	firstID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	secondID := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	olderCallerTime := base.Add(time.Second)
+	lockOwnerTime := base.Add(2 * time.Second)
+	lockWaiterTime := base.Add(3 * time.Second)
+
+	t.Run("pre-lock caller timestamp can lose the lock-order race", func(t *testing.T) {
+		authority, err := OpenOperationQuotaAuthority(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		lock := lockOperationQuotaAuthorityForTest(t, authority)
+		started := make(chan struct{})
+		result := make(chan error, 1)
+		go func() {
+			close(started)
+			_, acquireErr := authority.AcquireManyContext(context.Background(), []OperationQuotaPolicy{policy}, firstID, olderCallerTime, time.Minute)
+			result <- acquireErr
+		}()
+		<-started
+		time.Sleep(40 * time.Millisecond)
+		seedOperationQuotaStateUnderHeldLock(t, authority, policy, secondID, lockOwnerTime)
+		unlockOperationQuotaAuthorityForTest(t, lock)
+		if err := <-result; !errors.Is(err, ErrOperationQuotaUnavailable) {
+			t.Fatalf("stale timestamp sampled before lock acquisition was accepted: %v", err)
+		}
+	})
+
+	t.Run("live clock is sampled once after lock acquisition", func(t *testing.T) {
+		authority, err := OpenOperationQuotaAuthority(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		lock := lockOperationQuotaAuthorityForTest(t, authority)
+		started := make(chan struct{})
+		clockCalled := make(chan struct{}, 1)
+		clockCalls := 0
+		result := make(chan struct {
+			claims []OperationQuotaClaim
+			at     time.Time
+			err    error
+		}, 1)
+		go func() {
+			close(started)
+			claims, at, acquireErr := authority.acquireManyWithClockContext(context.Background(), []OperationQuotaPolicy{policy}, firstID, time.Minute, func() time.Time {
+				clockCalls++
+				select {
+				case clockCalled <- struct{}{}:
+				default:
+				}
+				return lockWaiterTime
+			})
+			result <- struct {
+				claims []OperationQuotaClaim
+				at     time.Time
+				err    error
+			}{claims: claims, at: at, err: acquireErr}
+		}()
+		<-started
+		time.Sleep(40 * time.Millisecond)
+		select {
+		case <-clockCalled:
+			t.Fatal("quota clock was sampled before the authority lock was acquired")
+		default:
+		}
+		seedOperationQuotaStateUnderHeldLock(t, authority, policy, secondID, lockOwnerTime)
+		unlockOperationQuotaAuthorityForTest(t, lock)
+		acquired := <-result
+		if acquired.err != nil || len(acquired.claims) != 1 || !acquired.at.Equal(lockWaiterTime) {
+			t.Fatalf("lock-ordered quota reservation failed: claims=%d sampled_at=%s err=%v", len(acquired.claims), acquired.at, acquired.err)
+		}
+		if clockCalls != 1 {
+			t.Fatalf("quota clock callback count=%d, want exactly one", clockCalls)
+		}
+	})
+
+	t.Run("genuine under-lock clock rollback is still rejected", func(t *testing.T) {
+		authority, err := OpenOperationQuotaAuthority(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		seedOperationQuotaStateUnderHeldLock(t, authority, policy, secondID, lockOwnerTime)
+		_, _, err = authority.acquireManyWithClockContext(context.Background(), []OperationQuotaPolicy{policy}, firstID, time.Minute, func() time.Time {
+			return olderCallerTime
+		})
+		if !errors.Is(err, ErrOperationQuotaUnavailable) {
+			t.Fatalf("actual clock rollback under the authority lock was accepted: %v", err)
+		}
+	})
+}
+
+func TestOperationQuotaLiveReleaseFollowsLockOrderAndRetainsFencing(t *testing.T) {
+	base := time.Date(2026, 10, 11, 13, 0, 0, 0, time.UTC)
+	policy := operationQuotaTestPolicy(4, time.Hour, 0)
+	policy.MaxConcurrent = 4
+	firstID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	secondID := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	olderReleaseTime := base.Add(time.Second)
+	competingReserveTime := base.Add(2 * time.Second)
+	liveReleaseTime := base.Add(3 * time.Second)
+
+	t.Run("pre-lock release timestamp loses a reordered reservation", func(t *testing.T) {
+		authority, err := OpenOperationQuotaAuthority(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		first, err := authority.Acquire(policy, firstID, base, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lock := lockOperationQuotaAuthorityForTest(t, authority)
+		started := make(chan struct{})
+		result := make(chan error, 1)
+		go func() {
+			close(started)
+			result <- authority.ReleaseManyContext(context.Background(), []OperationQuotaClaim{first}, olderReleaseTime)
+		}()
+		<-started
+		time.Sleep(40 * time.Millisecond)
+		reserveOperationQuotaClaimUnderHeldLock(t, authority, policy, secondID, competingReserveTime, time.Minute)
+		unlockOperationQuotaAuthorityForTest(t, lock)
+		if err := <-result; !errors.Is(err, ErrOperationQuotaUnavailable) {
+			t.Fatalf("stale release timestamp was accepted after a later reservation: %v", err)
+		}
+		state, found, err := readOperationQuotaState(authority.statePath(policy.ScopeSHA256))
+		if err != nil || !found || state.RequestsUsed != 2 || len(state.Active) != 2 {
+			t.Fatalf("rejected release changed either live claim or request budget: state=%#v found=%t err=%v", state, found, err)
+		}
+		if err := authority.Release(first, competingReserveTime.Add(time.Second)); err != nil {
+			t.Fatalf("current original claim could not be released at lock-order time: %v", err)
+		}
+	})
+
+	t.Run("live release samples once after lock and preserves other claims", func(t *testing.T) {
+		authority, err := OpenOperationQuotaAuthority(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		first, err := authority.Acquire(policy, firstID, base, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lock := lockOperationQuotaAuthorityForTest(t, authority)
+		started := make(chan struct{})
+		clockCalled := make(chan struct{}, 1)
+		clockCalls := 0
+		result := make(chan error, 1)
+		go func() {
+			close(started)
+			result <- authority.releaseManyWithClockContext(context.Background(), []OperationQuotaClaim{first}, func() time.Time {
+				clockCalls++
+				select {
+				case clockCalled <- struct{}{}:
+				default:
+				}
+				return liveReleaseTime
+			})
+		}()
+		<-started
+		time.Sleep(40 * time.Millisecond)
+		select {
+		case <-clockCalled:
+			t.Fatal("release clock was sampled before the authority lock was acquired")
+		default:
+		}
+		second := reserveOperationQuotaClaimUnderHeldLock(t, authority, policy, secondID, competingReserveTime, time.Minute)
+		unlockOperationQuotaAuthorityForTest(t, lock)
+		if err := <-result; err != nil {
+			t.Fatalf("live release failed after the later reservation: %v", err)
+		}
+		if clockCalls != 1 {
+			t.Fatalf("release clock callback count=%d, want exactly one", clockCalls)
+		}
+		state, found, err := readOperationQuotaState(authority.statePath(policy.ScopeSHA256))
+		if err != nil || !found || state.RequestsUsed != 2 || len(state.Active) != 1 || state.Active[secondID].Generation != second.Generation {
+			t.Fatalf("release refunded budget or removed a competing lease: state=%#v found=%t err=%v", state, found, err)
+		}
+		if err := authority.releaseManyWithClockContext(context.Background(), []OperationQuotaClaim{second}, func() time.Time {
+			return competingReserveTime
+		}); !errors.Is(err, ErrOperationQuotaUnavailable) {
+			t.Fatalf("genuine backward release clock was accepted: %v", err)
+		}
+		if err := authority.releaseManyWithClockContext(context.Background(), []OperationQuotaClaim{first}, func() time.Time {
+			return liveReleaseTime.Add(time.Second)
+		}); !errors.Is(err, ErrOperationQuotaFenced) {
+			t.Fatalf("stale released claim was accepted: %v", err)
+		}
+		if err := authority.releaseManyWithClockContext(context.Background(), []OperationQuotaClaim{second}, func() time.Time {
+			return second.ExpiresAt
+		}); !errors.Is(err, ErrOperationQuotaFenced) {
+			t.Fatalf("expired live claim was accepted: %v", err)
+		}
+	})
+}
+
+func lockOperationQuotaAuthorityForTest(t *testing.T, authority *OperationQuotaAuthority) *os.File {
+	t.Helper()
+	file, err := os.OpenFile(filepath.Join(authority.root, ".authority.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	return file
+}
+
+func unlockOperationQuotaAuthorityForTest(t *testing.T, file *os.File) {
+	t.Helper()
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedOperationQuotaStateUnderHeldLock(t *testing.T, authority *OperationQuotaAuthority, policy OperationQuotaPolicy, attemptID string, at time.Time) OperationQuotaClaim {
+	t.Helper()
+	return reserveOperationQuotaClaimUnderHeldLock(t, authority, policy, attemptID, at, time.Minute)
+}
+
+func reserveOperationQuotaClaimUnderHeldLock(t *testing.T, authority *OperationQuotaAuthority, policy OperationQuotaPolicy, attemptID string, at time.Time, lease time.Duration) OperationQuotaClaim {
+	t.Helper()
+	state, found, err := readOperationQuotaState(authority.statePath(policy.ScopeSHA256))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, claim, err := nextOperationQuotaClaim(state, found, policy, attemptID, at, lease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeOperationQuotaState(authority.statePath(policy.ScopeSHA256), state); err != nil {
+		t.Fatal(err)
+	}
+	return claim
 }
 
 func TestOperationQuotaAuthorityRejectsStaleReleaseAndPolicyMutation(t *testing.T) {
