@@ -30,7 +30,7 @@ import (
 )
 
 const (
-	actualCLIExpectedSourceRevision = "89d1164ac8c910e18e50fc1c3a3961977c4d4f2e"
+	actualCLIExpectedSourceRevision = "acf060e71e2329b6a04ad4ab0abf669fbbfe9dac"
 	actualCLIExpectedVersion        = "v0.1.41"
 	actualCLIProviderSubnet         = "45.77.0.0/24"
 	actualCLIProviderIP             = "45.77.0.2"

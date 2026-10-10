@@ -1,6 +1,6 @@
 # Actual CLI operation-plan source QA
 
-The opt-in actual-CLI target builds the CLI from the merged source revision `89d1164ac8c910e18e50fc1c3a3961977c4d4f2e` and verifies that the checkout is clean before compiling. The test uses a local source-QA version string, then hashes the fresh binary and binds that exact digest into the Health runtime lock. A supplied binary is accepted only when its bytes match that fresh build.
+The opt-in actual-CLI target builds the CLI from the merged source revision `acf060e71e2329b6a04ad4ab0abf669fbbfe9dac` and verifies that the checkout is clean before compiling. The test uses the local source-QA version `v0.1.41`, then hashes the fresh binary and binds that exact digest into the Health runtime lock. This test-only version is not a published release. A supplied binary is accepted only when its bytes match that fresh build.
 
 Set `HEALTH_OPERATION_ACTUAL_CLI_SOURCE` to an absolute path to that clean checkout. Run the eight-case protocol and classification smoke first, then the full manifest-derived population:
 
