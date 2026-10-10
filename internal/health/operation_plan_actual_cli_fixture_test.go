@@ -22,7 +22,7 @@ const (
 	actualCLIPolicyPath                      = "p.json"
 	actualCLIRuntimeBindingPath              = "r.json"
 	actualCLISourceCapturePath               = "c.txt"
-	actualCLIAssertionPrefix                 = "e/a/"
+	actualCLIAssertionPrefix                 = "reports/operation-response-assertions/"
 	actualCLIDocumentPrefix                  = "e/d/"
 	actualCLIFixtureProviderIP               = "45.77.0.2"
 	actualCLIFixturePort                     = 8080
@@ -180,6 +180,7 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 		{"testdata/operation-observation-plan/operation-document-evidence-v2.schema.json", "schemas/datapan.operation-document-evidence.v2.schema.json", "d6edb7dad63b9d7cdac6753fc02cba962cb8d96d7c01119c031935abfc973108"},
 	}
 	newArtifacts := make([]RegistryReleaseManifestArtifact, 0, len(identities)*2+len(canonicalSchemas)+8)
+	var documentSchemaBytes []byte
 	addArtifact := func(path, kind, schema string, raw []byte) {
 		t.Helper()
 		if int64(len(raw)) <= 0 {
@@ -201,7 +202,13 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 		if json.Unmarshal(raw, &envelope) != nil || envelope.ID == "" {
 			t.Fatalf("actual-CLI schema %q has no canonical $id", schema.sourcePath)
 		}
+		if schema.path == "schemas/datapan.operation-document-evidence.v2.schema.json" {
+			documentSchemaBytes = append([]byte(nil), raw...)
+		}
 		addArtifact(schema.path, "schema", envelope.ID, raw)
+	}
+	if len(documentSchemaBytes) == 0 {
+		t.Fatal("actual-CLI canonical v2 operation-document schema is missing")
 	}
 	policySchema := "https://schemas.datapan.dev/datapan.operation-observation-policy.v1.schema.json"
 	responseSchema := "https://schemas.datapan.dev/datapan.operation-response-assertion.v2.schema.json"
@@ -269,6 +276,7 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 	newDocByKey := make(map[string]actualCLIDocumentArtifact, len(identities))
 	assertionRefs := make(map[string]actualCLIDocumentArtifact, len(identities))
 	protocolsByIdentity := make(map[string]string, len(identities))
+	validatedDocumentShapes := make(map[string]bool, 6)
 	for _, identity := range identities {
 		protocol := identity.Protocol
 		if identity.SourceID != "data_go_kr" {
@@ -294,7 +302,7 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 		typed := profileID == "gov-rest-typed" || profileID == "gov-soap-typed"
 		operationName := identity.OperationName
 		if operationName == "" {
-			operationName = "Synthetic local source-QA operation"
+			operationName = "Synthetic QA operation"
 		}
 		pathPrefix := "rest"
 		method := "GET"
@@ -305,6 +313,13 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 		ordinal := identityOrdinals[operationReadModelIdentityKey(identity.SourceID, identity.OperationID)]
 		docPath := fmt.Sprintf(actualCLIDocumentPrefix+"%05d.json", ordinal)
 		docRaw := actualCLIBuildDocument(identity, protocol, operationName, requestPath, method, captureRaw, captureSHA)
+		shapeKey := identity.SourceID + "/" + protocol
+		if !validatedDocumentShapes[shapeKey] {
+			if err := schemas.ValidateRegistryOperationDocumentEvidenceV2(docRaw, documentSchemaBytes); err != nil {
+				t.Fatalf("actual-CLI synthetic source-QA document for %s/%s violates the pinned v2 schema: %v", identity.SourceID, protocol, err)
+			}
+			validatedDocumentShapes[shapeKey] = true
+		}
 		docSHA := digest(docRaw)
 		addArtifact(docPath, "operation_document_evidence", documentSchema, docRaw)
 		docArtifact := actualCLIDocumentArtifact{path: docPath, sha: docSHA, bytes: int64(len(docRaw))}
@@ -313,7 +328,7 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 		newDocRefs = append(newDocRefs, operationPlanArtifactRef{Path: docPath, SHA256: docSHA, Bytes: int64(len(docRaw))})
 		protocolsByIdentity[key] = protocol
 
-		assertionPath := fmt.Sprintf(actualCLIAssertionPrefix+"%05d.json", ordinal)
+		assertionPath := actualCLIAssertionPrefix + identity.OperationID + ".json"
 		assertionRaw := actualCLIBuildAssertion(identity, protocol, operationName, typed, profile, policySHA, docArtifact)
 		assertionSHA := digest(assertionRaw)
 		addArtifact(assertionPath, "operation_response_assertion", responseSchema, assertionRaw)
@@ -546,12 +561,51 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 		t.Fatalf("production loader did not admit the exact source-QA population: known=%d complete=%d bound=%d admitted=%d unknown_scopes=%d executable=%d", counts.KnownOperations, counts.RequestPlansComplete, counts.RuntimeBindingsBound, counts.Admitted, counts.InventoryUnknownScopes, plan.ExecutableOperations())
 	}
 	transportCounts := map[string]int{}
-	for shard := range plan.state.index.Shards {
-		records, err := plan.ReadShard(shard)
+	for _, shardRef := range plan.state.index.Shards {
+		shard, err := plan.state.readShard(shardRef)
 		if err != nil {
 			t.Fatal("production loader could not read an actual-CLI fixture shard")
 		}
-		for _, record := range records {
+		for _, rawRecord := range shard.Records {
+			record, err := decodeOperationObservationPlanRecord(rawRecord)
+			if err != nil {
+				t.Fatal("production loader could not decode an actual-CLI fixture record")
+			}
+			var wire operationPlanRecordWire
+			if err := json.Unmarshal(rawRecord, &wire); err != nil {
+				t.Fatal("loader-only source-QA assertion reference check could not decode a record")
+			}
+			var request operationPlanRequestWire
+			if err := json.Unmarshal(wire.RequestPlan, &request); err != nil {
+				t.Fatal("loader-only source-QA assertion reference check could not decode the request plan")
+			}
+			var contract struct {
+				ResponseAssertion struct {
+					AssertionRef string                     `json:"assertion_ref"`
+					EvidenceRefs []operationPlanEvidenceRef `json:"evidence_refs"`
+				} `json:"response_assertion"`
+			}
+			if err := json.Unmarshal(request.RequestContract, &contract); err != nil {
+				t.Fatal("loader-only source-QA assertion reference check could not decode the request contract")
+			}
+			assertionPath := actualCLIAssertionPrefix + record.OperationID + ".json"
+			expectedAssertionRef := assertionPath + "#/assertion"
+			if contract.ResponseAssertion.AssertionRef != expectedAssertionRef {
+				t.Fatalf("loader-only source-QA fixture has a non-canonical response assertion reference for %s/%s", record.SourceID, record.OperationID)
+			}
+			assertionBindings := 0
+			for _, ref := range contract.ResponseAssertion.EvidenceRefs {
+				if ref.EvidenceKind == "reviewed_policy" && ref.ArtifactPath+ref.JSONPointer == expectedAssertionRef {
+					assertionBindings++
+				}
+			}
+			if assertionBindings != 1 {
+				t.Fatalf("loader-only source-QA fixture has %d canonical assertion evidence bindings for %s/%s", assertionBindings, record.SourceID, record.OperationID)
+			}
+			artifact, ok := plan.state.manifest[assertionPath]
+			if !ok || artifact.Kind != "operation_response_assertion" {
+				t.Fatalf("loader-only source-QA fixture is missing the canonical assertion artifact for %s/%s", record.SourceID, record.OperationID)
+			}
 			transportCounts[record.Protocol]++
 			if record.ObservationPeriod != time.Duration(actualCLIFixtureObservationPeriodSeconds)*time.Second || record.RequestTimeout != time.Duration(actualCLIFixtureRequestTimeoutMS)*time.Millisecond {
 				t.Fatalf("loader-only source-QA capacity assessment found an unbound per-operation period or timeout for %s/%s", record.SourceID, record.OperationID)
@@ -660,7 +714,7 @@ func actualCLIXMLPath(parts ...string) map[string]any {
 
 func actualCLIBuildDocument(identity operationPlanPopulationIdentity, protocol, operationName, requestPath, method string, capture []byte, captureSHA string) []byte {
 	captureRef := func(kind string) []any {
-		return []any{map[string]any{"evidence_kind": kind, "locator": map[string]any{"source_id": "qa", "kind": "html_byte_range", "byte_start": 0, "byte_end": 1}}}
+		return []any{map[string]any{"evidence_kind": kind, "locator": map[string]any{"source_id": "q", "kind": "html_byte_range", "byte_start": 0, "byte_end": 1}}}
 	}
 	emptyRefs := []any{}
 	fact := func(value any, status, kind string) map[string]any {
@@ -677,7 +731,7 @@ func actualCLIBuildDocument(identity operationPlanPopulationIdentity, protocol, 
 		identityObject["source_system"] = "data.go.kr"
 		identityObject["upstream_operation_key"] = identity.UpstreamOperationKey
 	} else {
-		identityObject["operation_name"] = "Synthetic local source-QA operation"
+		identityObject["operation_name"] = "Synthetic QA operation"
 	}
 	protocolStatus := "documented"
 	if sourceID == "data_go_kr" {
@@ -710,9 +764,9 @@ func actualCLIBuildDocument(identity operationPlanPopulationIdentity, protocol, 
 			transport[field] = map[string]any{"value": nil, "status": "not_applicable", "source_refs": emptyRefs}
 		}
 	}
-	unknowns := []string{"Synthetic local QA only; no provider facts are asserted."}
+	unknowns := []string{}
 	if sourceID != "data_go_kr" {
-		unknowns = append(unknowns, "Registry protocol unknown (source value "+identity.Protocol+"); fixture REST only.")
+		unknowns = append(unknowns, "Registry protocol unknown (source value "+identity.Protocol+"); synthetic REST only.")
 	}
 	var operationTitle map[string]any
 	if sourceID == "data_go_kr" {
@@ -723,13 +777,13 @@ func actualCLIBuildDocument(identity operationPlanPopulationIdentity, protocol, 
 	unknownResponse := actualCLIUnknownResponseContract()
 	doc := map[string]any{
 		"schema_version": "datapan.operation-document-evidence.v2",
-		"parser":         map[string]any{"id": "synthetic-qa-fixture", "version": "1"},
+		"parser":         map[string]any{"id": "registered-operation-document-parser", "version": "2.0.0"},
 		"identity":       identityObject,
 		"source_bindings": []any{map[string]any{
-			"source_id":  "qa",
-			"origin":     map[string]any{"scheme": "https", "host": sourceHost, "path": "/synthetic-qa", "method": "GET", "query_values_stored": false, "body_values_stored": false},
-			"media_type": "text/plain", "bytes": len(capture), "sha256": captureSHA, "retrieved_at": actualCLIFixtureTimestamp, "capture_role": "synthetic_local_qa_no_provider_claim",
-			"parser": map[string]any{"id": "synthetic-qa-fixture", "version": "1"},
+			"source_id":  "q",
+			"origin":     map[string]any{"scheme": "https", "host": sourceHost, "path": "/q", "method": "GET", "query_values_stored": false, "body_values_stored": false},
+			"media_type": "text/plain", "bytes": len(capture), "sha256": captureSHA, "retrieved_at": actualCLIFixtureTimestamp, "capture_role": "synthetic_no_provider_claim",
+			"parser": map[string]any{"id": "synthetic", "version": "1"},
 		}},
 		"parse_status":       "parsed_with_unknowns",
 		"transport":          transport,
