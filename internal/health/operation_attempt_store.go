@@ -819,29 +819,53 @@ func (store *OperationAttemptStore) Latest(sourceID, operationID string) (Operat
 // callers still need a finite context and must not treat a missing file as
 // evidence of a healthy observation.
 func (store *OperationAttemptStore) LatestSnapshotContext(ctx context.Context, sourceID, operationID string) (OperationStoredAttempt, bool, error) {
+	latest, _, found, _, err := store.LatestReadinessSnapshotContext(ctx, sourceID, operationID)
+	return latest, found, err
+}
+
+// LatestReadinessSnapshotContext returns the current attempt and newest
+// completed observation from the same atomically replaced identity file.
+// During an active claim the scheduler may continue to use a still-fresh
+// completed observation; terminal newer attempts are handled by the caller.
+func (store *OperationAttemptStore) LatestReadinessSnapshotContext(ctx context.Context, sourceID, operationID string) (latest, completed OperationStoredAttempt, latestFound, completedFound bool, err error) {
 	if store == nil || ctx == nil || ctx.Err() != nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 {
-		return OperationStoredAttempt{}, false, ErrOperationAttemptUnavailable
+		return OperationStoredAttempt{}, OperationStoredAttempt{}, false, false, ErrOperationAttemptUnavailable
 	}
 	state, found, err := store.readState(sourceID, operationID)
 	if err != nil || !found {
 		if ctx.Err() != nil {
-			return OperationStoredAttempt{}, false, ErrOperationAttemptUnavailable
+			return OperationStoredAttempt{}, OperationStoredAttempt{}, false, false, ErrOperationAttemptUnavailable
 		}
-		return OperationStoredAttempt{}, false, err
+		return OperationStoredAttempt{}, OperationStoredAttempt{}, false, false, err
 	}
 	if ctx.Err() != nil || len(state.Attempts) == 0 {
-		return OperationStoredAttempt{}, false, ErrOperationAttemptUnavailable
+		return OperationStoredAttempt{}, OperationStoredAttempt{}, false, false, ErrOperationAttemptUnavailable
 	}
-	latest := state.Attempts[len(state.Attempts)-1]
-	if latest.RequestStarted != nil {
-		requestStarted := *latest.RequestStarted
-		latest.RequestStarted = &requestStarted
+	latest = cloneOperationStoredAttempt(state.Attempts[len(state.Attempts)-1])
+	latestFound = true
+	for index := len(state.Attempts) - 1; index >= 0; index-- {
+		if state.Attempts[index].State == "observed" {
+			completed = cloneOperationStoredAttempt(state.Attempts[index])
+			completedFound = true
+			break
+		}
 	}
-	if latest.Result != nil {
-		result := *latest.Result
-		latest.Result = &result
+	if ctx.Err() != nil {
+		return OperationStoredAttempt{}, OperationStoredAttempt{}, false, false, ErrOperationAttemptUnavailable
 	}
-	return latest, true, nil
+	return latest, completed, latestFound, completedFound, nil
+}
+
+func cloneOperationStoredAttempt(attempt OperationStoredAttempt) OperationStoredAttempt {
+	if attempt.RequestStarted != nil {
+		requestStarted := *attempt.RequestStarted
+		attempt.RequestStarted = &requestStarted
+	}
+	if attempt.Result != nil {
+		result := *attempt.Result
+		attempt.Result = &result
+	}
+	return attempt
 }
 
 func (store *OperationAttemptStore) LatestContext(ctx context.Context, sourceID, operationID string) (OperationStoredAttempt, bool, error) {

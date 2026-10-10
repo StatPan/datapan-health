@@ -88,7 +88,13 @@ type operationPlanScopeDemand struct {
 
 type operationPlanReadinessEvidence struct {
 	Proven     bool
+	ProofAt    time.Time
 	ValidUntil time.Time
+}
+
+type operationPlanIdentityError struct {
+	At               time.Time
+	RequiresNewProof bool
 }
 
 type OperationPlanScheduler struct {
@@ -111,6 +117,7 @@ type OperationPlanScheduler struct {
 	lastErrorReason       string
 	lastErrorAt           time.Time
 	errorEpoch            uint64
+	identityErrors        map[string]operationPlanIdentityError
 	evidenceSweepAt       time.Time
 	evidenceChecked       int
 	evidenceCurrent       int
@@ -158,7 +165,7 @@ func NewOperationPlanScheduler(config OperationPlanSchedulerConfig) (*OperationP
 		worker: config.Worker, targets: targets, maxConcurrent: config.MaxConcurrent,
 		maxStarts: config.MaxStartsPerPass, maxDeliveries: config.MaxDeliveriesPerPass,
 		scanBudget: config.CandidateScanPerPass, deliveryLease: config.DeliveryLease,
-		capacity: assessment, active: make(map[string]string),
+		capacity: assessment, active: make(map[string]string), identityErrors: make(map[string]operationPlanIdentityError),
 	}, nil
 }
 
@@ -197,7 +204,7 @@ func (scheduler *OperationPlanScheduler) ProcessDue(ctx context.Context, now tim
 		deliveryScanned++
 		pending, err := scheduler.worker.attempts.PendingDeliveriesContext(scanCtx, target.Record.SourceID, target.Record.OperationID)
 		if err != nil {
-			scheduler.addDeliveryScanFailure()
+			scheduler.addDeliveryScanFailure(operationReadModelIdentityKey(target.Record.SourceID, target.Record.OperationID))
 			if scanCtx.Err() != nil {
 				return errOperationPlanSchedulerUnavailable
 			}
@@ -239,7 +246,7 @@ func (scheduler *OperationPlanScheduler) ProcessDue(ctx context.Context, now tim
 			executionScanned++
 			latest, found, err := scheduler.worker.attempts.LatestContext(scanCtx, target.Record.SourceID, target.Record.OperationID)
 			if err != nil {
-				scheduler.addIdentityScanFailure()
+				scheduler.addIdentityScanFailure(operationReadModelIdentityKey(target.Record.SourceID, target.Record.OperationID))
 				if scanCtx.Err() != nil {
 					return errOperationPlanSchedulerUnavailable
 				}
@@ -251,7 +258,7 @@ func (scheduler *OperationPlanScheduler) ProcessDue(ctx context.Context, now tim
 			key := operationReadModelIdentityKey(target.Record.SourceID, target.Record.OperationID)
 			if scheduler.launch(ctx, key, "execution", func(taskCtx context.Context) {
 				result, runErr := scheduler.worker.ExecuteOne(taskCtx, target.Record.SourceID, target.Record.OperationID, time.Now().UTC())
-				scheduler.finishExecution(result, runErr)
+				scheduler.finishExecution(key, result, runErr)
 			}) {
 				executionStarted++
 				scheduler.addExecutionTaskStarted()
@@ -266,7 +273,6 @@ func (scheduler *OperationPlanScheduler) ProcessDue(ctx context.Context, now tim
 		return errOperationPlanSchedulerUnavailable
 	}
 	if err := scheduler.advanceEvidenceSweep(scanCtx, now); err != nil {
-		scheduler.addIdentityScanFailure()
 		return errOperationPlanSchedulerUnavailable
 	}
 	return nil
@@ -295,17 +301,19 @@ func (scheduler *OperationPlanScheduler) advanceEvidenceSweep(ctx context.Contex
 			return errOperationPlanSchedulerUnavailable
 		}
 		target := scheduler.targets[index]
-		latest, found, err := scheduler.worker.attempts.LatestSnapshotContext(ctx, target.Record.SourceID, target.Record.OperationID)
+		latest, completed, latestFound, completedFound, err := scheduler.worker.attempts.LatestReadinessSnapshotContext(ctx, target.Record.SourceID, target.Record.OperationID)
 		if err != nil {
 			scheduler.resetEvidenceSweep()
+			scheduler.addIdentityScanFailure(operationReadModelIdentityKey(target.Record.SourceID, target.Record.OperationID))
 			return errOperationPlanSchedulerUnavailable
 		}
-		if !found {
+		if !latestFound {
 			continue
 		}
-		evidence, err := scheduler.operationEvidenceForTarget(ctx, target, latest)
+		evidence, err := scheduler.operationEvidenceForTarget(ctx, target, latest, completed, completedFound, now)
 		if err != nil {
 			scheduler.resetEvidenceSweep()
+			scheduler.addIdentityScanFailure(operationReadModelIdentityKey(target.Record.SourceID, target.Record.OperationID))
 			return errOperationPlanSchedulerUnavailable
 		}
 		scheduler.evidenceStaging[index] = evidence
@@ -334,8 +342,24 @@ func (scheduler *OperationPlanScheduler) advanceEvidenceSweep(ctx context.Contex
 	scheduler.evidenceMissing = missing
 	scheduler.evidenceValidUntil = validUntil
 	if current == len(scheduler.targets) && scheduler.errorEpoch == scheduler.evidenceSweepEpoch {
-		scheduler.lastErrorReason = ""
-		scheduler.lastErrorAt = time.Time{}
+		allIdentityErrorsRecovered := true
+		for index, target := range scheduler.targets {
+			key := operationReadModelIdentityKey(target.Record.SourceID, target.Record.OperationID)
+			failure, found := scheduler.identityErrors[key]
+			if !found {
+				continue
+			}
+			evidence := scheduler.evidenceStaging[index]
+			if !evidence.Proven || failure.RequiresNewProof && evidence.ProofAt.Before(failure.At) {
+				allIdentityErrorsRecovered = false
+				break
+			}
+		}
+		if allIdentityErrorsRecovered {
+			scheduler.identityErrors = make(map[string]operationPlanIdentityError)
+			scheduler.lastErrorReason = ""
+			scheduler.lastErrorAt = time.Time{}
+		}
 	}
 	scheduler.mu.Unlock()
 	scheduler.evidenceScanCursor = 0
@@ -348,7 +372,7 @@ func (scheduler *OperationPlanScheduler) resetEvidenceSweep() {
 	scheduler.evidenceStaging = nil
 }
 
-func (scheduler *OperationPlanScheduler) operationEvidenceForTarget(ctx context.Context, target OperationPlanWorkerTarget, latest OperationStoredAttempt) (operationPlanReadinessEvidence, error) {
+func (scheduler *OperationPlanScheduler) operationEvidenceForTarget(ctx context.Context, target OperationPlanWorkerTarget, latest, completed OperationStoredAttempt, completedFound bool, now time.Time) (operationPlanReadinessEvidence, error) {
 	plan := scheduler.worker.runtime.Plan
 	expected := OperationAttemptBinding{
 		SourceID: target.Record.SourceID, OperationID: target.Record.OperationID,
@@ -356,16 +380,31 @@ func (scheduler *OperationPlanScheduler) operationEvidenceForTarget(ctx context.
 		IndexSHA: plan.IndexSHA256(), ShardSHA: target.ShardSHA256,
 		GatusKey: target.GatusEndpointKey, ObservationPeriod: target.Record.ObservationPeriod,
 	}
-	if latest.Binding != expected || latest.State != "observed" || latest.Result == nil || !latest.ReceiptValidated || latest.RequestStarted == nil || !*latest.RequestStarted {
+	if latest.StartedAt.IsZero() || latest.StartedAt.After(now) || latest.FinishedAt.After(now) || latest.DeliveryStartedAt.After(now) || latest.DeliveryAckAt.After(now) || latest.GatusReceivedAt.After(now) {
 		return operationPlanReadinessEvidence{}, nil
 	}
-	result := *latest.Result
-	if !validOperationObservationResult(result) || result.ReceiptSHA != latest.ReceiptSHA256 || result.HistoryRecordID == "" || !sha256Pattern.MatchString(result.HistoryRecordSHA256) || result.ObservedAt.Before(latest.StartedAt) || result.ObservedAt.After(latest.FinishedAt) || result.ReceivedAt.Before(result.ObservedAt) || result.ReceivedAt.After(latest.FinishedAt) {
+	proof := latest
+	if latest.State == "claimed" {
+		if latest.Binding != expected || !now.Before(latest.LeaseExpiresAt) || !completedFound || completed.Generation >= latest.Generation {
+			return operationPlanReadinessEvidence{}, nil
+		}
+		proof = completed
+	} else if latest.State != "observed" {
+		return operationPlanReadinessEvidence{}, nil
+	}
+	if proof.Binding != expected || proof.State != "observed" || proof.Result == nil || !proof.ReceiptValidated || proof.RequestStarted == nil || !*proof.RequestStarted {
+		return operationPlanReadinessEvidence{}, nil
+	}
+	result := *proof.Result
+	if proof.StartedAt.IsZero() || proof.StartedAt.After(now) || proof.FinishedAt.IsZero() || proof.FinishedAt.After(now) || result.ObservedAt.IsZero() || result.ObservedAt.After(now) || result.ReceivedAt.IsZero() || result.ReceivedAt.After(now) || proof.DeliveryStartedAt.After(now) || proof.DeliveryAckAt.After(now) || proof.GatusReceivedAt.After(now) {
+		return operationPlanReadinessEvidence{}, nil
+	}
+	if !validOperationObservationResult(result) || result.ReceiptSHA != proof.ReceiptSHA256 || result.HistoryRecordID == "" || !sha256Pattern.MatchString(result.HistoryRecordSHA256) || result.ObservedAt.Before(proof.StartedAt) || result.ObservedAt.After(proof.FinishedAt) || result.ReceivedAt.Before(result.ObservedAt) || result.ReceivedAt.After(proof.FinishedAt) {
 		return operationPlanReadinessEvidence{}, nil
 	}
 	identity := OperationHistoryIdentity{
-		SourceID: expected.SourceID, OperationID: expected.OperationID, AttemptID: latest.AttemptID,
-		Generation: latest.Generation, RegistryRevision: expected.RegistryRevision,
+		SourceID: expected.SourceID, OperationID: expected.OperationID, AttemptID: proof.AttemptID,
+		Generation: proof.Generation, RegistryRevision: expected.RegistryRevision,
 		ReleaseManifestSHA256: expected.ReleaseManifestSHA, IndexSHA256: expected.IndexSHA,
 		ShardSHA256: expected.ShardSHA,
 	}
@@ -377,10 +416,14 @@ func (scheduler *OperationPlanScheduler) operationEvidenceForTarget(ctx context.
 	if validUntil.IsZero() {
 		return operationPlanReadinessEvidence{}, nil
 	}
-	if !operationPlanDeliveryEvidenceValid(latest) {
+	if !operationPlanDeliveryEvidenceValid(proof) {
 		return operationPlanReadinessEvidence{}, nil
 	}
-	return operationPlanReadinessEvidence{Proven: true, ValidUntil: validUntil}, nil
+	proofAt := result.ReceivedAt
+	if proof.DeliveryState == "readback_verified" {
+		proofAt = proof.GatusReceivedAt
+	}
+	return operationPlanReadinessEvidence{Proven: true, ProofAt: proofAt, ValidUntil: validUntil}, nil
 }
 
 func operationPlanDeliveryEvidenceValid(attempt OperationStoredAttempt) bool {
@@ -440,12 +483,12 @@ func (scheduler *OperationPlanScheduler) launch(parent context.Context, identity
 	return true
 }
 
-func (scheduler *OperationPlanScheduler) finishExecution(result OperationPlanWorkerResult, err error) {
+func (scheduler *OperationPlanScheduler) finishExecution(identityKey string, result OperationPlanWorkerResult, err error) {
 	scheduler.mu.Lock()
 	defer scheduler.mu.Unlock()
 	if err != nil {
 		scheduler.executionFailures++
-		scheduler.latchErrorLocked("execution_unavailable", time.Now().UTC())
+		scheduler.latchIdentityErrorLocked(identityKey, "execution_unavailable", time.Now().UTC(), true)
 		return
 	}
 	if result.RequestStarted {
@@ -461,6 +504,7 @@ func (scheduler *OperationPlanScheduler) finishExecution(result OperationPlanWor
 		scheduler.deferred++
 	case "failed", "unknown":
 		scheduler.executionFailures++
+		scheduler.latchIdentityErrorLocked(identityKey, "execution_unavailable", time.Now().UTC(), true)
 	}
 }
 
@@ -470,7 +514,7 @@ func (scheduler *OperationPlanScheduler) finishDelivery(ctx context.Context, att
 	defer scheduler.mu.Unlock()
 	if err != nil || !found {
 		scheduler.deliveryFailures++
-		scheduler.latchErrorLocked("delivery_state_unavailable", time.Now().UTC())
+		scheduler.latchIdentityErrorLocked(operationReadModelIdentityKey(attempt.Binding.SourceID, attempt.Binding.OperationID), "delivery_state_unavailable", time.Now().UTC(), false)
 		return
 	}
 	switch stored.DeliveryState {
@@ -482,10 +526,10 @@ func (scheduler *OperationPlanScheduler) finishDelivery(ctx context.Context, att
 		// A push/readback error is not a provider failure. The durable outbox
 		// remains available for the next bounded pass.
 		scheduler.deliveryFailures++
-		scheduler.latchErrorLocked("delivery_unavailable", time.Now().UTC())
+		scheduler.latchIdentityErrorLocked(operationReadModelIdentityKey(attempt.Binding.SourceID, attempt.Binding.OperationID), "delivery_unavailable", time.Now().UTC(), true)
 	default:
 		scheduler.deliveryFailures++
-		scheduler.latchErrorLocked("delivery_state_invalid", time.Now().UTC())
+		scheduler.latchIdentityErrorLocked(operationReadModelIdentityKey(attempt.Binding.SourceID, attempt.Binding.OperationID), "delivery_state_invalid", time.Now().UTC(), true)
 	}
 }
 
@@ -526,18 +570,28 @@ func (scheduler *OperationPlanScheduler) addDeliveryTaskStarted() {
 	scheduler.mu.Unlock()
 }
 
-func (scheduler *OperationPlanScheduler) addDeliveryScanFailure() {
+func (scheduler *OperationPlanScheduler) addDeliveryScanFailure(identityKey string) {
 	scheduler.mu.Lock()
 	scheduler.deliveryScanErrors++
-	scheduler.latchErrorLocked("delivery_store_unavailable", time.Now().UTC())
+	scheduler.latchIdentityErrorLocked(identityKey, "delivery_store_unavailable", time.Now().UTC(), false)
 	scheduler.mu.Unlock()
 }
 
-func (scheduler *OperationPlanScheduler) addIdentityScanFailure() {
+func (scheduler *OperationPlanScheduler) addIdentityScanFailure(identityKey string) {
 	scheduler.mu.Lock()
 	scheduler.identityScanErrors++
-	scheduler.latchErrorLocked("attempt_store_unavailable", time.Now().UTC())
+	scheduler.latchIdentityErrorLocked(identityKey, "attempt_store_unavailable", time.Now().UTC(), false)
 	scheduler.mu.Unlock()
+}
+
+func (scheduler *OperationPlanScheduler) latchIdentityErrorLocked(identityKey, reason string, at time.Time, requiresNewProof bool) {
+	scheduler.latchErrorLocked(reason, at)
+	if identityKey != "" {
+		if previous, found := scheduler.identityErrors[identityKey]; found && previous.RequiresNewProof {
+			requiresNewProof = true
+		}
+		scheduler.identityErrors[identityKey] = operationPlanIdentityError{At: at.UTC(), RequiresNewProof: requiresNewProof}
+	}
 }
 
 func (scheduler *OperationPlanScheduler) Status(at time.Time) OperationPlanSchedulerStatus {
@@ -591,8 +645,10 @@ func (scheduler *OperationPlanScheduler) Status(at time.Time) OperationPlanSched
 		status.Reason = "zero_admitted_operations"
 	case !status.CapacityFeasible:
 		status.Reason = "capacity_infeasible"
-	case status.PassesSinceStart == 0 || status.LastPassAgeSeconds > 3:
+	case status.PassesSinceStart == 0 || status.LastPassAgeSeconds > 3 || !status.LastPassAt.IsZero() && at.Before(status.LastPassAt):
 		status.Reason = "scheduler_loop_stale"
+	case !status.EvidenceSweepAt.IsZero() && at.Before(status.EvidenceSweepAt):
+		status.Reason = "operation_observations_incomplete"
 	case status.LastErrorReason != "":
 		status.Reason = status.LastErrorReason
 	case status.EvidenceSweepAt.IsZero() || status.EvidenceCheckedOperations != status.AdmittedOperations:

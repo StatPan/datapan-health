@@ -161,34 +161,50 @@ func TestOperationPlanManifestDerivedSyntheticPopulation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bounded production scheduler rejected the explicit synthetic population policy: %v", err)
 	}
-	// This explicit source-QA target is bounded by a measured 45-minute wall
-	// clock budget. Its passAt value advances virtual scheduler time by one
-	// second per iteration; it does not prove production loop cadence.
+	// This explicit source-QA target uses the same one-second controller pass
+	// bound as production and stops after a measured 45-minute wall-clock budget.
 	controllerContext, cancelController := context.WithTimeout(context.Background(), 45*time.Minute)
 	defer cancelController()
 	controllerStart := time.Now().UTC()
-	var controllerStatus OperationPlanSchedulerStatus
+	controllerStatus := scheduler.Status(controllerStart)
 	completed := false
-	for pass := 0; pass < 1200; pass++ {
-		passAt := controllerStart.Add(time.Duration(pass) * time.Second)
-		if err := scheduler.ProcessDue(controllerContext, passAt); err != nil {
-			t.Fatalf("bounded controller pass %d failed: %v", pass, err)
+	for controllerContext.Err() == nil {
+		previousPassCount := controllerStatus.PassesSinceStart
+		if err := scheduler.ProcessDue(controllerContext, time.Now().UTC()); err != nil {
+			t.Fatalf("bounded controller pass %d failed after %s: %v", controllerStatus.PassesSinceStart, time.Since(controllerStart).Round(time.Second), err)
 		}
 		scheduler.Wait()
-		controllerStatus = scheduler.Status(passAt)
+		controllerStatus = scheduler.Status(time.Now().UTC())
+		if controllerStatus.PassesSinceStart == previousPassCount {
+			wait := controllerStatus.LastPassAt.Add(operationPlanSchedulerPassInterval).Sub(time.Now())
+			if wait > 0 {
+				timer := time.NewTimer(wait)
+				select {
+				case <-timer.C:
+				case <-controllerContext.Done():
+					timer.Stop()
+				}
+			}
+			continue
+		}
 		if controllerStatus.RequestStartsSinceStart == uint64(len(identities)) && controllerStatus.ReadbacksSinceStart == uint64(len(identities)) {
 			completed = true
 			break
 		}
 	}
 	if !completed || controllerStatus.ExecutionFailuresSinceStart != 0 || controllerStatus.DeliveryFailuresSinceStart != 0 {
-		t.Fatalf("bounded production controller did not reconcile execution and delivery within the configured passes: started=%d readbacks=%d execution_failures=%d delivery_failures=%d expected=%d", controllerStatus.RequestStartsSinceStart, controllerStatus.ReadbacksSinceStart, controllerStatus.ExecutionFailuresSinceStart, controllerStatus.DeliveryFailuresSinceStart, len(identities))
+		usage, _ := history.Usage(context.Background())
+		elapsed := time.Since(controllerStart)
+		startedPerSecond := float64(controllerStatus.RequestStartsSinceStart) / max(elapsed.Seconds(), 1)
+		storeBytes := operationPlanPopulationStorageBytes(t, attemptRoot, quotaRoot, historyRoot)
+		t.Fatalf("bounded production controller did not reconcile execution and delivery within the configured wall-clock budget: started=%d readbacks=%d execution_failures=%d delivery_failures=%d expected=%d passes=%d elapsed=%s starts_per_second=%.2f history_records=%d history_reservations=%d history_bytes=%d store_bytes=%d", controllerStatus.RequestStartsSinceStart, controllerStatus.ReadbacksSinceStart, controllerStatus.ExecutionFailuresSinceStart, controllerStatus.DeliveryFailuresSinceStart, len(identities), controllerStatus.PassesSinceStart, elapsed.Round(time.Second), startedPerSecond, usage.RecordCount, usage.ReservationCount, usage.UsedBytes, storeBytes)
 	}
 
 	usage, err := history.Usage(context.Background())
 	if err != nil || usage.RecordCount != int64(len(identities)) || usage.ReservationCount != 0 {
 		t.Fatalf("durable history did not reconcile to the manifest-derived population: records=%d reservations=%d expected=%d err=%v", usage.RecordCount, usage.ReservationCount, len(identities), err)
 	}
+	t.Logf("manifest-sized source-QA population reconciled: identities=%d passes=%d elapsed=%s starts_per_second=%.2f history_records=%d history_reservations=%d history_bytes=%d store_bytes=%d", len(identities), controllerStatus.PassesSinceStart, time.Since(controllerStart).Round(time.Second), float64(controllerStatus.RequestStartsSinceStart)/time.Since(controllerStart).Seconds(), usage.RecordCount, usage.ReservationCount, usage.UsedBytes, operationPlanPopulationStorageBytes(t, attemptRoot, quotaRoot, historyRoot))
 	if pushes, readbacks := client.counts(); pushes != len(identities) || readbacks != len(identities) {
 		t.Fatalf("independent delivery did not reconcile every admitted identity: pushes=%d readbacks=%d expected=%d", pushes, readbacks, len(identities))
 	}
@@ -443,6 +459,25 @@ func unknownOperationCount(identities []operationPlanPopulationIdentity) int {
 		}
 	}
 	return count
+}
+
+func operationPlanPopulationStorageBytes(t *testing.T, roots ...string) int64 {
+	t.Helper()
+	var total int64
+	for _, root := range roots {
+		if err := filepath.Walk(root, func(_ string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if info.Mode().IsRegular() {
+				total += info.Size()
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("could not measure source-QA store usage: %v", err)
+		}
+	}
+	return total
 }
 
 func populationIdentityMap(identities []operationPlanPopulationIdentity) map[string]operationPlanPopulationIdentity {

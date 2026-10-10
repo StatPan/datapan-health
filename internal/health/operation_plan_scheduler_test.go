@@ -38,7 +38,8 @@ func TestOperationPlanSchedulerRunsOneBoundedLocalAttemptThenIndependentDelivery
 
 	// The next one-second pass finds the exact durable outbox record and uses
 	// only the per-key test client. It must not issue another provider child.
-	if err := scheduler.ProcessDue(context.Background(), started.Add(time.Second)); err != nil {
+	nextPassAt := waitForOperationPlanSchedulerPass(t, started)
+	if err := scheduler.ProcessDue(context.Background(), nextPassAt); err != nil {
 		t.Fatal("bounded delivery pass failed:", err)
 	}
 	scheduler.Wait()
@@ -46,17 +47,29 @@ func TestOperationPlanSchedulerRunsOneBoundedLocalAttemptThenIndependentDelivery
 	if err != nil || !found || latest.DeliveryState != "readback_verified" || latest.Result == nil || gatus.pushes != 1 || gatus.readbacks != 1 {
 		t.Fatalf("scheduler did not advance only the independent Gatus outbox: latest=%#v found=%t push=%d readback=%d err=%v", latest, found, gatus.pushes, gatus.readbacks, err)
 	}
-	scheduler.recordFailure(started.Add(2*time.Second), "delivery_unavailable")
-	if status := scheduler.Status(started.Add(40 * time.Second)); status.Ready || status.LastErrorReason != "delivery_unavailable" {
-		t.Fatalf("unresolved pipeline error expired into false readiness: %#v", status)
-	}
-	if err := scheduler.ProcessDue(context.Background(), started.Add(2*time.Second)); err != nil {
+	nextPassAt = waitForOperationPlanSchedulerPass(t, nextPassAt)
+	if err := scheduler.ProcessDue(context.Background(), nextPassAt); err != nil {
 		t.Fatal("bounded evidence sweep failed:", err)
 	}
 	status := scheduler.Status(time.Now().UTC())
 	if !status.Ready || status.State != "ready" || status.EvidenceCheckedOperations != 1 || status.EvidenceCurrentOperations != 1 || status.EvidenceMissingOperations != 0 || status.EvidenceSweepAt.IsZero() || status.KnownOperations != worker.runtime.Plan.Counts().KnownOperations || status.AdmittedOperations != 1 || status.ExecutionTasksStartedSinceStart != 1 || status.RequestStartsSinceStart != 1 || status.ObservationsSinceStart != 1 || status.ReadbacksSinceStart != 1 || !status.CapacityFeasible {
 		t.Fatalf("scheduler readiness/counters do not describe the one admitted synthetic operation: %#v", status)
 	}
+	scheduler.recordFailure(time.Now().UTC(), "delivery_unavailable")
+	if status := scheduler.Status(time.Now().UTC().Add(40 * time.Second)); status.Ready || status.LastErrorReason != "delivery_unavailable" {
+		t.Fatalf("unresolved pipeline error expired into false readiness: %#v", status)
+	}
+}
+
+func waitForOperationPlanSchedulerPass(t *testing.T, previous time.Time) time.Time {
+	t.Helper()
+	next := previous.Add(operationPlanSchedulerPassInterval)
+	if wait := time.Until(next); wait > 0 {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		<-timer.C
+	}
+	return time.Now().UTC()
 }
 
 func TestOperationPlanDeliveryEvidenceTreatsProviderFailureAndObservationOnlyAsPipelineEvidence(t *testing.T) {
@@ -93,6 +106,108 @@ func TestOperationPlanDeliveryEvidenceTreatsProviderFailureAndObservationOnlyAsP
 				t.Fatalf("delivery evidence validity = %t, want %t", got, test.want)
 			}
 		})
+	}
+}
+
+func TestOperationPlanReadinessKeepsFreshEvidenceDuringClaimAndRejectsFutureOrStaleProof(t *testing.T) {
+	worker, attempts, _, _, target := newOperationPlanSchedulerTestWorker(t)
+	scheduler, err := NewOperationPlanScheduler(OperationPlanSchedulerConfig{
+		Worker: worker, MaxConcurrent: 1, MaxStartsPerPass: 1, MaxDeliveriesPerPass: 1,
+		CandidateScanPerPass: 2, DeliveryLease: time.Minute,
+	})
+	if err != nil {
+		t.Fatal("local synthetic plan could not construct a bounded scheduler:", err)
+	}
+	passAt := time.Now().UTC()
+	for pass := 0; pass < 3; pass++ {
+		if err := scheduler.ProcessDue(context.Background(), passAt); err != nil {
+			t.Fatalf("synthetic pass %d failed: %v", pass, err)
+		}
+		scheduler.Wait()
+		if pass < 2 {
+			passAt = waitForOperationPlanSchedulerPass(t, passAt)
+		}
+	}
+	completed, found, err := attempts.Latest(target.Record.SourceID, target.Record.OperationID)
+	if err != nil || !found || completed.State != "observed" || completed.DeliveryState != "readback_verified" {
+		t.Fatalf("test setup did not persist a complete observation: found=%t attempt=%#v err=%v", found, completed, err)
+	}
+	claimAt := completed.StartedAt.Add(target.Record.ObservationPeriod)
+	if !claimAt.Before(completed.Result.ObservedAt.Add(target.Record.ObservationPeriod)) {
+		t.Fatal("fixture has no fresh interval between next due claim and the prior observation expiry")
+	}
+	claim, err := attempts.BeginAttempt(completed.Binding, "123e4567-e89b-12d3-a456-426614174000", claimAt, time.Minute)
+	if err != nil {
+		t.Fatalf("could not create a future-due in-flight claim: %v", err)
+	}
+	latest, prior, latestFound, priorFound, err := attempts.LatestReadinessSnapshotContext(context.Background(), target.Record.SourceID, target.Record.OperationID)
+	if err != nil || !latestFound || !priorFound || latest.State != "claimed" || prior.State != "observed" {
+		t.Fatalf("readiness snapshot did not preserve latest and completed attempts atomically: latest=%#v prior=%#v err=%v", latest, prior, err)
+	}
+	evidence, err := scheduler.operationEvidenceForTarget(context.Background(), target, latest, prior, priorFound, claim.StartedAt)
+	if err != nil || !evidence.Proven || !claim.StartedAt.Before(evidence.ValidUntil) {
+		t.Fatalf("fresh completed proof disappeared during the next active claim: evidence=%#v err=%v", evidence, err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*OperationStoredAttempt)
+	}{
+		{name: "future attempt start", mutate: func(attempt *OperationStoredAttempt) { attempt.StartedAt = claim.StartedAt.Add(time.Nanosecond) }},
+		{name: "future finished time", mutate: func(attempt *OperationStoredAttempt) { attempt.FinishedAt = claim.StartedAt.Add(time.Nanosecond) }},
+		{name: "future observed time", mutate: func(attempt *OperationStoredAttempt) {
+			result := *attempt.Result
+			result.ObservedAt = claim.StartedAt.Add(time.Nanosecond)
+			attempt.Result = &result
+		}},
+		{name: "future received time", mutate: func(attempt *OperationStoredAttempt) {
+			result := *attempt.Result
+			result.ReceivedAt = claim.StartedAt.Add(time.Nanosecond)
+			attempt.Result = &result
+		}},
+		{name: "future readback time", mutate: func(attempt *OperationStoredAttempt) { attempt.GatusReceivedAt = claim.StartedAt.Add(time.Nanosecond) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			future := cloneOperationStoredAttempt(prior)
+			test.mutate(&future)
+			observed, err := scheduler.operationEvidenceForTarget(context.Background(), target, latest, future, true, claim.StartedAt)
+			if err != nil || observed.Proven {
+				t.Fatalf("future persisted timestamp was accepted as current evidence: evidence=%#v err=%v", observed, err)
+			}
+		})
+	}
+
+	identityKey := operationReadModelIdentityKey(target.Record.SourceID, target.Record.OperationID)
+	failureAt := claim.StartedAt.Add(time.Nanosecond)
+	scheduler.mu.Lock()
+	scheduler.passes = 1
+	scheduler.lastPass = failureAt
+	scheduler.latchIdentityErrorLocked(identityKey, "execution_unavailable", failureAt, true)
+	scheduler.mu.Unlock()
+	if err := scheduler.advanceEvidenceSweep(context.Background(), failureAt.Add(time.Nanosecond)); err != nil {
+		t.Fatal("fresh prior evidence sweep failed:", err)
+	}
+	status := scheduler.Status(failureAt.Add(2 * time.Nanosecond))
+	if status.Ready || status.LastErrorReason != "execution_unavailable" || status.EvidenceCurrentOperations != 1 {
+		t.Fatalf("old proof incorrectly cleared a newer same-identity execution failure: %#v", status)
+	}
+	if status := scheduler.Status(failureAt); status.Ready || status.Reason != "operation_observations_incomplete" {
+		t.Fatalf("status evaluated before its evidence sweep was incorrectly ready: %#v", status)
+	}
+	if status := scheduler.Status(failureAt.Add(-time.Nanosecond)); status.Ready || status.Reason != "scheduler_loop_stale" {
+		t.Fatalf("status evaluated before its last pass was incorrectly ready: %#v", status)
+	}
+
+	if err := attempts.FailAttempt(claim, claim.StartedAt.Add(2*time.Second)); err != nil {
+		t.Fatalf("could not create a newer terminal failure fixture: %v", err)
+	}
+	terminal, older, latestFound, olderFound, err := attempts.LatestReadinessSnapshotContext(context.Background(), target.Record.SourceID, target.Record.OperationID)
+	if err != nil || !latestFound || !olderFound || terminal.State != "unknown" {
+		t.Fatalf("terminal failure snapshot lost the old receipt: latest=%#v older=%#v err=%v", terminal, older, err)
+	}
+	evidence, err = scheduler.operationEvidenceForTarget(context.Background(), target, terminal, older, olderFound, claim.StartedAt.Add(2*time.Second))
+	if err != nil || evidence.Proven {
+		t.Fatalf("older proof hid a newer terminal failure: evidence=%#v err=%v", evidence, err)
 	}
 }
 
@@ -138,7 +253,7 @@ func TestOperationPlanSchedulerStoreLockCannotBlockControllerPassOrLaunchProvide
 	if err := lock.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := scheduler.ProcessDue(context.Background(), started.Add(3*time.Second)); err != nil {
+	if err := scheduler.ProcessDue(context.Background(), time.Now().UTC()); err != nil {
 		t.Fatal("controller did not recover after the attempt-store lock was released:", err)
 	}
 	scheduler.Wait()
