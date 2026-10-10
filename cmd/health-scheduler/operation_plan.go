@@ -15,8 +15,8 @@ import (
 )
 
 var operationPlanAllowedCLISourceSHAs = map[string]struct{}{
-	"89d1164ac8c910e18e50fc1c3a3961977c4d4f2e": {}, // merged CLI source with reviewed observation-only identity binding
-	"752e995c1fc030e139cac90e3796e69884365383": {}, // reviewed source tree with the same tree hash
+	"acf060e71e2329b6a04ad4ab0abf669fbbfe9dac": {}, // merged CLI source with reviewed typed SOAP discriminator binding
+	"668efcb5254df2bc4bcaac9ef405d1bfaea1a0d9": {}, // reviewed source SHA with the exact same Git tree as the merge
 }
 
 func operationPlanCLISourceAllowed(sourceSHA string) bool {

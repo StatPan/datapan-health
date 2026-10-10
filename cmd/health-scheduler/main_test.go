@@ -126,22 +126,24 @@ func TestOperationPlanReadinessIsSeparateAndDisabledDefaultDoesNotChangeLegacyCa
 
 func TestOperationPlanCLISourcePinAcceptsOnlyReviewedEquivalentSources(t *testing.T) {
 	for _, sourceSHA := range []string{
-		"89d1164ac8c910e18e50fc1c3a3961977c4d4f2e",
-		"752e995c1fc030e139cac90e3796e69884365383",
+		"acf060e71e2329b6a04ad4ab0abf669fbbfe9dac",
+		"668efcb5254df2bc4bcaac9ef405d1bfaea1a0d9",
 	} {
 		if !operationPlanCLISourceAllowed(sourceSHA) {
 			t.Errorf("reviewed CLI source SHA %q was rejected", sourceSHA)
 		}
 	}
 	for _, sourceSHA := range []string{
-		"89d1164ac8c910e18e50fc1c3a3961977c4d4f2f",      // one-character near match
-		"1111111111111111111111111111111111111111",      // arbitrary full-length SHA
-		"752e995c1fc030e139cac90e3796e69884365383"[:39], // truncated SHA
-		"5982d4dab287c7ec8c9935e3a617d79bf60e9c26",      // reviewed source before observation-only binding
-		"56604403120dad08cea351428dd3a6934066bed6",      // reviewed source before observation-only binding
-		"5780916201611c1612ccafa2d7212c2e16bfdd04",      // reviewed prior CLI source
-		"397a68f5bf0bf895ee4c81db694d0c29d7deea98",      // reviewed earlier CLI source
-		"a6414063bb69495b00b752b3a6c35bb0b52e14d5",      // merged older REST-only CLI
+		"acf060e71e2329b6a04ad4ab0abf669fbbfe9da0",     // one-character near match
+		"1111111111111111111111111111111111111111",     // arbitrary full-length SHA
+		"668efcb5254df2bc4bcaac9ef405d1bfaea1a0d"[:39], // truncated SHA
+		"89d1164ac8c910e18e50fc1c3a3961977c4d4f2e",     // pre-fix merged CLI source
+		"752e995c1fc030e139cac90e3796e69884365383",     // pre-fix reviewed CLI source
+		"5982d4dab287c7ec8c9935e3a617d79bf60e9c26",     // reviewed source before SOAP schema fixes
+		"56604403120dad08cea351428dd3a6934066bed6",     // reviewed source before SOAP schema fixes
+		"5780916201611c1612ccafa2d7212c2e16bfdd04",     // reviewed prior CLI source
+		"397a68f5bf0bf895ee4c81db694d0c29d7deea98",     // reviewed earlier CLI source
+		"a6414063bb69495b00b752b3a6c35bb0b52e14d5",     // merged older REST-only CLI
 	} {
 		if operationPlanCLISourceAllowed(sourceSHA) {
 			t.Errorf("unreviewed CLI source SHA %q was accepted", sourceSHA)
