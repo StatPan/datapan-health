@@ -94,7 +94,7 @@ operation-plan-actual-cli-smoke:
 	HEALTH_OPERATION_ACTUAL_CLI_MODE=smoke go test ./internal/health -run '^TestOperationPlanActualCLIProviderGatusIntegration$$' -count=1 -timeout=15m -v
 
 operation-plan-actual-cli-full:
-	HEALTH_OPERATION_ACTUAL_CLI_MODE=full go test ./internal/health -run '^TestOperationPlanActualCLIProviderGatusIntegration$$' -count=1 -timeout=60m -v
+	HEALTH_OPERATION_ACTUAL_CLI_MODE=full go test ./internal/health -run '^TestOperationPlanActualCLIProviderGatusIntegration$$' -count=1 -timeout=120m -v
 
 hf-publish-smoke:
 	./scripts/hf-publish-smoke.sh

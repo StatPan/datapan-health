@@ -17,6 +17,7 @@ import (
 
 	"github.com/StatPan/datapan-health/internal/runtimebundle"
 	"github.com/StatPan/datapan-health/schemas"
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 const (
@@ -36,6 +37,7 @@ const (
 )
 
 const actualCLIFixtureTimestamp = "2026-10-10T00:00:00Z"
+const actualCLIPartialSyntheticOperationName = "Synthetic local source-QA operation"
 
 type actualCLIManifest struct {
 	SchemaVersion  string                            `json:"schema_version"`
@@ -183,7 +185,7 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 		{"testdata/operation-observation-plan/operation-document-evidence-v2.schema.json", "schemas/datapan.operation-document-evidence.v2.schema.json", "d6edb7dad63b9d7cdac6753fc02cba962cb8d96d7c01119c031935abfc973108"},
 	}
 	newArtifacts := make([]RegistryReleaseManifestArtifact, 0, len(identities)*2+len(canonicalSchemas)+8)
-	var documentSchemaBytes []byte
+	var documentSchemaBytes, policySchemaBytes, assertionSchemaBytes []byte
 	addArtifact := func(path, kind, schema string, raw []byte) {
 		t.Helper()
 		if int64(len(raw)) <= 0 {
@@ -208,10 +210,27 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 		if schema.path == "schemas/datapan.operation-document-evidence.v2.schema.json" {
 			documentSchemaBytes = append([]byte(nil), raw...)
 		}
+		if schema.path == "schemas/datapan.operation-response-assertion.v2.schema.json" {
+			assertionSchemaBytes = append([]byte(nil), raw...)
+		}
+		if schema.path == "schemas/datapan.operation-observation-policy.v1.schema.json" {
+			policySchemaBytes = append([]byte(nil), raw...)
+		}
 		addArtifact(schema.path, "schema", envelope.ID, raw)
 	}
 	if len(documentSchemaBytes) == 0 {
 		t.Fatal("actual-CLI canonical v2 operation-document schema is missing")
+	}
+	if len(assertionSchemaBytes) == 0 {
+		t.Fatal("actual-CLI canonical v2 response-assertion schema is missing")
+	}
+	assertionValidator := actualCLICompilePinnedSchema(t, assertionSchemaBytes)
+	if len(policySchemaBytes) == 0 {
+		t.Fatal("actual-CLI canonical v1 operation-policy schema is missing")
+	}
+	policyValidator := actualCLICompilePinnedSchema(t, policySchemaBytes)
+	if err := actualCLIValidatePinnedSchema(policyValidator, policyRaw); err != nil {
+		t.Fatalf("actual-CLI synthetic source-QA policy does not match the pinned v1 schema: %v", err)
 	}
 	policySchema := "https://schemas.datapan.dev/datapan.operation-observation-policy.v1.schema.json"
 	responseSchema := "https://schemas.datapan.dev/datapan.operation-response-assertion.v2.schema.json"
@@ -305,7 +324,7 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 		typed := profileID == "gov-rest-typed" || profileID == "gov-soap-typed"
 		operationName := identity.OperationName
 		if operationName == "" {
-			operationName = "Synthetic QA operation"
+			operationName = actualCLIPartialSyntheticOperationName
 		}
 		pathPrefix := "rest"
 		method := "GET"
@@ -333,6 +352,9 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 
 		assertionPath := actualCLIAssertionPrefix + identity.OperationID + ".json"
 		assertionRaw := actualCLIBuildAssertion(identity, protocol, operationName, typed, profile, policySHA, docArtifact)
+		if err := actualCLIValidatePinnedSchema(assertionValidator, assertionRaw); err != nil {
+			t.Fatalf("actual-CLI response assertion for %s/%s violates the pinned v2 schema: %v", identity.SourceID, identity.OperationID, err)
+		}
 		assertionSHA := digest(assertionRaw)
 		addArtifact(assertionPath, "operation_response_assertion", responseSchema, assertionRaw)
 		assertionRefs[key] = actualCLIDocumentArtifact{path: assertionPath, sha: assertionSHA, bytes: int64(len(assertionRaw))}
@@ -382,7 +404,7 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 			doc, assertion := newDocByKey[key], assertionRefs[key]
 			operationName := identity.OperationName
 			if operationName == "" {
-				operationName = "Synthetic local source-QA operation"
+				operationName = actualCLIPartialSyntheticOperationName
 			}
 			method, route := "GET", "rest"
 			if protocol == "SOAP" {
@@ -425,9 +447,17 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 			if typed {
 				profileEvidence = append(profileEvidence, policyRef(profile, "request/response/branches/0"), policyRef(profile, "request/response/branches/1"))
 			}
-			assertionEvidence := []operationPlanEvidenceRef{docRef(doc, "#/identity"), {
+			assertionEvidence := []operationPlanEvidenceRef{docRef(doc, "#/identity")}
+			if typed {
+				assertionEvidence = append(assertionEvidence,
+					docRef(doc, "#/response_contract/provider_result_codes"),
+					policyRef(profile, "request/response/branches/0"),
+					policyRef(profile, "request/response/branches/1"),
+				)
+			}
+			assertionEvidence = append(assertionEvidence, operationPlanEvidenceRef{
 				ArtifactPath: assertion.path, SHA256: assertion.sha, JSONPointer: "#/assertion", EvidenceKind: "reviewed_policy",
-			}}
+			})
 			responseAssertion := map[string]any{"kind": responseKind, "empty_result_semantics": emptySemantics, "assertion_ref": assertion.path + "#/assertion", "evidence_refs": assertionEvidence}
 			if typed {
 				responseAssertion["expected_status_codes"] = statuses
@@ -595,12 +625,18 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 			if err := json.Unmarshal(rawRecord, &wire); err != nil {
 				t.Fatal("loader-only source-QA assertion reference check could not decode a record")
 			}
+			var sourceBinding operationPlanSourceBindingWire
+			var operationIdentity operationPlanIdentityWire
+			if json.Unmarshal(wire.SourceBinding, &sourceBinding) != nil || json.Unmarshal(wire.OperationIdentity, &operationIdentity) != nil {
+				t.Fatal("loader-only source-QA identity check could not decode a record")
+			}
 			var request operationPlanRequestWire
 			if err := json.Unmarshal(wire.RequestPlan, &request); err != nil {
 				t.Fatal("loader-only source-QA assertion reference check could not decode the request plan")
 			}
 			var contract struct {
 				ResponseAssertion struct {
+					Kind         string                     `json:"kind"`
 					AssertionRef string                     `json:"assertion_ref"`
 					EvidenceRefs []operationPlanEvidenceRef `json:"evidence_refs"`
 				} `json:"response_assertion"`
@@ -649,9 +685,106 @@ func bindActualCLIEvidenceFixture(t *testing.T, sourceRoot, planRoot string, bas
 			if policyBindings == 0 {
 				t.Fatalf("loader-only source-QA fixture has no canonical reviewed-policy binding for %s/%s", record.SourceID, record.OperationID)
 			}
+			selectedProfileRef := ""
+			selectedProfileRows := 0
+			for _, ref := range allRefs {
+				profilePointer := strings.TrimPrefix(ref.JSONPointer, "#/profiles/")
+				if ref.EvidenceKind == "reviewed_policy" && ref.ArtifactPath == actualCLIPolicyPath && strings.HasPrefix(ref.JSONPointer, "#/profiles/") && !strings.Contains(profilePointer, "/") {
+					selectedProfileRef = ref.JSONPointer
+					selectedProfileRows++
+				}
+			}
+			if selectedProfileRows != 1 {
+				t.Fatalf("loader-only source-QA fixture selects %d reusable profile rows for %s/%s", selectedProfileRows, record.SourceID, record.OperationID)
+			}
+			profileIndex, err := strconv.Atoi(strings.TrimPrefix(selectedProfileRef, "#/profiles/"))
+			if err != nil || profileIndex < 0 || profileIndex >= len(profiles) {
+				t.Fatalf("loader-only source-QA fixture has an invalid selected profile pointer for %s/%s", record.SourceID, record.OperationID)
+			}
+			selectedProfile, ok := profiles[profileIndex].(map[string]any)
+			if !ok || !actualCLIProfileIdentityMatchesPlan(selectedProfile, sourceBinding, operationIdentity, contract.ResponseAssertion.Kind) {
+				t.Fatalf("loader-only source-QA selected policy profile does not match its operation plan for %s/%s", record.SourceID, record.OperationID)
+			}
 			artifact, ok := plan.state.manifest[assertionPath]
 			if !ok || artifact.Kind != "operation_response_assertion" {
 				t.Fatalf("loader-only source-QA fixture is missing the canonical assertion artifact for %s/%s", record.SourceID, record.OperationID)
+			}
+			assertionRaw, readErr := os.ReadFile(filepath.Join(plan.state.root, filepath.FromSlash(assertionPath)))
+			if readErr != nil || int64(len(assertionRaw)) != artifact.Bytes || digest(assertionRaw) != artifact.SHA256 {
+				t.Fatalf("loader-only source-QA fixture assertion artifact is unavailable or altered for %s/%s", record.SourceID, record.OperationID)
+			}
+			var assertionArtifact struct {
+				SourceBinding struct {
+					SourceID string `json:"source_id"`
+					Provider string `json:"provider"`
+					Protocol string `json:"protocol"`
+				} `json:"source_binding"`
+				OperationIdentity struct {
+					OperationID          string `json:"operation_id"`
+					DatasetID            string `json:"dataset_id"`
+					OperationName        string `json:"operation_name"`
+					UpstreamOperationKey string `json:"upstream_operation_key"`
+				} `json:"operation_identity"`
+				DocumentEvidence struct {
+					Path   string `json:"path"`
+					SHA256 string `json:"sha256"`
+					Bytes  int64  `json:"bytes"`
+				} `json:"document_evidence"`
+			}
+			if json.Unmarshal(assertionRaw, &assertionArtifact) != nil ||
+				assertionArtifact.SourceBinding.SourceID != sourceBinding.SourceID || assertionArtifact.SourceBinding.Provider != sourceBinding.Provider || assertionArtifact.SourceBinding.Protocol != operationIdentity.Protocol ||
+				assertionArtifact.OperationIdentity.OperationID != operationIdentity.OperationID || assertionArtifact.OperationIdentity.DatasetID != operationIdentity.DatasetID || assertionArtifact.OperationIdentity.OperationName != operationIdentity.OperationName || assertionArtifact.OperationIdentity.UpstreamOperationKey != operationIdentity.UpstreamOperationKey {
+				t.Fatalf("loader-only source-QA assertion identity differs from its selected plan for %s/%s", record.SourceID, record.OperationID)
+			}
+			var assertionJSON map[string]any
+			if json.Unmarshal(assertionRaw, &assertionJSON) != nil || !actualCLIProfileResponseMatchesAssertion(selectedProfile, contract.ResponseAssertion.Kind, assertionJSON) {
+				t.Fatalf("loader-only source-QA selected policy response branches differ from the pinned assertion for %s/%s", record.SourceID, record.OperationID)
+			}
+			documentRef, ok := plan.state.manifest[assertionArtifact.DocumentEvidence.Path]
+			if !ok || documentRef.Kind != "operation_document_evidence" || documentRef.Bytes != assertionArtifact.DocumentEvidence.Bytes || documentRef.SHA256 != assertionArtifact.DocumentEvidence.SHA256 {
+				t.Fatalf("loader-only source-QA assertion document reference is not canonical and manifest-bound for %s/%s", record.SourceID, record.OperationID)
+			}
+			documentRaw, readErr := os.ReadFile(filepath.Join(plan.state.root, filepath.FromSlash(assertionArtifact.DocumentEvidence.Path)))
+			if readErr != nil || int64(len(documentRaw)) != documentRef.Bytes || digest(documentRaw) != documentRef.SHA256 {
+				t.Fatalf("loader-only source-QA document artifact is unavailable or altered for %s/%s", record.SourceID, record.OperationID)
+			}
+			var documentArtifact struct {
+				Identity struct {
+					SourceID             string `json:"source_id"`
+					Provider             string `json:"provider"`
+					Protocol             string `json:"protocol"`
+					OperationID          string `json:"operation_id"`
+					DatasetID            string `json:"dataset_id"`
+					OperationName        string `json:"operation_name"`
+					UpstreamOperationKey string `json:"upstream_operation_key"`
+				} `json:"identity"`
+			}
+			if json.Unmarshal(documentRaw, &documentArtifact) != nil ||
+				documentArtifact.Identity.SourceID != sourceBinding.SourceID || documentArtifact.Identity.Provider != sourceBinding.Provider || documentArtifact.Identity.Protocol != operationIdentity.Protocol ||
+				documentArtifact.Identity.OperationID != operationIdentity.OperationID || documentArtifact.Identity.DatasetID != operationIdentity.DatasetID || documentArtifact.Identity.OperationName != operationIdentity.OperationName || documentArtifact.Identity.UpstreamOperationKey != operationIdentity.UpstreamOperationKey {
+				t.Fatalf("loader-only source-QA document identity differs from its selected plan for %s/%s", record.SourceID, record.OperationID)
+			}
+			branchRefs, err := actualCLICollectEvidenceRefs(assertionRaw)
+			if err != nil {
+				t.Fatalf("loader-only source-QA fixture could not scan assertion branch references for %s/%s", record.SourceID, record.OperationID)
+			}
+			if contract.ResponseAssertion.Kind == "observation_only" {
+				if len(branchRefs) != 0 {
+					t.Fatalf("loader-only source-QA observation-only assertion unexpectedly contains branch refs for %s/%s", record.SourceID, record.OperationID)
+				}
+			} else {
+				responseEvidence := make(map[operationPlanEvidenceRef]struct{}, len(contract.ResponseAssertion.EvidenceRefs))
+				for _, ref := range contract.ResponseAssertion.EvidenceRefs {
+					responseEvidence[ref] = struct{}{}
+				}
+				if len(branchRefs) == 0 {
+					t.Fatalf("loader-only source-QA typed assertion has no branch evidence refs for %s/%s", record.SourceID, record.OperationID)
+				}
+				for _, ref := range branchRefs {
+					if _, ok := responseEvidence[ref]; !ok {
+						t.Fatalf("loader-only source-QA typed assertion omits a branch source or review ref for %s/%s", record.SourceID, record.OperationID)
+					}
+				}
 			}
 			transportCounts[record.Protocol]++
 			if record.ObservationPeriod != time.Duration(actualCLIFixtureObservationPeriodSeconds)*time.Second || record.RequestTimeout != time.Duration(actualCLIFixtureRequestTimeoutMS)*time.Millisecond {
@@ -778,7 +911,7 @@ func actualCLIBuildDocument(identity operationPlanPopulationIdentity, protocol, 
 		identityObject["source_system"] = "data.go.kr"
 		identityObject["upstream_operation_key"] = identity.UpstreamOperationKey
 	} else {
-		identityObject["operation_name"] = "Synthetic QA operation"
+		identityObject["operation_name"] = actualCLIPartialSyntheticOperationName
 	}
 	protocolStatus := "documented"
 	if sourceID == "data_go_kr" {
@@ -888,7 +1021,7 @@ func actualCLIBuildAssertion(identity operationPlanPopulationIdentity, protocol,
 		operationIdentity["upstream_operation_key"] = identity.UpstreamOperationKey
 	}
 	if identity.SourceID != "data_go_kr" {
-		operationIdentity["operation_name"] = "Synthetic local source-QA operation"
+		operationIdentity["operation_name"] = actualCLIPartialSyntheticOperationName
 	}
 	artifact := map[string]any{
 		"schema_version": "datapan.operation-response-assertion.v2", "artifact_kind": "operation_response_assertion",
@@ -905,6 +1038,8 @@ func actualCLIBuildAssertion(identity operationPlanPopulationIdentity, protocol,
 }
 
 func actualCLIAssertionBranch(id, classification, protocol string, success bool, profile, branch int, policySHA string, documentRef operationPlanEvidenceRef) map[string]any {
+	providerResultCodeRef := documentRef
+	providerResultCodeRef.JSONPointer = "#/response_contract/provider_result_codes"
 	rootKind := "object"
 	rootQName := map[string]any(nil)
 	var discriminator map[string]any
@@ -933,7 +1068,7 @@ func actualCLIAssertionBranch(id, classification, protocol string, success bool,
 		"branch_id": id, "classification": classification,
 		"selector":               selector,
 		"empty_result_semantics": "not_applicable", "http_status_source_refs": []any{documentRef},
-		"required_fields": []any{}, "provider_result_code_status": "none_by_policy", "provider_result_code_evidence_refs": []any{},
+		"required_fields": []any{}, "provider_result_code_status": "none_by_policy", "provider_result_code_evidence_refs": []operationPlanEvidenceRef{providerResultCodeRef},
 		"source_refs": []any{documentRef}, "review_refs": []any{branchRef},
 	}
 }
@@ -970,6 +1105,175 @@ func actualCLICollectEvidenceRefs(raw json.RawMessage) ([]operationPlanEvidenceR
 	}
 	walk(root)
 	return refs, nil
+}
+
+func actualCLICompilePinnedSchema(t *testing.T, raw []byte) *jsonschema.Schema {
+	t.Helper()
+	var envelope struct {
+		ID string `json:"$id"`
+	}
+	var document any
+	if err := json.Unmarshal(raw, &envelope); err != nil || envelope.ID == "" || json.Unmarshal(raw, &document) != nil {
+		t.Fatal("actual-CLI pinned JSON schema could not be decoded")
+	}
+	if err := actualCLINormalizePinnedSchemaRegexps(document); err != nil {
+		t.Fatalf("actual-CLI pinned JSON schema %q could not normalize its pinned path pattern: %v", envelope.ID, err)
+	}
+	compiler := jsonschema.NewCompiler()
+	compiler.AssertFormat()
+	if err := compiler.AddResource(envelope.ID, document); err != nil {
+		t.Fatalf("actual-CLI pinned JSON schema %q could not be registered: %v", envelope.ID, err)
+	}
+	compiled, err := compiler.Compile(envelope.ID)
+	if err != nil {
+		t.Fatalf("actual-CLI pinned JSON schema %q could not be compiled: %v", envelope.ID, err)
+	}
+	return compiled
+}
+
+// The pinned CLI validates the original schema digest, then applies this
+// narrow ECMAScript-negative-lookahead rewrite in memory because Go's regexp
+// engine does not support lookahead. Keep the fixture validator aligned with
+// that exact implementation while preserving the copied schema bytes.
+func actualCLINormalizePinnedSchemaRegexps(value any) error {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if key == "pattern" {
+				pattern, ok := child.(string)
+				if !ok {
+					return errors.New("JSON schema pattern is not a string")
+				}
+				if pattern == "^(?!/)[A-Za-z0-9._/-]+$" {
+					typed[key] = "^[A-Za-z0-9._-][A-Za-z0-9._/-]*$"
+				}
+				continue
+			}
+			if err := actualCLINormalizePinnedSchemaRegexps(child); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if err := actualCLINormalizePinnedSchemaRegexps(child); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func actualCLIValidatePinnedSchema(schema *jsonschema.Schema, raw []byte) error {
+	instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	return schema.Validate(instance)
+}
+
+func actualCLIJSONEqual(left, right any) bool {
+	leftRaw, err := json.Marshal(left)
+	if err != nil {
+		return false
+	}
+	rightRaw, err := json.Marshal(right)
+	return err == nil && bytes.Equal(leftRaw, rightRaw)
+}
+
+func actualCLIProfileIdentityMatchesPlan(profile map[string]any, source operationPlanSourceBindingWire, identity operationPlanIdentityWire, responseKind string) bool {
+	selector, _ := profile["selector"].(map[string]any)
+	if selector == nil || selector["source_id"] != source.SourceID || selector["provider"] != source.Provider || selector["protocol"] != identity.Protocol || selector["effect"] != "read_only" {
+		return false
+	}
+	expectedMethod := "GET"
+	if identity.Protocol == "SOAP" {
+		expectedMethod = "POST"
+	}
+	if selector["method"] != expectedMethod {
+		return false
+	}
+	request, _ := profile["request"].(map[string]any)
+	if request == nil {
+		return false
+	}
+	limits, _ := request["limits"].(map[string]any)
+	if limits == nil || limits["request_budget"] != 1 || limits["timeout_ms"] != actualCLIFixtureRequestTimeoutMS || limits["max_request_bytes"] != 4096 || limits["max_response_bytes"] != 16384 {
+		return false
+	}
+	if !actualCLIJSONEqual(request["parameter_strategies"], []any{}) {
+		return false
+	}
+	response, _ := request["response"].(map[string]any)
+	if response == nil {
+		return false
+	}
+	if responseKind == "observation_only" {
+		return len(response) == 1 && response["mode"] == "observation_only"
+	}
+	expectedPayload := "json"
+	if identity.Protocol == "SOAP" {
+		expectedPayload = "soap_xml"
+	}
+	return response["payload_kind"] == expectedPayload && actualCLIJSONEqual(profile["review"], actualCLIReview())
+}
+
+func actualCLIProfileResponseMatchesAssertion(profile map[string]any, responseKind string, assertion map[string]any) bool {
+	request, _ := profile["request"].(map[string]any)
+	profileResponse, _ := request["response"].(map[string]any)
+	assertionBody, _ := assertion["assertion"].(map[string]any)
+	if profileResponse == nil || assertionBody == nil || !actualCLIJSONEqual(profile["review"], assertion["review"]) {
+		return false
+	}
+	if responseKind == "observation_only" {
+		branches, _ := assertionBody["branches"].([]any)
+		return profileResponse["mode"] == "observation_only" && len(profileResponse) == 1 && assertionBody["mode"] == "observation_only" && len(branches) == 0
+	}
+	if profileResponse["payload_kind"] != assertionBody["payload_kind"] {
+		return false
+	}
+	profileBranches, _ := profileResponse["branches"].([]any)
+	assertionBranches, _ := assertionBody["branches"].([]any)
+	if len(profileBranches) != 2 || len(assertionBranches) != 2 {
+		return false
+	}
+	for index := range profileBranches {
+		profileBranch, _ := profileBranches[index].(map[string]any)
+		assertionBranch, _ := assertionBranches[index].(map[string]any)
+		if profileBranch == nil || assertionBranch == nil ||
+			profileBranch["branch_id"] != assertionBranch["branch_id"] || profileBranch["classification"] != assertionBranch["classification"] || profileBranch["empty_result_semantics"] != assertionBranch["empty_result_semantics"] ||
+			(profileBranch["code_mode"] == "none" && assertionBranch["provider_result_code_status"] != "none_by_policy") ||
+			!actualCLIJSONEqual(profileBranch["required_fields"], assertionBranch["required_fields"]) {
+			return false
+		}
+		policySelector, _ := profileBranch["selector"].(map[string]any)
+		assertionSelector, _ := assertionBranch["selector"].(map[string]any)
+		if policySelector == nil || assertionSelector == nil {
+			return false
+		}
+		for _, key := range []string{"accepted_http_status_codes", "root_kind", "root_qname"} {
+			if !actualCLIJSONEqual(policySelector[key], assertionSelector[key]) {
+				return false
+			}
+		}
+		policyDiscriminators, _ := policySelector["discriminators"].([]any)
+		assertionDiscriminators, _ := assertionSelector["discriminators"].([]any)
+		if len(policyDiscriminators) != len(assertionDiscriminators) {
+			return false
+		}
+		for discriminatorIndex := range policyDiscriminators {
+			policyDiscriminator, _ := policyDiscriminators[discriminatorIndex].(map[string]any)
+			assertionDiscriminator, _ := assertionDiscriminators[discriminatorIndex].(map[string]any)
+			if policyDiscriminator == nil || assertionDiscriminator == nil {
+				return false
+			}
+			for _, key := range []string{"path", "predicate", "value_type", "values"} {
+				if !actualCLIJSONEqual(policyDiscriminator[key], assertionDiscriminator[key]) {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 func actualCLIWriteFile(root, relative string, raw []byte) error {

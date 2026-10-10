@@ -30,7 +30,7 @@ import (
 )
 
 const (
-	actualCLIExpectedSourceRevision = "89d1164ac8c910e18e50fc1c3a3961977c4d4f2e"
+	actualCLIExpectedSourceRevision = "acf060e71e2329b6a04ad4ab0abf669fbbfe9dac"
 	actualCLIExpectedVersion        = "v0.1.41"
 	actualCLIProviderSubnet         = "45.77.0.0/24"
 	actualCLIProviderIP             = "45.77.0.2"
@@ -44,6 +44,7 @@ const (
 	actualCLIGovRESTTypedFailure    = "0014af9e0f58c9dd10c0167164e037ddf5f75658431d5ad3ffe531b6bf45d97a"
 	actualCLIGovSOAPTypedSuccess    = "07776a0ef594eae07eeb13ac59eb5f659f9227dd513cc7505ce60dab21695e7e"
 	actualCLIGovSOAPTypedFailure    = "30a31059d5847698f696854e772aa1b22569c45c200d4e460c8e5f0c6358578c"
+	actualCLIFullControllerTimeout  = 90 * time.Minute
 )
 
 type actualCLIReleaseManifest struct {
@@ -227,6 +228,19 @@ func actualCLIChildStderrClassSummary(classes map[string]int) string {
 		parts = append(parts, key+"="+strconv.Itoa(classes[key]))
 	}
 	return strings.Join(parts, ",")
+}
+
+func actualCLIProbeReasonCodeClass(reason string) string {
+	switch reason {
+	case "response_assertion_passed", "response_assertion_failed", "response_assertion_invalid",
+		"response_semantics_unestablished", "response_http_failure", "credential_binding_unavailable",
+		"credential_binding_mismatch", "credential_source_unavailable", "operation_plan_unsupported",
+		"deadline_expired_before_request", "request_deadline_exceeded", "request_limit_exceeded",
+		"response_limit_exceeded", "request_transport_failed", "response_read_failed", "response_invalid":
+		return reason
+	default:
+		return "unrecognized"
+	}
 }
 
 // TestOperationPlanActualCLIProviderGatusIntegration is the opt-in source-QA
@@ -980,20 +994,46 @@ func actualCLISmoke(t *testing.T, worker *OperationPlanWorker, attempts *Operati
 	for index, selectedCase := range selected {
 		testCase, identity := selectedCase.caseSpec, selectedCase.identity
 		result, err := results[index].result, results[index].err
-		if err != nil || result.AttemptState != "observed" || !result.RequestStarted {
-			storedState, blockReason, requestStarted := "missing", "none", "unset"
-			stored, found, readErr := attempts.Latest(identity.SourceID, identity.OperationID)
-			if readErr == nil && found {
-				storedState, blockReason = stored.State, stored.BlockReason
-				if stored.RequestStarted != nil {
-					requestStarted = strconv.FormatBool(*stored.RequestStarted)
+		latest, found, latestErr := attempts.Latest(identity.SourceID, identity.OperationID)
+		storedState, blockReason, storedRequest, storedOutcome, storedCategory, storedHTTPStatus := "missing", "none", "unset", "none", "none", 0
+		responseObserved, reasonCode := false, "unavailable"
+		if latestErr == nil && found {
+			storedState, blockReason = latest.State, latest.BlockReason
+			if latest.RequestStarted != nil {
+				storedRequest = strconv.FormatBool(*latest.RequestStarted)
+			}
+			if latest.Result != nil {
+				storedOutcome, storedCategory, storedHTTPStatus = latest.Result.State, latest.Result.Category, latest.Result.HTTPStatus
+				responseObserved = latest.State == "observed"
+				if latest.Result.HistoryRecordID != "" {
+					stored, readErr := history.readStoredRecord(context.Background(), latest.Result.HistoryRecordID)
+					if readErr == nil {
+						var receipt struct {
+							Execution struct {
+								RequestStarted bool `json:"request_started"`
+							} `json:"execution"`
+							Observation struct {
+								ResponseObserved bool   `json:"response_observed"`
+								HTTPStatus       int    `json:"http_status"`
+								ReasonCode       string `json:"reason_code"`
+							} `json:"observation"`
+						}
+						if json.Unmarshal(stored.Record.ReceiptBytes, &receipt) == nil {
+							responseObserved = receipt.Observation.ResponseObserved
+							reasonCode = actualCLIProbeReasonCodeClass(receipt.Observation.ReasonCode)
+							storedHTTPStatus = receipt.Observation.HTTPStatus
+							storedRequest = strconv.FormatBool(receipt.Execution.RequestStarted)
+						}
+					}
 				}
 			}
-			children := telemetry.snapshot()
-			t.Fatalf("actual CLI did not commit a durable %s observation: attempt_state=%s execution_block=%s request=%t stored_state=%s stored_block=%s stored_request=%s worker_error=%t child_calls=%d child_total=%s child_max=%s child_timeouts=%d child_exit_errors=%d child_other_errors=%d child_stdout_bytes=%d child_stderr_bytes=%d child_stderr_classes=%s", testCase.name, result.AttemptState, result.ExecutionBlockReason, result.RequestStarted, storedState, blockReason, requestStarted, err != nil, children.Calls, children.TotalElapsed.Round(time.Millisecond), children.MaxElapsed.Round(time.Millisecond), children.ContextTimeout, children.ExitErrors, children.OtherErrors, children.StdoutBytes, children.StderrBytes, actualCLIChildStderrClassSummary(children.StderrClasses))
 		}
-		latest, found, err := attempts.Latest(identity.SourceID, identity.OperationID)
-		if err != nil || !found || latest.Result == nil || !latest.ReceiptValidated || latest.State != "observed" {
+		t.Logf("actual CLI smoke case: case=%q attempt_state=%s request_started=%s response_observed=%t http_status=%d reason_code=%s result_state=%s result_category=%s execution_block=%s worker_error=%t", testCase.name, result.AttemptState, storedRequest, responseObserved, storedHTTPStatus, reasonCode, storedOutcome, storedCategory, result.ExecutionBlockReason, err != nil)
+		if err != nil || result.AttemptState != "observed" || !result.RequestStarted {
+			children := telemetry.snapshot()
+			t.Fatalf("actual CLI did not commit a durable %s observation: attempt_state=%s execution_block=%s request=%t stored_state=%s stored_block=%s worker_error=%t child_calls=%d child_total=%s child_max=%s child_timeouts=%d child_exit_errors=%d child_other_errors=%d child_stdout_bytes=%d child_stderr_bytes=%d child_stderr_classes=%s", testCase.name, result.AttemptState, result.ExecutionBlockReason, result.RequestStarted, storedState, blockReason, err != nil, children.Calls, children.TotalElapsed.Round(time.Millisecond), children.MaxElapsed.Round(time.Millisecond), children.ContextTimeout, children.ExitErrors, children.OtherErrors, children.StdoutBytes, children.StderrBytes, actualCLIChildStderrClassSummary(children.StderrClasses))
+		}
+		if latestErr != nil || !found || latest.Result == nil || !latest.ReceiptValidated || latest.State != "observed" {
 			t.Fatalf("actual CLI %s receipt was not durably validated", testCase.protocol)
 		}
 		shouldDeliver := true
@@ -1067,7 +1107,7 @@ func actualCLIFullPopulation(t *testing.T, worker *OperationPlanWorker, attempts
 		t.Fatalf("actual CLI full source-QA capacity preflight failed before provider requests: feasible=%t required_concurrency=%d max_concurrent=%d required_starts_per_second=%.9f admitted=%d expected=%d", preflight.CapacityFeasible, preflight.RequiredConcurrency, concurrency, preflight.RequiredStartsPerSecond, preflight.AdmittedOperations, len(identities))
 	}
 	t.Logf("actual CLI full source-QA capacity preflight: identities=%d required_starts_per_second=%.9f required_concurrency=%d max_concurrent=%d feasible=true", preflight.AdmittedOperations, preflight.RequiredStartsPerSecond, preflight.RequiredConcurrency, concurrency)
-	controllerCtx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
+	controllerCtx, cancel := context.WithTimeout(context.Background(), actualCLIFullControllerTimeout)
 	defer cancel()
 	startedAt := time.Now().UTC()
 	lastProgressAt := time.Now()
@@ -1105,7 +1145,7 @@ func actualCLIFullPopulation(t *testing.T, worker *OperationPlanWorker, attempts
 		scheduler.Wait()
 		usage, _ := history.Usage(context.Background())
 		elapsed := time.Since(startedAt)
-		t.Fatalf("actual CLI did not reconcile all pinned identities within the 45-minute source-QA bound: starts=%d observations=%d readbacks=%d not_applicable=%d execution_failures=%d delivery_failures=%d active=%d expected=%d elapsed=%s receipts=%d history_bytes=%d", status.RequestStartsSinceStart, status.ObservationsSinceStart, status.ReadbacksSinceStart, status.NotApplicableSinceStart, status.ExecutionFailuresSinceStart, status.DeliveryFailuresSinceStart, status.ActiveWork, len(identities), elapsed.Round(time.Second), usage.RecordCount, usage.UsedBytes)
+		t.Fatalf("actual CLI did not reconcile all pinned identities within the 90-minute source-QA controller bound: starts=%d observations=%d readbacks=%d not_applicable=%d execution_failures=%d delivery_failures=%d active=%d expected=%d elapsed=%s receipts=%d history_bytes=%d", status.RequestStartsSinceStart, status.ObservationsSinceStart, status.ReadbacksSinceStart, status.NotApplicableSinceStart, status.ExecutionFailuresSinceStart, status.DeliveryFailuresSinceStart, status.ActiveWork, len(identities), elapsed.Round(time.Second), usage.RecordCount, usage.UsedBytes)
 	}
 	scheduler.Wait()
 	status = scheduler.Status(time.Now().UTC())
@@ -1161,11 +1201,11 @@ func actualCLIFullPopulation(t *testing.T, worker *OperationPlanWorker, attempts
 	}
 	expectedReadbacks := govUnavailableCount + typedErrorCount + typedSuccessCount
 	expectedNotApplicable := len(identities) - expectedReadbacks
-	if typedErrorCount != 2 || typedSuccessCount != 2 || status.ReadbacksSinceStart != uint64(expectedReadbacks) || status.NotApplicableSinceStart != uint64(expectedNotApplicable) {
-		t.Fatalf("durable Gatus and observation-only outcomes do not reconcile: readbacks=%d expected=%d not_applicable=%d expected=%d typed_errors=%d typed_successes=%d", status.ReadbacksSinceStart, expectedReadbacks, status.NotApplicableSinceStart, expectedNotApplicable, typedErrorCount, typedSuccessCount)
+	if govUnavailableCount != 2 || typedErrorCount != 2 || typedSuccessCount != 2 || expectedReadbacks != 6 || expectedNotApplicable != 12660 || status.ReadbacksSinceStart != 6 || status.NotApplicableSinceStart != 12660 {
+		t.Fatalf("durable Gatus and observation-only outcomes do not match the exact synthetic profile: readbacks=%d expected=6 not_applicable=%d expected=12660 provider_503=%d typed_errors=%d typed_successes=%d", status.ReadbacksSinceStart, status.NotApplicableSinceStart, govUnavailableCount, typedErrorCount, typedSuccessCount)
 	}
 	metrics := actualCLIProviderMetrics(t, metricsURL, caPath)
-	if metrics["requests"] != len(identities) || metrics["unique"] != len(identities) || metrics["duplicates"] != 0 || metrics["allowed_routes"] != len(identities) || metrics["rest_get"] != 12631 || metrics["soap_post"] != 35 || metrics["status_2xx"]+metrics["status_503"] != len(identities) || metrics["invalid"] != 0 {
+	if metrics["requests"] != len(identities) || metrics["unique"] != len(identities) || metrics["duplicates"] != 0 || metrics["allowed_routes"] != len(identities) || metrics["rest_get"] != 12631 || metrics["soap_post"] != 35 || metrics["status_2xx"] != 12664 || metrics["status_503"] != 2 || metrics["invalid"] != 0 {
 		t.Fatalf("isolated provider aggregates do not match the exact pinned route set: requests=%d unique=%d duplicates=%d allowed=%d rest=%d soap=%d 2xx=%d 503=%d invalid=%d", metrics["requests"], metrics["unique"], metrics["duplicates"], metrics["allowed_routes"], metrics["rest_get"], metrics["soap_post"], metrics["status_2xx"], metrics["status_503"], metrics["invalid"])
 	}
 	if metrics["status_503"] != govUnavailableCount || metrics["status_2xx"] != len(identities)-govUnavailableCount {
