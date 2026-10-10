@@ -3,6 +3,7 @@ package health
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -544,13 +545,31 @@ func TestOperationPlanSchedulerStoreLockCannotBlockControllerPassOrLaunchProvide
 	started := time.Now().UTC()
 	passDone := make(chan error, 1)
 	go func() { passDone <- scheduler.ProcessDue(context.Background(), started) }()
+	var passErr error
 	select {
-	case err := <-passDone:
-		if err == nil {
+	case passErr = <-passDone:
+		if passErr == nil {
 			t.Fatal("controller pass ignored the held attempt-store lock")
 		}
 	case <-time.After(operationPlanSchedulerScanTimeout + time.Second):
 		t.Fatal("controller pass remained blocked on the attempt-store lock")
+	}
+	if !errors.Is(passErr, errOperationPlanSchedulerUnavailable) || passErr.Error() != errOperationPlanSchedulerUnavailable.Error() {
+		t.Fatalf("bounded scan error lost its stable redacted contract: %T %q", passErr, passErr.Error())
+	}
+	stage, category, ok := operationPlanSchedulerFailureDetails(passErr)
+	if !ok || stage != "delivery_scan" || category != "scan_deadline" {
+		t.Fatalf("held attempt-store lock did not identify the bounded delivery-scan timeout: stage=%q category=%q found=%t", stage, category, ok)
+	}
+	statusAtFailure := scheduler.Status(time.Now().UTC())
+	if statusAtFailure.LastErrorReason != "attempt_store_unavailable" || statusAtFailure.LastErrorStage != "delivery_scan" || statusAtFailure.lastErrorCategory != "scan_deadline" {
+		t.Fatalf("bounded scan failure was not retained as safe scheduler status: %#v", statusAtFailure)
+	}
+	if statusAtFailure.lastDiagnosticFailureStage != stage || statusAtFailure.lastDiagnosticFailureCategory != category || statusAtFailure.failureStageCounts[stage] != 1 || statusAtFailure.failureCategoryCounts[category] != 1 {
+		t.Fatalf("bounded scan stage/category counters were not retained: stage=%q category=%q stages=%v categories=%v", statusAtFailure.lastDiagnosticFailureStage, statusAtFailure.lastDiagnosticFailureCategory, statusAtFailure.failureStageCounts, statusAtFailure.failureCategoryCounts)
+	}
+	if statusAtFailure.lastPassElapsed < operationPlanSchedulerScanTimeout || statusAtFailure.lastPassElapsed > operationPlanSchedulerScanTimeout+time.Second || statusAtFailure.lastPassDeliveryScanned != 1 || statusAtFailure.lastPassExecutionScanned != 0 || statusAtFailure.lastPassEvidenceScanned != 0 {
+		t.Fatalf("bounded scan diagnostics did not capture the failed pass work: elapsed=%s delivery=%d execution=%d evidence=%d", statusAtFailure.lastPassElapsed, statusAtFailure.lastPassDeliveryScanned, statusAtFailure.lastPassExecutionScanned, statusAtFailure.lastPassEvidenceScanned)
 	}
 	select {
 	case <-called:
@@ -576,6 +595,54 @@ func TestOperationPlanSchedulerStoreLockCannotBlockControllerPassOrLaunchProvide
 	latest, found, err := attempts.Latest(target.Record.SourceID, target.Record.OperationID)
 	if err != nil || !found || latest.State != "observed" {
 		t.Fatalf("recovered bounded pass did not persist one local attempt: found=%t state=%q err=%v", found, latest.State, err)
+	}
+}
+
+func TestOperationPlanSchedulerFailureDiagnosticsUseOnlyFixedCodes(t *testing.T) {
+	err := newOperationPlanSchedulerFailure("/private/fixture/path", "https://provider.invalid/private?token=secret")
+	if err == nil || err.Error() != errOperationPlanSchedulerUnavailable.Error() || !errors.Is(err, errOperationPlanSchedulerUnavailable) {
+		t.Fatalf("scheduler failure did not preserve the redacted sentinel contract: %v", err)
+	}
+	stage, category, ok := operationPlanSchedulerFailureDetails(err)
+	if !ok || stage != "unavailable" || category != "unavailable" {
+		t.Fatalf("untrusted diagnostic values escaped their fixed-code allowlists: stage=%q category=%q found=%t", stage, category, ok)
+	}
+	if strings.Contains(err.Error(), "private") || strings.Contains(err.Error(), "token") || strings.Contains(err.Error(), "provider.invalid") {
+		t.Fatalf("scheduler failure text leaked untrusted details: %q", err.Error())
+	}
+}
+
+func TestOperationPlanSchedulerEntryAndOverlapFailuresStayDiagnosticOnly(t *testing.T) {
+	worker, _, _, _, _, _ := newOperationPlanSchedulerTestWorker(t)
+	scheduler, err := NewOperationPlanScheduler(OperationPlanSchedulerConfig{
+		Worker: worker, MaxConcurrent: 1, MaxStartsPerPass: 1, MaxDeliveriesPerPass: 1,
+		CandidateScanPerPass: 1, DeliveryLease: time.Minute,
+	})
+	if err != nil {
+		t.Fatal("local synthetic plan could not construct a bounded scheduler:", err)
+	}
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	entryErr := scheduler.ProcessDue(canceled, time.Now().UTC())
+	stage, category, ok := operationPlanSchedulerFailureDetails(entryErr)
+	if !ok || stage != "entry" || category != "parent_canceled" || !errors.Is(entryErr, errOperationPlanSchedulerUnavailable) {
+		t.Fatalf("canceled parent context did not produce a bounded entry diagnostic: stage=%q category=%q found=%t err=%v", stage, category, ok, entryErr)
+	}
+
+	scheduler.passMu.Lock()
+	overlapErr := scheduler.ProcessDue(context.Background(), time.Now().UTC())
+	scheduler.passMu.Unlock()
+	stage, category, ok = operationPlanSchedulerFailureDetails(overlapErr)
+	if !ok || stage != "pass_overlap" || category != "busy" || !errors.Is(overlapErr, errOperationPlanSchedulerUnavailable) {
+		t.Fatalf("overlapping pass did not produce a bounded diagnostic: stage=%q category=%q found=%t err=%v", stage, category, ok, overlapErr)
+	}
+	status := scheduler.Status(time.Now().UTC())
+	if status.LastErrorReason != "" || status.LastErrorStage != "" || !status.LastErrorAt.IsZero() {
+		t.Fatalf("entry/overlap diagnostics incorrectly changed the readiness error latch: %#v", status)
+	}
+	if status.lastDiagnosticFailureStage != "pass_overlap" || status.lastDiagnosticFailureCategory != "busy" || status.failureStageCounts["entry"] != 1 || status.failureStageCounts["pass_overlap"] != 1 || status.failureCategoryCounts["parent_canceled"] != 1 || status.failureCategoryCounts["busy"] != 1 {
+		t.Fatalf("entry/overlap diagnostics were not retained with bounded counters: %#v", status)
 	}
 }
 

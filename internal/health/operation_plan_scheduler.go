@@ -11,6 +11,81 @@ import (
 
 var errOperationPlanSchedulerUnavailable = errors.New("operation-plan scheduler is unavailable")
 
+type operationPlanSchedulerFailure struct {
+	stage    string
+	category string
+}
+
+func (failure *operationPlanSchedulerFailure) Error() string {
+	return errOperationPlanSchedulerUnavailable.Error()
+}
+
+func (failure *operationPlanSchedulerFailure) Unwrap() error {
+	return errOperationPlanSchedulerUnavailable
+}
+
+func newOperationPlanSchedulerFailure(stage, category string) error {
+	if !validOperationPlanSchedulerFailureStage(stage) {
+		stage = "unavailable"
+	}
+	if !validOperationPlanSchedulerFailureCategory(category) {
+		category = "unavailable"
+	}
+	return &operationPlanSchedulerFailure{stage: stage, category: category}
+}
+
+func operationPlanSchedulerFailureDetails(err error) (stage, category string, ok bool) {
+	var failure *operationPlanSchedulerFailure
+	if !errors.As(err, &failure) || failure == nil {
+		return "", "", false
+	}
+	return failure.stage, failure.category, true
+}
+
+func validOperationPlanSchedulerFailureStage(stage string) bool {
+	switch stage {
+	case "entry", "pass_overlap", "delivery_scan", "execution_scan", "evidence_snapshot", "evidence_proof", "unavailable":
+		return true
+	default:
+		return false
+	}
+}
+
+func validOperationPlanSchedulerFailureCategory(category string) bool {
+	switch category {
+	case "invalid_input", "busy", "parent_deadline", "parent_canceled", "scan_deadline", "scan_canceled", "store_unavailable", "proof_unavailable", "unavailable":
+		return true
+	default:
+		return false
+	}
+}
+
+func operationPlanSchedulerParentContextFailureCategory(ctx context.Context) string {
+	if ctx == nil {
+		return "invalid_input"
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "parent_deadline"
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return "parent_canceled"
+	}
+	return "store_unavailable"
+}
+
+func operationPlanSchedulerScanContextFailureCategory(parent, scan context.Context) string {
+	if parent != nil && parent.Err() != nil {
+		return operationPlanSchedulerParentContextFailureCategory(parent)
+	}
+	if scan != nil && errors.Is(scan.Err(), context.DeadlineExceeded) {
+		return "scan_deadline"
+	}
+	if scan != nil && errors.Is(scan.Err(), context.Canceled) {
+		return "scan_canceled"
+	}
+	return "store_unavailable"
+}
+
 const (
 	operationPlanSchedulerMaximumConcurrency = 32
 	operationPlanSchedulerMaximumScanBudget  = 256
@@ -66,8 +141,14 @@ type OperationPlanSchedulerStatus struct {
 	LastErrorReason                 string            `json:"last_error_reason,omitempty"`
 	LastErrorStage                  string            `json:"last_error_stage,omitempty"`
 	lastErrorCategory               string            `json:"-"`
+	lastDiagnosticFailureStage      string            `json:"-"`
+	lastDiagnosticFailureCategory   string            `json:"-"`
 	failureStageCounts              map[string]uint64 `json:"-"`
 	failureCategoryCounts           map[string]uint64 `json:"-"`
+	lastPassElapsed                 time.Duration     `json:"-"`
+	lastPassDeliveryScanned         int               `json:"-"`
+	lastPassExecutionScanned        int               `json:"-"`
+	lastPassEvidenceScanned         int               `json:"-"`
 	LastErrorAt                     time.Time         `json:"last_error_at,omitempty"`
 	PassesSinceStart                uint64            `json:"passes_since_start"`
 	ExecutionTasksStartedSinceStart uint64            `json:"execution_tasks_started_since_start"`
@@ -117,43 +198,49 @@ type OperationPlanScheduler struct {
 	deliveryLease time.Duration
 	capacity      operationPlanCapacityAssessment
 
-	mu                    sync.Mutex
-	passMu                sync.Mutex
-	active                map[string]string
-	activeCount           int
-	executionCursor       int
-	deliveryCursor        int
-	deliveryReservation   int
-	lastPass              time.Time
-	lastErrorReason       string
-	lastErrorStage        string
-	lastErrorCategory     string
-	failureStageCounts    map[string]uint64
-	failureCategoryCounts map[string]uint64
-	lastErrorAt           time.Time
-	errorEpoch            uint64
-	identityErrors        map[string]operationPlanIdentityError
-	evidenceSweepAt       time.Time
-	evidenceChecked       int
-	evidenceCurrent       int
-	evidenceMissing       int
-	evidenceValidUntil    time.Time
-	evidenceScanCursor    int
-	evidenceSweepEpoch    uint64
-	evidenceStaging       []operationPlanReadinessEvidence
-	passes                uint64
-	executionTasksStarted uint64
-	requestStarts         uint64
-	observations          uint64
-	deferred              uint64
-	executionFailures     uint64
-	deliveryTasksStarted  uint64
-	readbacks             uint64
-	notApplicable         uint64
-	deliveryFailures      uint64
-	deliveryScanErrors    uint64
-	identityScanErrors    uint64
-	wg                    sync.WaitGroup
+	mu                            sync.Mutex
+	passMu                        sync.Mutex
+	active                        map[string]string
+	activeCount                   int
+	executionCursor               int
+	deliveryCursor                int
+	deliveryReservation           int
+	lastPass                      time.Time
+	lastErrorReason               string
+	lastErrorStage                string
+	lastErrorCategory             string
+	lastDiagnosticFailureStage    string
+	lastDiagnosticFailureCategory string
+	failureStageCounts            map[string]uint64
+	failureCategoryCounts         map[string]uint64
+	lastPassElapsed               time.Duration
+	lastPassDeliveryScanned       int
+	lastPassExecutionScanned      int
+	lastPassEvidenceScanned       int
+	lastErrorAt                   time.Time
+	errorEpoch                    uint64
+	identityErrors                map[string]operationPlanIdentityError
+	evidenceSweepAt               time.Time
+	evidenceChecked               int
+	evidenceCurrent               int
+	evidenceMissing               int
+	evidenceValidUntil            time.Time
+	evidenceScanCursor            int
+	evidenceSweepEpoch            uint64
+	evidenceStaging               []operationPlanReadinessEvidence
+	passes                        uint64
+	executionTasksStarted         uint64
+	requestStarts                 uint64
+	observations                  uint64
+	deferred                      uint64
+	executionFailures             uint64
+	deliveryTasksStarted          uint64
+	readbacks                     uint64
+	notApplicable                 uint64
+	deliveryFailures              uint64
+	deliveryScanErrors            uint64
+	identityScanErrors            uint64
+	wg                            sync.WaitGroup
 }
 
 func NewOperationPlanScheduler(config OperationPlanSchedulerConfig) (*OperationPlanScheduler, error) {
@@ -191,20 +278,35 @@ func NewOperationPlanScheduler(config OperationPlanSchedulerConfig) (*OperationP
 // of tasks. The one-second caller loop is not replayed after downtime: each
 // operation is independently due-gated by its durable attempt store.
 func (scheduler *OperationPlanScheduler) ProcessDue(ctx context.Context, now time.Time) error {
-	if scheduler == nil || ctx == nil || ctx.Err() != nil || now.IsZero() {
-		return errOperationPlanSchedulerUnavailable
+	if scheduler == nil {
+		return newOperationPlanSchedulerFailure("entry", "invalid_input")
+	}
+	if ctx == nil || now.IsZero() {
+		scheduler.recordFailureDiagnostics("entry", "invalid_input")
+		return newOperationPlanSchedulerFailure("entry", "invalid_input")
+	}
+	if ctx.Err() != nil {
+		category := operationPlanSchedulerParentContextFailureCategory(ctx)
+		scheduler.recordFailureDiagnostics("entry", category)
+		return newOperationPlanSchedulerFailure("entry", category)
 	}
 	if len(scheduler.targets) == 0 {
 		return nil
 	}
 	if !scheduler.passMu.TryLock() {
-		return errOperationPlanSchedulerUnavailable
+		scheduler.recordFailureDiagnostics("pass_overlap", "busy")
+		return newOperationPlanSchedulerFailure("pass_overlap", "busy")
 	}
 	defer scheduler.passMu.Unlock()
 	now = now.UTC()
 	if !scheduler.recordPassIfDue(now) {
 		return nil
 	}
+	passStartedAt := time.Now()
+	deliveryScanned, executionScanned, evidenceScanned := 0, 0, 0
+	defer func() {
+		scheduler.recordPassDiagnostics(time.Since(passStartedAt), deliveryScanned, executionScanned, evidenceScanned)
+	}()
 	if !scheduler.capacity.Feasible {
 		scheduler.recordFailure(now, "capacity_infeasible")
 	}
@@ -212,11 +314,12 @@ func (scheduler *OperationPlanScheduler) ProcessDue(ctx context.Context, now tim
 	defer cancelScan()
 
 	deliveryStart := scheduler.deliveryScanStart()
-	deliveryScanned, deliveryStarted := 0, 0
+	deliveryStarted := 0
 	for deliveryScanned < scheduler.scanBudget && deliveryScanned < len(scheduler.targets) && deliveryStarted < scheduler.maxDeliveries {
 		if scanCtx.Err() != nil {
-			scheduler.recordFailure(now, "attempt_store_unavailable")
-			return errOperationPlanSchedulerUnavailable
+			category := operationPlanSchedulerScanContextFailureCategory(ctx, scanCtx)
+			scheduler.recordFailureWithDiagnostics(now, "attempt_store_unavailable", "delivery_scan", category)
+			return newOperationPlanSchedulerFailure("delivery_scan", category)
 		}
 		index := (deliveryStart + deliveryScanned) % len(scheduler.targets)
 		target := scheduler.targets[index]
@@ -225,7 +328,9 @@ func (scheduler *OperationPlanScheduler) ProcessDue(ctx context.Context, now tim
 		if err != nil {
 			scheduler.addDeliveryScanFailure(operationReadModelIdentityKey(target.Record.SourceID, target.Record.OperationID))
 			if scanCtx.Err() != nil {
-				return errOperationPlanSchedulerUnavailable
+				category := operationPlanSchedulerScanContextFailureCategory(ctx, scanCtx)
+				scheduler.recordFailureWithDiagnostics(now, "attempt_store_unavailable", "delivery_scan", category)
+				return newOperationPlanSchedulerFailure("delivery_scan", category)
 			}
 			continue
 		}
@@ -248,16 +353,18 @@ func (scheduler *OperationPlanScheduler) ProcessDue(ctx context.Context, now tim
 	}
 	scheduler.finishDeliveryScan(deliveryStart, deliveryScanned)
 	if scanCtx.Err() != nil {
-		scheduler.recordFailure(now, "attempt_store_unavailable")
-		return errOperationPlanSchedulerUnavailable
+		category := operationPlanSchedulerScanContextFailureCategory(ctx, scanCtx)
+		scheduler.recordFailureWithDiagnostics(now, "attempt_store_unavailable", "delivery_scan", category)
+		return newOperationPlanSchedulerFailure("delivery_scan", category)
 	}
 
 	if scheduler.capacity.Feasible {
-		executionScanned, executionStarted := 0, 0
+		executionStarted := 0
 		for executionScanned < scheduler.scanBudget && executionScanned < len(scheduler.targets) && executionStarted < scheduler.maxStarts {
 			if scanCtx.Err() != nil {
-				scheduler.recordFailure(now, "attempt_store_unavailable")
-				return errOperationPlanSchedulerUnavailable
+				category := operationPlanSchedulerScanContextFailureCategory(ctx, scanCtx)
+				scheduler.recordFailureWithDiagnostics(now, "attempt_store_unavailable", "execution_scan", category)
+				return newOperationPlanSchedulerFailure("execution_scan", category)
 			}
 			index := (scheduler.executionCursor + executionScanned) % len(scheduler.targets)
 			target := scheduler.targets[index]
@@ -266,7 +373,9 @@ func (scheduler *OperationPlanScheduler) ProcessDue(ctx context.Context, now tim
 			if err != nil {
 				scheduler.addIdentityScanFailure(operationReadModelIdentityKey(target.Record.SourceID, target.Record.OperationID))
 				if scanCtx.Err() != nil {
-					return errOperationPlanSchedulerUnavailable
+					category := operationPlanSchedulerScanContextFailureCategory(ctx, scanCtx)
+					scheduler.recordFailureWithDiagnostics(now, "attempt_store_unavailable", "execution_scan", category)
+					return newOperationPlanSchedulerFailure("execution_scan", category)
 				}
 				continue
 			}
@@ -288,11 +397,24 @@ func (scheduler *OperationPlanScheduler) ProcessDue(ctx context.Context, now tim
 		}
 	}
 	if scanCtx.Err() != nil {
-		scheduler.recordFailure(now, "attempt_store_unavailable")
-		return errOperationPlanSchedulerUnavailable
+		category := operationPlanSchedulerScanContextFailureCategory(ctx, scanCtx)
+		scheduler.recordFailureWithDiagnostics(now, "attempt_store_unavailable", "execution_scan", category)
+		return newOperationPlanSchedulerFailure("execution_scan", category)
 	}
-	if err := scheduler.advanceEvidenceSweep(scanCtx, now); err != nil {
-		return errOperationPlanSchedulerUnavailable
+	var evidenceErr error
+	evidenceScanned, evidenceErr = scheduler.advanceEvidenceSweepWithScanCount(scanCtx, now)
+	if evidenceErr != nil {
+		stage, category, ok := operationPlanSchedulerFailureDetails(evidenceErr)
+		if !ok {
+			stage, category = "evidence_snapshot", "store_unavailable"
+		}
+		if ctx.Err() != nil {
+			category = operationPlanSchedulerParentContextFailureCategory(ctx)
+		} else if scanCtx.Err() != nil {
+			category = operationPlanSchedulerScanContextFailureCategory(ctx, scanCtx)
+		}
+		scheduler.recordFailureWithDiagnostics(now, "attempt_store_unavailable", stage, category)
+		return newOperationPlanSchedulerFailure(stage, category)
 	}
 	return nil
 }
@@ -301,8 +423,17 @@ func (scheduler *OperationPlanScheduler) ProcessDue(ctx context.Context, now tim
 // each pass. Readiness publishes only a complete sweep; HTTP status reads the
 // cached counts and earliest expiration in constant time.
 func (scheduler *OperationPlanScheduler) advanceEvidenceSweep(ctx context.Context, now time.Time) error {
+	_, err := scheduler.advanceEvidenceSweepWithScanCount(ctx, now)
+	return err
+}
+
+func (scheduler *OperationPlanScheduler) advanceEvidenceSweepWithScanCount(ctx context.Context, now time.Time) (int, error) {
 	if scheduler == nil || ctx == nil || ctx.Err() != nil || now.IsZero() || len(scheduler.targets) == 0 {
-		return errOperationPlanSchedulerUnavailable
+		category := "invalid_input"
+		if ctx != nil && ctx.Err() != nil {
+			category = operationPlanSchedulerParentContextFailureCategory(ctx)
+		}
+		return 0, newOperationPlanSchedulerFailure("evidence_snapshot", category)
 	}
 	if scheduler.evidenceScanCursor == 0 {
 		scheduler.evidenceStaging = make([]operationPlanReadinessEvidence, len(scheduler.targets))
@@ -314,17 +445,19 @@ func (scheduler *OperationPlanScheduler) advanceEvidenceSweep(ctx context.Contex
 	if end > len(scheduler.targets) {
 		end = len(scheduler.targets)
 	}
+	scanned := 0
 	for index := scheduler.evidenceScanCursor; index < end; index++ {
 		if ctx.Err() != nil {
 			scheduler.resetEvidenceSweep()
-			return errOperationPlanSchedulerUnavailable
+			return scanned, newOperationPlanSchedulerFailure("evidence_snapshot", operationPlanSchedulerParentContextFailureCategory(ctx))
 		}
+		scanned++
 		target := scheduler.targets[index]
 		latest, completed, latestFound, completedFound, err := scheduler.worker.attempts.LatestReadinessSnapshotContext(ctx, target.Record.SourceID, target.Record.OperationID)
 		if err != nil {
 			scheduler.resetEvidenceSweep()
 			scheduler.addIdentityScanFailure(operationReadModelIdentityKey(target.Record.SourceID, target.Record.OperationID))
-			return errOperationPlanSchedulerUnavailable
+			return scanned, newOperationPlanSchedulerFailure("evidence_snapshot", "store_unavailable")
 		}
 		if !latestFound {
 			continue
@@ -333,13 +466,17 @@ func (scheduler *OperationPlanScheduler) advanceEvidenceSweep(ctx context.Contex
 		if err != nil {
 			scheduler.resetEvidenceSweep()
 			scheduler.addIdentityScanFailure(operationReadModelIdentityKey(target.Record.SourceID, target.Record.OperationID))
-			return errOperationPlanSchedulerUnavailable
+			stage, category, ok := operationPlanSchedulerFailureDetails(err)
+			if !ok {
+				stage, category = "evidence_proof", "proof_unavailable"
+			}
+			return scanned, newOperationPlanSchedulerFailure(stage, category)
 		}
 		scheduler.evidenceStaging[index] = evidence
 	}
 	scheduler.evidenceScanCursor = end
 	if end < len(scheduler.targets) {
-		return nil
+		return scanned, nil
 	}
 
 	current, missing := 0, 0
@@ -385,7 +522,7 @@ func (scheduler *OperationPlanScheduler) advanceEvidenceSweep(ctx context.Contex
 	scheduler.mu.Unlock()
 	scheduler.evidenceScanCursor = 0
 	scheduler.evidenceStaging = nil
-	return nil
+	return scanned, nil
 }
 
 func (scheduler *OperationPlanScheduler) resetEvidenceSweep() {
@@ -425,7 +562,7 @@ func (scheduler *OperationPlanScheduler) operationEvidenceForTarget(ctx context.
 	}
 	verifier, ok := scheduler.worker.history.(OperationHistoryReferenceVerifier)
 	if !ok || verifier.VerifyStoredRecordReference(ctx, identity, result.HistoryRecordID, result.HistoryRecordSHA256) != nil {
-		return operationPlanReadinessEvidence{}, errOperationPlanSchedulerUnavailable
+		return operationPlanReadinessEvidence{}, newOperationPlanSchedulerFailure("evidence_proof", "proof_unavailable")
 	}
 	validUntil := result.ObservedAt.Add(target.Record.ObservationPeriod)
 	if validUntil.IsZero() {
@@ -646,6 +783,58 @@ func (scheduler *OperationPlanScheduler) recordFailure(now time.Time, reason str
 	scheduler.latchErrorLocked(reason, now.UTC())
 }
 
+func (scheduler *OperationPlanScheduler) recordFailureWithDiagnostics(now time.Time, reason, stage, category string) {
+	if scheduler == nil {
+		return
+	}
+	scheduler.mu.Lock()
+	defer scheduler.mu.Unlock()
+	scheduler.latchErrorLocked(reason, now.UTC())
+	scheduler.setFailureDiagnosticsLocked(stage, category)
+	scheduler.lastErrorStage = scheduler.lastDiagnosticFailureStage
+	scheduler.lastErrorCategory = scheduler.lastDiagnosticFailureCategory
+}
+
+func (scheduler *OperationPlanScheduler) recordFailureDiagnostics(stage, category string) {
+	if scheduler == nil {
+		return
+	}
+	scheduler.mu.Lock()
+	defer scheduler.mu.Unlock()
+	scheduler.setFailureDiagnosticsLocked(stage, category)
+}
+
+func (scheduler *OperationPlanScheduler) setFailureDiagnosticsLocked(stage, category string) {
+	if !validOperationPlanSchedulerFailureStage(stage) {
+		stage = "unavailable"
+	}
+	if !validOperationPlanSchedulerFailureCategory(category) {
+		category = "unavailable"
+	}
+	scheduler.lastDiagnosticFailureStage = stage
+	scheduler.lastDiagnosticFailureCategory = category
+	if scheduler.failureStageCounts == nil {
+		scheduler.failureStageCounts = make(map[string]uint64)
+	}
+	if scheduler.failureCategoryCounts == nil {
+		scheduler.failureCategoryCounts = make(map[string]uint64)
+	}
+	scheduler.failureStageCounts[stage]++
+	scheduler.failureCategoryCounts[category]++
+}
+
+func (scheduler *OperationPlanScheduler) recordPassDiagnostics(elapsed time.Duration, deliveryScanned, executionScanned, evidenceScanned int) {
+	if scheduler == nil {
+		return
+	}
+	scheduler.mu.Lock()
+	scheduler.lastPassElapsed = elapsed
+	scheduler.lastPassDeliveryScanned = deliveryScanned
+	scheduler.lastPassExecutionScanned = executionScanned
+	scheduler.lastPassEvidenceScanned = evidenceScanned
+	scheduler.mu.Unlock()
+}
+
 func (scheduler *OperationPlanScheduler) latchErrorLocked(reason string, at time.Time) {
 	scheduler.lastErrorReason = reason
 	scheduler.lastErrorStage = ""
@@ -725,8 +914,14 @@ func (scheduler *OperationPlanScheduler) Status(at time.Time) OperationPlanSched
 	status.LastErrorReason = scheduler.lastErrorReason
 	status.LastErrorStage = scheduler.lastErrorStage
 	status.lastErrorCategory = scheduler.lastErrorCategory
+	status.lastDiagnosticFailureStage = scheduler.lastDiagnosticFailureStage
+	status.lastDiagnosticFailureCategory = scheduler.lastDiagnosticFailureCategory
 	status.failureStageCounts = cloneOperationPlanFailureCounts(scheduler.failureStageCounts)
 	status.failureCategoryCounts = cloneOperationPlanFailureCounts(scheduler.failureCategoryCounts)
+	status.lastPassElapsed = scheduler.lastPassElapsed
+	status.lastPassDeliveryScanned = scheduler.lastPassDeliveryScanned
+	status.lastPassExecutionScanned = scheduler.lastPassExecutionScanned
+	status.lastPassEvidenceScanned = scheduler.lastPassEvidenceScanned
 	status.LastErrorAt = scheduler.lastErrorAt
 	status.PassesSinceStart = scheduler.passes
 	status.ExecutionTasksStartedSinceStart = scheduler.executionTasksStarted
