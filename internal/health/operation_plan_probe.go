@@ -349,6 +349,7 @@ func (runner *OperationPlanProbeRunner) Run(ctx context.Context, expectation Ope
 	args := []string{
 		"verify", "--health", "--json",
 		"--health-plan-index", runner.config.RegistryIndexPath,
+		"--health-source-id", expectation.SourceID,
 		"--health-operation-id", expectation.OperationID,
 		"--health-registry-revision", expectation.RegistryRevision,
 		"--health-credential-bindings", runner.config.CredentialBindings,

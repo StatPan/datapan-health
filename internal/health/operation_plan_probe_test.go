@@ -86,6 +86,11 @@ func TestValidateOperationPlanProbeReceiptRequiresCanonicalIdentityAndState(t *t
 			copy.Operation.OperationID = strings.Repeat("7", 64)
 			return marshalOperationPlanProbeReceipt(t, copy)
 		}(), expected: expected, exitCode: 0},
+		{name: "wrong source", raw: func() []byte {
+			copy := receipt
+			copy.Operation.SourceID = "ecos"
+			return marshalOperationPlanProbeReceipt(t, copy)
+		}(), expected: expected, exitCode: 0},
 		{name: "request count mismatch", raw: func() []byte {
 			copy := receipt
 			copy.Execution.RequestBudget = 0
@@ -175,10 +180,13 @@ func TestOperationPlanProbeRunnerUsesBoundedDirectChildAndCanonicalReceipt(t *te
 		t.Fatal(err)
 	}
 	argText := string(args)
-	for _, flag := range []string{"verify", "--health", "--json", "--health-plan-index", "--health-operation-id", "--health-registry-revision", "--health-credential-bindings", "--health-attempt-id", "--health-cli-version", "--health-deadline", "--output"} {
+	for _, flag := range []string{"verify", "--health", "--json", "--health-plan-index", "--health-source-id", "--health-operation-id", "--health-registry-revision", "--health-credential-bindings", "--health-attempt-id", "--health-cli-version", "--health-deadline", "--output"} {
 		if !strings.Contains(argText, flag) {
 			t.Fatalf("required child selector missing from argv: %s", flag)
 		}
+	}
+	if !strings.Contains(argText, "--health-source-id\ndata_go_kr\n") {
+		t.Fatalf("child source selector did not use the sealed expectation identity: %q", argText)
 	}
 	if strings.Contains(argText, "DO_NOT_PASS") || strings.Contains(argText, "RECEIPT_TEMPLATE") || strings.Contains(argText, "ARG_LOG") || strings.Contains(argText, "endpoint") || strings.Contains(argText, "query=") {
 		t.Fatal("child argv contains unrelated environment or request values")
@@ -187,6 +195,17 @@ func TestOperationPlanProbeRunnerUsesBoundedDirectChildAndCanonicalReceipt(t *te
 	if err != nil || filepath.Clean(strings.TrimSpace(string(workingDirectory))) != filepath.Clean(root) {
 		t.Fatalf("actual child did not use the installed plan root independent of the parent process CWD: cwd=%q err=%v", strings.TrimSpace(string(workingDirectory)), err)
 	}
+
+	// A source selector mismatch must not be hidden by an otherwise valid
+	// receipt from a different source. The child still emits the original
+	// canonical receipt, while the expectation now binds the other source.
+	mismatchedSource := expected
+	mismatchedSource.SourceID = "ecos"
+	_, _, mismatchErr := runner.Run(t.Context(), mismatchedSource, time.Now().UTC().Add(10*time.Second))
+	if mismatchErr == nil {
+		t.Fatal("receipt for another source was accepted under the selected source identity")
+	}
+	assertProbeFailureDetails(t, mismatchErr, "receipt_validation", "validation")
 }
 
 func TestOperationPlanProbeRunnerFailureDiagnosticsStayRedactedAndPrivate(t *testing.T) {
