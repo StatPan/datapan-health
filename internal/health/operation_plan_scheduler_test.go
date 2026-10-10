@@ -62,6 +62,172 @@ func TestOperationPlanSchedulerRunsOneBoundedLocalAttemptThenIndependentDelivery
 	}
 }
 
+func TestOperationPlanSchedulerReservesAFreeSlotForPendingDelivery(t *testing.T) {
+	worker, _, _, _, target, runtime := newOperationPlanSchedulerTestWorkerWithOptions(t, 2, 3600)
+	blockingGatus := &schedulerFairnessGatus{
+		pushStarted: make(chan struct{}), releasePush: make(chan struct{}),
+	}
+	blockingRunner := &schedulerBlockingReceiptExecutor{started: make(chan string, 1), release: make(chan struct{})}
+	firstExecutionRelease, secondExecutionRelease, thirdExecutionRelease := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	spareExecutionRelease := make(chan struct{})
+	var firstReleaseOnce, secondReleaseOnce, thirdReleaseOnce, spareReleaseOnce, pushReleaseOnce, runnerReleaseOnce sync.Once
+	releaseFirst := func() { firstReleaseOnce.Do(func() { close(firstExecutionRelease) }) }
+	releaseSecond := func() { secondReleaseOnce.Do(func() { close(secondExecutionRelease) }) }
+	releaseThird := func() { thirdReleaseOnce.Do(func() { close(thirdExecutionRelease) }) }
+	releaseSpare := func() { spareReleaseOnce.Do(func() { close(spareExecutionRelease) }) }
+	releasePush := func() { pushReleaseOnce.Do(func() { close(blockingGatus.releasePush) }) }
+	releaseRunner := func() { runnerReleaseOnce.Do(func() { close(blockingRunner.release) }) }
+	releaseAll := func() {
+		releaseFirst()
+		releaseSecond()
+		releaseThird()
+		releaseSpare()
+		releasePush()
+		releaseRunner()
+	}
+	t.Cleanup(releaseAll)
+	worker.gatus = blockingGatus
+	seeded, err := worker.ExecuteOne(context.Background(), target.Record.SourceID, target.Record.OperationID, time.Now().UTC())
+	if err != nil || seeded.AttemptState != "observed" || seeded.DeliveryState != "not_ready" {
+		t.Fatalf("could not create a durable delivery-pending receipt: result=%#v err=%v", seeded, err)
+	}
+	pending, err := worker.attempts.PendingDeliveries(target.Record.SourceID, target.Record.OperationID)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("seeded attempt was not visible in the durable pending outbox: pending=%d err=%v", len(pending), err)
+	}
+	worker.runner = blockingRunner
+	scheduler, err := NewOperationPlanScheduler(OperationPlanSchedulerConfig{
+		Worker: worker, MaxConcurrent: 3, MaxStartsPerPass: 1, MaxDeliveriesPerPass: 1,
+		CandidateScanPerPass: 1, DeliveryLease: time.Minute,
+	})
+	if err != nil || len(scheduler.targets) != 2 {
+		t.Fatalf("could not construct two-target fairness scheduler: targets=%d err=%v", len(scheduler.targets), err)
+	}
+
+	if !scheduler.launch(context.Background(), "synthetic-load-one", "execution", -1, func(ctx context.Context) { <-firstExecutionRelease }) ||
+		!scheduler.launch(context.Background(), "synthetic-load-two", "execution", -1, func(ctx context.Context) { <-secondExecutionRelease }) ||
+		!scheduler.launch(context.Background(), "synthetic-load-three", "execution", -1, func(ctx context.Context) { <-thirdExecutionRelease }) {
+		t.Fatal("could not occupy the bounded worker pool with deterministic in-flight work")
+	}
+	firstPassAt := time.Now().UTC()
+	if err := scheduler.ProcessDue(context.Background(), firstPassAt); err != nil {
+		t.Fatal("full-pool pass failed while retaining pending delivery work:", err)
+	}
+	releaseFirst()
+	releaseSecond()
+	waitForOperationPlanSchedulerActiveCount(t, scheduler, 1)
+	if !scheduler.launch(context.Background(), "synthetic-spare-execution", "execution", -1, func(ctx context.Context) { <-spareExecutionRelease }) {
+		t.Fatal("delivery reservation incorrectly blocked execution from using an additional free slot")
+	}
+	waitForOperationPlanSchedulerActiveCount(t, scheduler, 2)
+
+	secondPassAt := waitForOperationPlanSchedulerPass(t, firstPassAt)
+	if err := scheduler.ProcessDue(context.Background(), secondPassAt); err != nil {
+		t.Fatal("follow-up pass failed with one free worker slot:", err)
+	}
+	status := scheduler.Status(time.Now().UTC())
+	if status.ExecutionTasksStartedSinceStart != 0 || status.DeliveryTasksStartedSinceStart != 1 {
+		t.Fatalf("free slot was not reserved for the pending outbox before due execution: execution_started=%d delivery_started=%d", status.ExecutionTasksStartedSinceStart, status.DeliveryTasksStartedSinceStart)
+	}
+	select {
+	case <-blockingGatus.pushStarted:
+		// The durable outbox used the next free shared slot before due execution work.
+	case <-time.After(2 * time.Second):
+		t.Fatal("reserved delivery did not reach its bounded Gatus push")
+	}
+	releaseAll()
+	scheduler.Wait()
+	latest, found, err := worker.attempts.Latest(target.Record.SourceID, target.Record.OperationID)
+	if err != nil || !found || latest.DeliveryState != "readback_verified" || blockingGatus.pushes != 1 || blockingGatus.readbacks != 1 {
+		t.Fatalf("reserved delivery did not complete independent readback: latest=%#v found=%t pushes=%d readbacks=%d err=%v", latest, found, blockingGatus.pushes, blockingGatus.readbacks, err)
+	}
+	if len(runtime.ActiveTargets) != 2 {
+		t.Fatalf("test runtime did not retain the complete two-identity population: %d", len(runtime.ActiveTargets))
+	}
+}
+
+func TestOperationPlanSchedulerAdvancesDeliveryCursorAcrossPendingIdentities(t *testing.T) {
+	worker, _, _, _, firstTarget, runtime := newOperationPlanSchedulerTestWorkerWithConcurrentQuota(t, 2, 3600)
+	secondTarget := runtime.ActiveTargets[1]
+	blockingGatus := &schedulerFairnessGatus{
+		pushStarted: make(chan struct{}), releasePush: make(chan struct{}),
+	}
+	var releaseOnce sync.Once
+	releasePush := func() { releaseOnce.Do(func() { close(blockingGatus.releasePush) }) }
+	worker.gatus = blockingGatus
+	for _, target := range []OperationPlanWorkerTarget{firstTarget, secondTarget} {
+		seeded, err := worker.ExecuteOne(context.Background(), target.Record.SourceID, target.Record.OperationID, time.Now().UTC())
+		if err != nil || seeded.AttemptState != "observed" || seeded.DeliveryState != "not_ready" {
+			t.Fatalf("could not seed pending delivery for %s: result=%#v err=%v", target.Record.OperationID, seeded, err)
+		}
+	}
+	scheduler, err := NewOperationPlanScheduler(OperationPlanSchedulerConfig{
+		Worker: worker, MaxConcurrent: 2, MaxStartsPerPass: 1, MaxDeliveriesPerPass: 1,
+		CandidateScanPerPass: 1, DeliveryLease: time.Minute,
+	})
+	if err != nil {
+		t.Fatal("could not construct two-slot delivery scheduler:", err)
+	}
+	t.Cleanup(func() {
+		releasePush()
+		scheduler.Wait()
+	})
+	firstPassAt := time.Now().UTC()
+	if err := scheduler.ProcessDue(context.Background(), firstPassAt); err != nil {
+		t.Fatal("first pending-delivery pass failed:", err)
+	}
+	select {
+	case <-blockingGatus.pushStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first pending identity did not reach Gatus")
+	}
+	secondPassAt := waitForOperationPlanSchedulerPass(t, firstPassAt)
+	if err := scheduler.ProcessDue(context.Background(), secondPassAt); err != nil {
+		t.Fatal("second pending-delivery pass failed:", err)
+	}
+	status := scheduler.Status(time.Now().UTC())
+	if status.DeliveryTasksStartedSinceStart != 2 || status.ExecutionTasksStartedSinceStart != 0 {
+		t.Fatalf("delivery scan did not advance to the other pending identity within the configured worker limit: delivery_started=%d execution_started=%d", status.DeliveryTasksStartedSinceStart, status.ExecutionTasksStartedSinceStart)
+	}
+	releasePush()
+	scheduler.Wait()
+	for _, target := range []OperationPlanWorkerTarget{firstTarget, secondTarget} {
+		latest, found, err := worker.attempts.Latest(target.Record.SourceID, target.Record.OperationID)
+		if err != nil || !found || latest.DeliveryState != "readback_verified" {
+			t.Fatalf("pending identity %s was not delivered after cursor advance: latest=%#v found=%t err=%v", target.Record.OperationID, latest, found, err)
+		}
+	}
+}
+
+func TestOperationPlanSchedulerClearsReservationWhenDurableOutboxIsEmpty(t *testing.T) {
+	worker, _, _, _, _, _ := newOperationPlanSchedulerTestWorker(t)
+	scheduler, err := NewOperationPlanScheduler(OperationPlanSchedulerConfig{
+		Worker: worker, MaxConcurrent: 1, MaxStartsPerPass: 1, MaxDeliveriesPerPass: 1,
+		CandidateScanPerPass: 1, DeliveryLease: time.Minute,
+	})
+	if err != nil {
+		t.Fatal("could not construct single-slot scheduler:", err)
+	}
+	scheduler.mu.Lock()
+	scheduler.deliveryReservation = 0
+	scheduler.mu.Unlock()
+	if scheduler.launch(context.Background(), "nonreserved-execution", "execution", -1, func(context.Context) {}) {
+		t.Fatal("single-slot reservation allowed an execution to consume its only slot")
+	}
+
+	if err := scheduler.ProcessDue(context.Background(), time.Now().UTC()); err != nil {
+		t.Fatal("fresh empty-outbox scan failed:", err)
+	}
+	scheduler.Wait()
+	scheduler.mu.Lock()
+	reservation := scheduler.deliveryReservation
+	scheduler.mu.Unlock()
+	status := scheduler.Status(time.Now().UTC())
+	if reservation != -1 || status.DeliveryTasksStartedSinceStart != 0 || status.ExecutionTasksStartedSinceStart != 1 {
+		t.Fatalf("fresh empty durable scan did not release the reservation and restore single-slot execution: reservation=%d delivery_started=%d execution_started=%d", reservation, status.DeliveryTasksStartedSinceStart, status.ExecutionTasksStartedSinceStart)
+	}
+}
+
 func TestOperationPlanWorkerOwnsAnImmutableVerifiedRuntimeSnapshot(t *testing.T) {
 	worker, attempts, _, _, target, inputRuntime := newOperationPlanSchedulerTestWorker(t)
 	inputRuntime.ActiveTargets[0].Record.OperationID += "-mutated"
@@ -187,7 +353,7 @@ func operationPlanStatusBenchmarkScheduler(population int) *OperationPlanSchedul
 	return &OperationPlanScheduler{
 		worker: worker, targets: make([]OperationPlanWorkerTarget, population),
 		maxConcurrent: 32, maxStarts: 32, scanBudget: operationPlanSchedulerMaximumScanBudget,
-		capacity: operationPlanCapacityAssessment{Feasible: true}, active: make(map[string]string),
+		capacity: operationPlanCapacityAssessment{Feasible: true}, active: make(map[string]string), deliveryReservation: -1,
 	}
 }
 
@@ -200,6 +366,21 @@ func waitForOperationPlanSchedulerPass(t *testing.T, previous time.Time) time.Ti
 		<-timer.C
 	}
 	return time.Now().UTC()
+}
+
+func waitForOperationPlanSchedulerActiveCount(t *testing.T, scheduler *OperationPlanScheduler, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		scheduler.mu.Lock()
+		active := scheduler.activeCount
+		scheduler.mu.Unlock()
+		if active == want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("scheduler active count did not reach %d", want)
 }
 
 func TestOperationPlanDeliveryEvidenceTreatsProviderFailureAndObservationOnlyAsPipelineEvidence(t *testing.T) {
@@ -514,6 +695,68 @@ func (executor schedulerCalledReceiptExecutor) Run(ctx context.Context, expected
 	return (schedulerSyntheticReceiptExecutor{}).Run(ctx, expected, deadline)
 }
 
+type schedulerBlockingReceiptExecutor struct {
+	started chan string
+	release chan struct{}
+}
+
+func (executor *schedulerBlockingReceiptExecutor) Run(ctx context.Context, expected OperationPlanProbeExpectation, deadline time.Time) (OperationPlanProbeResult, int, error) {
+	select {
+	case executor.started <- expected.OperationID:
+	default:
+	}
+	select {
+	case <-executor.release:
+		return (schedulerSyntheticReceiptExecutor{}).Run(ctx, expected, deadline)
+	case <-ctx.Done():
+		return OperationPlanProbeResult{}, -1, ctx.Err()
+	}
+}
+
+type schedulerFairnessGatus struct {
+	mu          sync.Mutex
+	pushes      int
+	readbacks   int
+	results     map[string]OperationObservationResult
+	pushStarted chan struct{}
+	releasePush chan struct{}
+	pushOnce    sync.Once
+}
+
+func (client *schedulerFairnessGatus) Push(ctx context.Context, key string, result OperationObservationResult) (time.Time, error) {
+	if ctx.Err() != nil || !validPlanGatusEndpointKey(key) || !validOperationObservationResult(result) {
+		return time.Time{}, errOperationGatusDeliveryUnavailable
+	}
+	client.pushOnce.Do(func() { close(client.pushStarted) })
+	select {
+	case <-client.releasePush:
+	case <-ctx.Done():
+		return time.Time{}, errOperationGatusDeliveryUnavailable
+	}
+	client.mu.Lock()
+	if client.results == nil {
+		client.results = make(map[string]OperationObservationResult)
+	}
+	client.results[key] = result
+	client.pushes++
+	client.mu.Unlock()
+	return time.Now().UTC(), nil
+}
+
+func (client *schedulerFairnessGatus) Readback(ctx context.Context, key string, expected OperationObservationResult, acknowledgedAt time.Time) (time.Time, string, error) {
+	if ctx.Err() != nil || acknowledgedAt.IsZero() {
+		return time.Time{}, "", errOperationGatusDeliveryUnavailable
+	}
+	client.mu.Lock()
+	result, found := client.results[key]
+	client.readbacks++
+	client.mu.Unlock()
+	if !found || result != expected {
+		return time.Time{}, "", errOperationGatusDeliveryUnavailable
+	}
+	return time.Now().UTC(), expected.State, nil
+}
+
 type schedulerSyntheticGatus struct {
 	mu        sync.Mutex
 	pushes    int
@@ -550,17 +793,43 @@ func (client *schedulerSyntheticGatus) Readback(ctx context.Context, key string,
 }
 
 func newOperationPlanSchedulerTestWorker(t *testing.T) (*OperationPlanWorker, *OperationAttemptStore, *OperationHistoryStore, *schedulerSyntheticGatus, OperationPlanWorkerTarget, *VerifiedOperationPlanRuntime) {
+	return newOperationPlanSchedulerTestWorkerWithOptions(t, 1, 3600)
+}
+
+func newOperationPlanSchedulerTestWorkerWithOptions(t *testing.T, admittedTargets int, observationPeriodSeconds int64) (*OperationPlanWorker, *OperationAttemptStore, *OperationHistoryStore, *schedulerSyntheticGatus, OperationPlanWorkerTarget, *VerifiedOperationPlanRuntime) {
+	return newOperationPlanSchedulerTestWorkerConfigured(t, admittedTargets, observationPeriodSeconds, false)
+}
+
+func newOperationPlanSchedulerTestWorkerWithConcurrentQuota(t *testing.T, admittedTargets int, observationPeriodSeconds int64) (*OperationPlanWorker, *OperationAttemptStore, *OperationHistoryStore, *schedulerSyntheticGatus, OperationPlanWorkerTarget, *VerifiedOperationPlanRuntime) {
+	return newOperationPlanSchedulerTestWorkerConfigured(t, admittedTargets, observationPeriodSeconds, true)
+}
+
+func newOperationPlanSchedulerTestWorkerConfigured(t *testing.T, admittedTargets int, observationPeriodSeconds int64, allowSamePassQuotaRequests bool) (*OperationPlanWorker, *OperationAttemptStore, *OperationHistoryStore, *schedulerSyntheticGatus, OperationPlanWorkerTarget, *VerifiedOperationPlanRuntime) {
 	t.Helper()
-	planRoot, binding, sourceSHA, operationIDs := writeGatusPlanFixture(t)
+	var planRoot, sourceSHA string
+	var binding OperationObservationPlanBinding
+	var operationIDs []string
+	if allowSamePassQuotaRequests {
+		planRoot, binding, sourceSHA, operationIDs = writeGatusPlanFixtureWithConcurrentQuota(t, observationPeriodSeconds)
+	} else {
+		planRoot, binding, sourceSHA, operationIDs = writeGatusPlanFixtureWithObservationPeriod(t, false, observationPeriodSeconds)
+	}
+	if admittedTargets < 1 || admittedTargets > len(operationIDs) {
+		t.Fatalf("invalid synthetic admitted-target count: %d", admittedTargets)
+	}
 	plan, err := LoadPinnedOperationObservationPlan(planRoot, binding)
 	if err != nil {
 		t.Fatal(err)
 	}
 	metadata, canaries := gatusTestMetadata(sourceSHA, operationIDs)
+	activationOperations := make([]OperationGatusActivationEntry, 0, admittedTargets)
+	for _, operationID := range operationIDs[:admittedTargets] {
+		activationOperations = append(activationOperations, OperationGatusActivationEntry{SourceID: "data_go_kr", OperationID: operationID})
+	}
 	activationRaw, err := json.Marshal(OperationGatusActivation{
 		SchemaVersion:    OperationGatusActivationSchemaVersion,
 		RegistryRevision: plan.RegistryRevision(), IndexSHA256: plan.IndexSHA256(),
-		Operations: []OperationGatusActivationEntry{{SourceID: "data_go_kr", OperationID: operationIDs[0]}},
+		Operations: activationOperations,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -591,8 +860,8 @@ func newOperationPlanSchedulerTestWorker(t *testing.T) (*OperationPlanWorker, *O
 		t.Fatal(err)
 	}
 	runtime, err := verifyOperationGatusRuntimeArtifacts(paths, canaryRaw, canaries, metadata, plan)
-	if err != nil || len(runtime.ActiveTargets) != 1 {
-		t.Fatalf("could not bind one synthetic admitted target: active=%d err=%v", len(runtime.ActiveTargets), err)
+	if err != nil || len(runtime.ActiveTargets) != admittedTargets {
+		t.Fatalf("could not bind synthetic admitted targets: active=%d expected=%d err=%v", len(runtime.ActiveTargets), admittedTargets, err)
 	}
 	target := runtime.ActiveTargets[0]
 	lock := testOperationPlanRuntimeLock(strings.Repeat("9", 64))

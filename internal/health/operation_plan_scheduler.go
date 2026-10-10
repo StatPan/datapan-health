@@ -123,6 +123,7 @@ type OperationPlanScheduler struct {
 	activeCount           int
 	executionCursor       int
 	deliveryCursor        int
+	deliveryReservation   int
 	lastPass              time.Time
 	lastErrorReason       string
 	lastErrorStage        string
@@ -182,7 +183,7 @@ func NewOperationPlanScheduler(config OperationPlanSchedulerConfig) (*OperationP
 		worker: config.Worker, targets: targets, maxConcurrent: config.MaxConcurrent,
 		maxStarts: config.MaxStartsPerPass, maxDeliveries: config.MaxDeliveriesPerPass,
 		scanBudget: config.CandidateScanPerPass, deliveryLease: config.DeliveryLease,
-		capacity: assessment, active: make(map[string]string), identityErrors: make(map[string]operationPlanIdentityError),
+		capacity: assessment, active: make(map[string]string), identityErrors: make(map[string]operationPlanIdentityError), deliveryReservation: -1,
 	}, nil
 }
 
@@ -210,13 +211,14 @@ func (scheduler *OperationPlanScheduler) ProcessDue(ctx context.Context, now tim
 	scanCtx, cancelScan := context.WithTimeout(ctx, operationPlanSchedulerScanTimeout)
 	defer cancelScan()
 
+	deliveryStart := scheduler.deliveryScanStart()
 	deliveryScanned, deliveryStarted := 0, 0
 	for deliveryScanned < scheduler.scanBudget && deliveryScanned < len(scheduler.targets) && deliveryStarted < scheduler.maxDeliveries {
 		if scanCtx.Err() != nil {
 			scheduler.recordFailure(now, "attempt_store_unavailable")
 			return errOperationPlanSchedulerUnavailable
 		}
-		index := (scheduler.deliveryCursor + deliveryScanned) % len(scheduler.targets)
+		index := (deliveryStart + deliveryScanned) % len(scheduler.targets)
 		target := scheduler.targets[index]
 		deliveryScanned++
 		pending, err := scheduler.worker.attempts.PendingDeliveriesContext(scanCtx, target.Record.SourceID, target.Record.OperationID)
@@ -228,11 +230,12 @@ func (scheduler *OperationPlanScheduler) ProcessDue(ctx context.Context, now tim
 			continue
 		}
 		if len(pending) == 0 {
+			scheduler.clearDeliveryReservation(index)
 			continue
 		}
 		attempt := pending[0]
 		key := operationReadModelIdentityKey(target.Record.SourceID, target.Record.OperationID)
-		if scheduler.launch(ctx, key, "delivery", func(taskCtx context.Context) {
+		if scheduler.launch(ctx, key, "delivery", index, func(taskCtx context.Context) {
 			if err := scheduler.worker.DeliverOne(taskCtx, attempt.Binding.SourceID, attempt.Binding.OperationID, attempt.AttemptID, attempt.Generation, time.Now().UTC(), scheduler.deliveryLease); err != nil {
 				scheduler.finishDelivery(taskCtx, attempt)
 				return
@@ -243,9 +246,7 @@ func (scheduler *OperationPlanScheduler) ProcessDue(ctx context.Context, now tim
 			scheduler.addDeliveryTaskStarted()
 		}
 	}
-	if len(scheduler.targets) > 0 {
-		scheduler.deliveryCursor = (scheduler.deliveryCursor + deliveryScanned) % len(scheduler.targets)
-	}
+	scheduler.finishDeliveryScan(deliveryStart, deliveryScanned)
 	if scanCtx.Err() != nil {
 		scheduler.recordFailure(now, "attempt_store_unavailable")
 		return errOperationPlanSchedulerUnavailable
@@ -273,7 +274,7 @@ func (scheduler *OperationPlanScheduler) ProcessDue(ctx context.Context, now tim
 				continue
 			}
 			key := operationReadModelIdentityKey(target.Record.SourceID, target.Record.OperationID)
-			if scheduler.launch(ctx, key, "execution", func(taskCtx context.Context) {
+			if scheduler.launch(ctx, key, "execution", -1, func(taskCtx context.Context) {
 				result, runErr := scheduler.worker.ExecuteOne(taskCtx, target.Record.SourceID, target.Record.OperationID, time.Now().UTC())
 				scheduler.finishExecution(key, result, runErr)
 			}) {
@@ -470,17 +471,63 @@ func operationPlanTargetDue(target OperationPlanWorkerTarget, latest OperationSt
 	return !now.Before(latest.StartedAt.Add(period))
 }
 
-func (scheduler *OperationPlanScheduler) launch(parent context.Context, identity, kind string, run func(context.Context)) bool {
+func (scheduler *OperationPlanScheduler) deliveryScanStart() int {
+	scheduler.mu.Lock()
+	defer scheduler.mu.Unlock()
+	if scheduler.deliveryReservation >= 0 && scheduler.deliveryReservation < len(scheduler.targets) {
+		return scheduler.deliveryReservation
+	}
+	return scheduler.deliveryCursor
+}
+
+func (scheduler *OperationPlanScheduler) clearDeliveryReservation(index int) {
+	scheduler.mu.Lock()
+	if scheduler.deliveryReservation == index {
+		scheduler.deliveryReservation = -1
+	}
+	scheduler.mu.Unlock()
+}
+
+func (scheduler *OperationPlanScheduler) finishDeliveryScan(start, scanned int) {
+	scheduler.mu.Lock()
+	defer scheduler.mu.Unlock()
+	if scheduler.deliveryReservation >= 0 && scheduler.deliveryReservation < len(scheduler.targets) {
+		scheduler.deliveryCursor = scheduler.deliveryReservation
+		return
+	}
+	if len(scheduler.targets) > 0 {
+		scheduler.deliveryCursor = (start + scanned) % len(scheduler.targets)
+	}
+}
+
+func (scheduler *OperationPlanScheduler) reserveDeliveryLocked(index int) {
+	if index >= 0 && index < len(scheduler.targets) && scheduler.deliveryReservation < 0 {
+		scheduler.deliveryReservation = index
+	}
+}
+
+func (scheduler *OperationPlanScheduler) launch(parent context.Context, identity, kind string, targetIndex int, run func(context.Context)) bool {
 	if parent == nil || parent.Err() != nil {
 		return false
 	}
 	scheduler.mu.Lock()
 	if scheduler.activeCount >= scheduler.maxConcurrent || scheduler.active[identity] != "" {
+		if kind == "delivery" {
+			scheduler.reserveDeliveryLocked(targetIndex)
+		}
+		scheduler.mu.Unlock()
+		return false
+	}
+	reservedDelivery := kind == "delivery" && targetIndex == scheduler.deliveryReservation
+	if scheduler.deliveryReservation >= 0 && !reservedDelivery && scheduler.activeCount >= scheduler.maxConcurrent-1 {
 		scheduler.mu.Unlock()
 		return false
 	}
 	scheduler.active[identity] = kind
 	scheduler.activeCount++
+	if reservedDelivery {
+		scheduler.deliveryReservation = -1
+	}
 	scheduler.wg.Add(1)
 	scheduler.mu.Unlock()
 	go func() {

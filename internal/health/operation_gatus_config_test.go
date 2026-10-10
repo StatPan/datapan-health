@@ -372,8 +372,20 @@ func writeGatusPlanFixture(t *testing.T) (string, OperationObservationPlanBindin
 }
 
 func writeGatusPlanFixtureWithObservationOnly(t *testing.T, observationOnly bool) (string, OperationObservationPlanBinding, string, []string) {
+	return writeGatusPlanFixtureWithObservationPeriod(t, observationOnly, 3600)
+}
+
+func writeGatusPlanFixtureWithObservationPeriod(t *testing.T, observationOnly bool, observationPeriodSeconds int64) (string, OperationObservationPlanBinding, string, []string) {
+	return writeGatusPlanFixtureWithQuotaInterval(t, observationOnly, observationPeriodSeconds, -1)
+}
+
+func writeGatusPlanFixtureWithConcurrentQuota(t *testing.T, observationPeriodSeconds int64) (string, OperationObservationPlanBinding, string, []string) {
+	return writeGatusPlanFixtureWithQuotaInterval(t, false, observationPeriodSeconds, 0)
+}
+
+func writeGatusPlanFixtureWithQuotaInterval(t *testing.T, observationOnly bool, observationPeriodSeconds, credentialMinimumIntervalSeconds int64) (string, OperationObservationPlanBinding, string, []string) {
 	t.Helper()
-	root, binding, shardPath := writeSyntheticOperationObservationPlan(t, false)
+	root, binding, shardPath := writeSyntheticOperationObservationPlanVersion(t, false, strings.Repeat("a", 40), observationPeriodSeconds)
 	const oldSourcePath = "fixtures/operation-observation-plan/source.json"
 	const sourcePath = "data/data-go-kr.registry.json"
 	oldSource, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(oldSourcePath)))
@@ -419,6 +431,16 @@ func writeGatusPlanFixtureWithObservationOnly(t *testing.T, observationOnly bool
 		if index == 1 {
 			parameters := requestContract["parameters"].([]any)
 			parameters[0].(map[string]any)["qualified_name"] = map[string]any{"namespace": "urn:synthetic:request", "local_name": "RecordID"}
+		}
+		if credentialMinimumIntervalSeconds >= 0 {
+			runtimeBinding := record["runtime_binding"].(map[string]any)
+			quotaPolicies := runtimeBinding["quota_policies"].([]any)
+			for _, rawPolicy := range quotaPolicies {
+				policy := rawPolicy.(map[string]any)
+				if policy["scope_kind"] == "credential" {
+					policy["minimum_interval_seconds"] = credentialMinimumIntervalSeconds
+				}
+			}
 		}
 		rewriteGatusEvidence(record, oldSourcePath, sourcePath, sourceSHA, int64(len(oldSource)))
 		encoded, err := json.Marshal(record)
