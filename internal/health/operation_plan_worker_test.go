@@ -262,8 +262,14 @@ func TestOperationPlanWorkerArchivesCanceledChildReceiptBeforeGatusReadback(t *t
 	worker.runner = cancelAfterOperationPlanProbeExecutor{runner: runner, cancel: cancel, lockPaths: []string{filepath.Join(quotas.root, ".authority.lock")}, locked: quotaLockHeld}
 	startedAt := time.Now()
 	result, err := worker.ExecuteOne(ctx, target.Record.SourceID, target.Record.OperationID, time.Now().UTC())
-	quotaLocks := <-quotaLockHeld
-	if err == nil || time.Since(startedAt) > 3*time.Second || result.AttemptState != "observed" || result.DeliveryState != "not_ready" || !result.RequestStarted || result.ReceiptSHA256 == "" || ctx.Err() == nil {
+	var quotaLocks []*os.File
+	select {
+	case quotaLocks = <-quotaLockHeld:
+	case <-time.After(operationPlanPreDispatchCleanupTimeout + maxOperationPlanProbeDeadline + operationPlanPostChildCommitTimeout):
+		t.Fatalf("synthetic child was not reached within the bounded pre-dispatch and execution windows: result=%#v err=%v", result, err)
+	}
+	maximumCommitTime := operationPlanPreDispatchCleanupTimeout + maxOperationPlanProbeDeadline + operationPlanPostChildCommitTimeout
+	if err == nil || time.Since(startedAt) > maximumCommitTime || result.AttemptState != "observed" || result.DeliveryState != "not_ready" || !result.RequestStarted || result.ReceiptSHA256 == "" || ctx.Err() == nil {
 		unlockOperationPlanTestLocks(quotaLocks)
 		t.Fatalf("validated local child receipt was not committed despite caller cancellation: result=%#v err=%v canceled=%t", result, err, ctx.Err() != nil)
 	}

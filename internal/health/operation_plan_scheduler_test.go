@@ -1,0 +1,283 @@
+package health
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+func TestOperationPlanSchedulerRunsOneBoundedLocalAttemptThenIndependentDelivery(t *testing.T) {
+	worker, attempts, history, gatus, target := newOperationPlanSchedulerTestWorker(t)
+	scheduler, err := NewOperationPlanScheduler(OperationPlanSchedulerConfig{
+		Worker: worker, MaxConcurrent: 1, MaxStartsPerPass: 1, MaxDeliveriesPerPass: 1,
+		CandidateScanPerPass: 2, DeliveryLease: time.Minute,
+	})
+	if err != nil {
+		t.Fatal("local synthetic plan could not construct a bounded scheduler:", err)
+	}
+	started := time.Now().UTC()
+	if err := scheduler.ProcessDue(context.Background(), started); err != nil {
+		t.Fatal("first bounded pass failed:", err)
+	}
+	scheduler.Wait()
+	latest, found, err := attempts.Latest(target.Record.SourceID, target.Record.OperationID)
+	if err != nil || !found || latest.State != "observed" || latest.Result == nil || latest.DeliveryState != "not_ready" {
+		t.Fatalf("scheduler did not persist one local child observation before delivery: latest=%#v found=%t err=%v", latest, found, err)
+	}
+	usage, err := history.Usage(context.Background())
+	if err != nil || usage.RecordCount != 1 || usage.ReservationCount != 0 {
+		t.Fatalf("worker did not append the validated receipt before marking the observation: usage=%#v err=%v", usage, err)
+	}
+
+	// The next one-second pass finds the exact durable outbox record and uses
+	// only the per-key test client. It must not issue another provider child.
+	if err := scheduler.ProcessDue(context.Background(), started.Add(time.Second)); err != nil {
+		t.Fatal("bounded delivery pass failed:", err)
+	}
+	scheduler.Wait()
+	latest, found, err = attempts.Latest(target.Record.SourceID, target.Record.OperationID)
+	if err != nil || !found || latest.DeliveryState != "readback_verified" || latest.Result == nil || gatus.pushes != 1 || gatus.readbacks != 1 {
+		t.Fatalf("scheduler did not advance only the independent Gatus outbox: latest=%#v found=%t push=%d readback=%d err=%v", latest, found, gatus.pushes, gatus.readbacks, err)
+	}
+	status := scheduler.Status(time.Now().UTC())
+	if !status.Ready || status.State != "ready" || status.KnownOperations != worker.runtime.Plan.Counts().KnownOperations || status.AdmittedOperations != 1 || status.ExecutionTasksStartedSinceStart != 1 || status.RequestStartsSinceStart != 1 || status.ObservationsSinceStart != 1 || status.ReadbacksSinceStart != 1 || !status.CapacityFeasible {
+		t.Fatalf("scheduler readiness/counters do not describe the one admitted synthetic operation: %#v", status)
+	}
+}
+
+func TestOperationPlanSchedulerDoesNotStartProviderWorkWhenCapacityIsInfeasible(t *testing.T) {
+	worker, attempts, history, gatus, target := newOperationPlanSchedulerTestWorker(t)
+	scheduler, err := NewOperationPlanScheduler(OperationPlanSchedulerConfig{
+		Worker: worker, MaxConcurrent: 1, MaxStartsPerPass: 1, MaxDeliveriesPerPass: 1,
+		CandidateScanPerPass: 2, DeliveryLease: time.Minute,
+	})
+	if err != nil {
+		t.Fatal("local synthetic plan could not construct a bounded scheduler:", err)
+	}
+	// Model a plan whose immutable cadence cannot fit the configured global,
+	// per-provider, or per-credential quota and worker capacity.
+	scheduler.capacity.Feasible = false
+	scheduler.capacity.RequiredStartsPerSecond = 2
+	started := time.Now().UTC()
+	if err := scheduler.ProcessDue(context.Background(), started); err != nil {
+		t.Fatal("infeasible-capacity pass failed before reporting readiness:", err)
+	}
+	scheduler.Wait()
+	if _, found, err := attempts.Latest(target.Record.SourceID, target.Record.OperationID); err != nil || found {
+		t.Fatalf("infeasible capacity still reserved a provider attempt: found=%t err=%v", found, err)
+	}
+	usage, err := history.Usage(context.Background())
+	if err != nil || usage.RecordCount != 0 || usage.ReservationCount != 0 || gatus.pushes != 0 || gatus.readbacks != 0 {
+		t.Fatalf("infeasible capacity created receipt or delivery work: usage=%#v push=%d readback=%d err=%v", usage, gatus.pushes, gatus.readbacks, err)
+	}
+	status := scheduler.Status(started)
+	if status.Ready || status.State != "degraded" || status.Reason != "capacity_infeasible" || status.ExecutionTasksStartedSinceStart != 0 {
+		t.Fatalf("infeasible plan was not held closed and visible: %#v", status)
+	}
+}
+
+func TestOperationPlanCapacityReportsWholeFleetInfeasibleAtSafeCaps(t *testing.T) {
+	canaries, err := LoadCanaryConfig("../../config/canaries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadataArtifact, err := LoadRegistryAPIMetadata("../../config/registry/api-metadata.v1.json", "../../config/registry/api-metadata-source-pin.v1.json", canaries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := NewVerifiedRegistryAPIMetadata(metadataArtifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fleetSize := metadata.pin.OperationCount
+	policy := OperationQuotaPolicy{
+		ScopeSHA256:   OperationQuotaScopeDigest("global", "synthetic-global"),
+		MaxConcurrent: 256, RequestsPerWindow: fleetSize, Window: 10 * time.Minute,
+	}
+	targets := make([]OperationPlanWorkerTarget, fleetSize)
+	for index := range targets {
+		targets[index] = OperationPlanWorkerTarget{
+			Record: OperationObservationPlanRecord{
+				SourceID: "data_go_kr", OperationID: fmt.Sprintf("synthetic-%05d", index),
+				ObservationPeriod: 10 * time.Minute, RequestTimeout: 20 * time.Second,
+				RequestPlanStatus: "complete", RuntimeBindingStatus: "bound", AdmissionStatus: "admitted",
+				ExecutionEligible: true, QuotaPoliciesAdmitted: true, QuotaPolicies: []OperationQuotaPolicy{policy},
+			}, ShardSHA256: strings.Repeat("a", 64), GatusEndpointKey: fmt.Sprintf("registered_synthetic-%05d", index),
+		}
+	}
+	assessment, err := assessOperationPlanCapacity(targets, 32, 32, 256)
+	if err != nil {
+		t.Fatal("fleet capacity calculation rejected a bounded synthetic inventory:", err)
+	}
+	// The request timeout is 20 seconds, and the child process plus receipt
+	// handling reserves another 5 seconds under the current runner contract.
+	if assessment.Feasible || assessment.RequiredConcurrency != 528 || assessment.RequiredStartsPerSecond < 21.1 || assessment.RequiredStartsPerSecond > 21.2 || assessment.FailureScopes != 1 {
+		t.Fatalf("scheduler overstated 12,666-operation/10-minute feasibility: %#v", assessment)
+	}
+}
+
+func TestOperationPlanTargetDueUsesSlowerBoundPlanCadenceAndDoesNotReplaySlots(t *testing.T) {
+	started := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	target := OperationPlanWorkerTarget{Record: OperationObservationPlanRecord{ObservationPeriod: 10 * time.Minute}}
+	latest := OperationStoredAttempt{StartedAt: started, Binding: OperationAttemptBinding{ObservationPeriod: 5 * time.Minute}}
+	if operationPlanTargetDue(target, latest, started.Add(9*time.Minute+59*time.Second)) {
+		t.Fatal("operation was rescheduled before the slower immutable period elapsed")
+	}
+	if !operationPlanTargetDue(target, latest, started.Add(10*time.Minute)) {
+		t.Fatal("operation did not become due at its immutable period")
+	}
+	if !operationPlanTargetDue(target, latest, started.Add(24*time.Hour)) {
+		t.Fatal("missed periods were treated as a reason to replay a backlog of calls")
+	}
+}
+
+type schedulerSyntheticReceiptExecutor struct{}
+
+func (schedulerSyntheticReceiptExecutor) Run(ctx context.Context, expected OperationPlanProbeExpectation, deadline time.Time) (OperationPlanProbeResult, int, error) {
+	if ctx.Err() != nil || !deadline.After(time.Now()) {
+		return OperationPlanProbeResult{}, -1, errOperationPlanProbeUnavailable
+	}
+	now := time.Now().UTC()
+	receipt := testOperationPlanProbeReceipt(expected, now, "healthy", "response_assertion_passed", "passed", true, true, 1, http.StatusOK)
+	raw, err := json.Marshal(receipt)
+	if err != nil {
+		return OperationPlanProbeResult{}, -1, errOperationPlanProbeUnavailable
+	}
+	raw = append(raw, '\n')
+	result, err := ValidateOperationPlanProbeReceipt(raw, expected, expected.StartedAt, time.Now().UTC(), 0)
+	if err != nil {
+		return OperationPlanProbeResult{}, -1, err
+	}
+	return result, 0, nil
+}
+
+type schedulerSyntheticGatus struct {
+	mu        sync.Mutex
+	pushes    int
+	readbacks int
+	results   map[string]OperationObservationResult
+}
+
+func (client *schedulerSyntheticGatus) Push(ctx context.Context, key string, result OperationObservationResult) (time.Time, error) {
+	if ctx.Err() != nil || !validPlanGatusEndpointKey(key) || !validOperationObservationResult(result) {
+		return time.Time{}, errOperationGatusDeliveryUnavailable
+	}
+	client.mu.Lock()
+	if client.results == nil {
+		client.results = make(map[string]OperationObservationResult)
+	}
+	client.results[key] = result
+	client.pushes++
+	client.mu.Unlock()
+	return time.Now().UTC(), nil
+}
+
+func (client *schedulerSyntheticGatus) Readback(ctx context.Context, key string, expected OperationObservationResult, acknowledgedAt time.Time) (time.Time, string, error) {
+	if ctx.Err() != nil || acknowledgedAt.IsZero() {
+		return time.Time{}, "", errOperationGatusDeliveryUnavailable
+	}
+	client.mu.Lock()
+	result, found := client.results[key]
+	client.readbacks++
+	client.mu.Unlock()
+	if !found || result != expected {
+		return time.Time{}, "", errOperationGatusDeliveryUnavailable
+	}
+	return time.Now().UTC(), expected.State, nil
+}
+
+func newOperationPlanSchedulerTestWorker(t *testing.T) (*OperationPlanWorker, *OperationAttemptStore, *OperationHistoryStore, *schedulerSyntheticGatus, OperationPlanWorkerTarget) {
+	t.Helper()
+	planRoot, binding, sourceSHA, operationIDs := writeGatusPlanFixture(t)
+	plan, err := LoadPinnedOperationObservationPlan(planRoot, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, canaries := gatusTestMetadata(sourceSHA, operationIDs)
+	activationRaw, err := json.Marshal(OperationGatusActivation{
+		SchemaVersion:    OperationGatusActivationSchemaVersion,
+		RegistryRevision: plan.RegistryRevision(), IndexSHA256: plan.IndexSHA256(),
+		Operations: []OperationGatusActivationEntry{{SourceID: "data_go_kr", OperationID: operationIDs[0]}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	activation, activationSHA, err := DecodeOperationGatusActivation(activationRaw, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := []byte("web:\n  port: 8080\nexternal-endpoints:\n  - name: placeholder\n")
+	canaryRaw := []byte("verified synthetic scheduler canary\n")
+	artifacts, err := GenerateOperationGatusArtifacts(base, digestOperationGatusBytes(canaryRaw), canaries, metadata, &plan, &activation, activationSHA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	paths := operationPlanTestRuntimePaths(root)
+	for path, raw := range map[string][]byte{
+		paths.BaseGatusConfigPath: base, paths.GeneratedConfigPath: artifacts.Config,
+		paths.IdentityMappingPath: artifacts.Mapping, paths.RuntimePinPath: artifacts.RuntimePin,
+	} {
+		if err := os.WriteFile(path, raw, 0o400); err != nil {
+			t.Fatal(err)
+		}
+	}
+	paths.ActivationPath = root + "/activation.json"
+	paths.ActivationSHA256 = activationSHA
+	if err := os.WriteFile(paths.ActivationPath, activationRaw, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := verifyOperationGatusRuntimeArtifacts(paths, canaryRaw, canaries, metadata, plan)
+	if err != nil || len(runtime.ActiveTargets) != 1 {
+		t.Fatalf("could not bind one synthetic admitted target: active=%d err=%v", len(runtime.ActiveTargets), err)
+	}
+	target := runtime.ActiveTargets[0]
+	lock := testOperationPlanRuntimeLock(strings.Repeat("9", 64))
+	resolver, err := NewPinnedOperationPlanProbeExpectationResolver(plan, lock, "amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	validator, err := NewOperationPlanProbeHistoryValidator(strings.Repeat("8", 40), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	history, err := OpenOperationHistoryStore(root+"/history", 16<<20, validator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts, err := OpenOperationAttemptStore(root + "/attempts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	quotas, err := OpenOperationQuotaAuthority(root + "/quotas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	probeConfig, err := OperationPlanProbeConfigFromRuntimeLock(lock, "amd64", "/synthetic/datapan", bindingIndexPath(planRoot, binding), root+"/credential-bindings.json", root+"/receipts", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerConfig := OperationPlanWorkerConfig{
+		Runtime: runtime, Runner: schedulerSyntheticReceiptExecutor{}, Attempts: attempts,
+		Quotas: quotas, History: history, HistoryValidator: validator,
+		Gatus: &schedulerSyntheticGatus{}, RuntimeLock: lock, Architecture: "amd64",
+		AttemptLease: time.Minute, QuotaLease: time.Minute,
+	}
+	worker, err := newOperationPlanWorker(workerConfig, probeConfig)
+	if err != nil {
+		t.Fatal("could not construct the deterministic synthetic operation worker:", err)
+	}
+	client := &schedulerSyntheticGatus{}
+	worker.gatus = client
+	return worker, attempts, history, client, target
+}
+
+func bindingIndexPath(planRoot string, binding OperationObservationPlanBinding) string {
+	return planRoot + "/" + binding.IndexPath
+}

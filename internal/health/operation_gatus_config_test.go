@@ -495,6 +495,9 @@ func rewriteGatusEvidence(node any, oldPath, newPath, sha string, size int64) {
 		for key, value := range typed {
 			if key == "artifact_path" && value == oldPath {
 				typed[key] = newPath
+				if _, ok := typed["sha256"]; ok {
+					typed["sha256"] = sha
+				}
 			}
 			if key == "evidence_kind" && value == "synthetic_fixture" {
 				typed[key] = "operation_document"

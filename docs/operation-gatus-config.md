@@ -28,3 +28,14 @@ that service exits successfully and mounts the generated directory read-only.
 The generated identity map and runtime dependency pin are private runtime
 artifacts; the public status handler must continue using its separately pinned
 read model and must not infer provider observations from Gatus heartbeats.
+
+`health-scheduler` can consume the same verified bundle through its production
+operation-plan controller. The controller remains disabled when both
+`HEALTH_OPERATION_GATUS_ACTIVATION` and its `_SHA256` pin are absent. Setting
+only one, failing any artifact binding, or failing the exact CLI bundle check
+keeps operation readiness closed and prevents overlapping legacy canaries from
+running. Once the activation and generated Gatus artifacts verify, the
+one-second bounded controller owns due checks, durable attempt/history writes,
+and an independent Gatus outbox. See [the runtime acceptance procedure](operation-plan-runtime.md)
+for the complete opt-in input set and the separate `/operation-plan/ready`
+signal.

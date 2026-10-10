@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"github.com/StatPan/datapan-health/internal/health"
 	"net/http/httptest"
 	"path/filepath"
@@ -96,5 +97,79 @@ func TestImageBundleFailureKeepsReadinessClosed(t *testing.T) {
 		if w.Code != test.status || strings.Contains(w.Body.String(), "missing-lock") {
 			t.Fatal("bundle failure readiness or redaction regressed")
 		}
+	}
+}
+
+func TestOperationPlanReadinessIsSeparateAndDisabledDefaultDoesNotChangeLegacyCanaries(t *testing.T) {
+	config, err := health.LoadCanaryConfig("../../config/canaries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HEALTH_OPERATION_GATUS_ACTIVATION", "")
+	t.Setenv("HEALTH_OPERATION_GATUS_ACTIVATION_SHA256", "")
+	control := loadOperationPlanControl("../../config/canaries.json", config, health.CLIProcess{Path: "/missing-cli"})
+	if control.required || !control.legacySafe || control.failure != "" || control.scheduler != nil || len(control.legacyConfig.Canaries) != len(config.Canaries) || control.status.State != "disabled" {
+		t.Fatalf("default-off generic plan setup changed the legacy selection: %#v", control)
+	}
+	s, err := health.NewScheduler(config, filepath.Join(t.TempDir(), "state.json"), health.CLIProcess{Path: "/missing-cli"}, health.AdapterProcess{Path: "/missing-adapter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := healthSchedulerHandlerWithOperationPlan(s, func() string { return "" }, control.currentStatus)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/operation-plan/status", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"state":"disabled"`) || strings.Contains(w.Body.String(), "missing-cli") {
+		t.Fatalf("disabled operation-plan status was not a safe separate state: code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestOperationPlanActivationWithoutPinBlocksLegacyAndReportsGenericReadiness(t *testing.T) {
+	config, err := health.LoadCanaryConfig("../../config/canaries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HEALTH_OPERATION_GATUS_ACTIVATION", "/image/activation.json")
+	t.Setenv("HEALTH_OPERATION_GATUS_ACTIVATION_SHA256", "")
+	control := loadOperationPlanControl("../../config/canaries.json", config, health.CLIProcess{Path: "/missing-cli"})
+	if !control.required || control.legacySafe || control.failure != "activation_pin_unavailable" || control.status.Reason != "activation_pin_unavailable" {
+		t.Fatalf("unverified generic activation did not fail closed before legacy execution: %#v", control)
+	}
+	s, err := health.NewScheduler(config, filepath.Join(t.TempDir(), "state.json"), health.CLIProcess{Path: "/missing-cli"}, health.AdapterProcess{Path: "/missing-adapter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := healthSchedulerHandlerWithOperationPlan(s, func() string { return "operation_plan_activation_unavailable" }, control.currentStatus)
+	for _, route := range []string{"/operation-plan/status", "/operation-plan/ready"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", route, nil))
+		if w.Code != 503 || !strings.Contains(w.Body.String(), "activation_pin_unavailable") && route == "/operation-plan/status" {
+			t.Fatalf("invalid activation did not report its bounded readiness reason: route=%s code=%d body=%s", route, w.Code, w.Body.String())
+		}
+		if strings.Contains(w.Body.String(), "/image/") || strings.Contains(w.Body.String(), "missing-cli") {
+			t.Fatal("operation-plan status exposed runtime paths")
+		}
+		if route == "/operation-plan/status" {
+			var decoded health.OperationPlanSchedulerStatus
+			if err := json.Unmarshal(w.Body.Bytes(), &decoded); err != nil || decoded.Reason != "activation_pin_unavailable" || decoded.Ready {
+				t.Fatalf("status did not preserve typed generic readiness: %#v err=%v", decoded, err)
+			}
+		}
+	}
+}
+
+func TestLegacySuppressionRequiresExactKnownCanaryIDs(t *testing.T) {
+	config, err := health.LoadCanaryConfig("../../config/canaries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	filtered, err := filterSuppressedLegacyCanaries(config, []string{config.Canaries[0].OperationID})
+	if err != nil || len(filtered.Canaries) != len(config.Canaries)-1 {
+		t.Fatalf("exact verified overlap was not suppressed: remaining=%d err=%v", len(filtered.Canaries), err)
+	}
+	if _, err := filterSuppressedLegacyCanaries(config, []string{"unregistered-health-id"}); err == nil {
+		t.Fatal("runtime suppressed an ID that was not a configured legacy canary")
+	}
+	if _, err := filterSuppressedLegacyCanaries(config, []string{config.Canaries[0].OperationID, config.Canaries[0].OperationID}); err == nil {
+		t.Fatal("runtime accepted a repeated legacy suppression identity")
 	}
 }

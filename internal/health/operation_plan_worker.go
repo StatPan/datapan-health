@@ -300,7 +300,7 @@ func (worker *OperationPlanWorker) DeliverOne(ctx context.Context, sourceID, ope
 	if worker == nil || worker.attempts == nil || worker.gatus == nil || ctx == nil || ctx.Err() != nil || now.IsZero() {
 		return errOperationPlanWorkerUnavailable
 	}
-	attempt, found, err := worker.attempts.GetAttempt(sourceID, operationID, attemptID, generation)
+	attempt, found, err := worker.attempts.GetAttemptContext(ctx, sourceID, operationID, attemptID, generation)
 	if err != nil || !found || attempt.State != "observed" || attempt.Result == nil {
 		return errOperationPlanWorkerUnavailable
 	}
@@ -309,21 +309,21 @@ func (worker *OperationPlanWorker) DeliverOne(ctx context.Context, sourceID, ope
 	}
 	if attempt.DeliveryState == "acknowledged" {
 		readbackAt, resultState, readErr := worker.gatus.Readback(ctx, attempt.Binding.GatusKey, *attempt.Result, attempt.DeliveryAckAt)
-		if readErr != nil || worker.attempts.RecordGatusReadback(sourceID, operationID, attemptID, generation, readbackAt, resultState) != nil {
+		if readErr != nil || worker.attempts.RecordGatusReadbackContext(ctx, sourceID, operationID, attemptID, generation, readbackAt, resultState) != nil {
 			return errOperationPlanWorkerUnavailable
 		}
 		return nil
 	}
-	claim, err := worker.attempts.ClaimDelivery(sourceID, operationID, attemptID, generation, now.UTC(), lease)
+	claim, err := worker.attempts.ClaimDeliveryContext(ctx, sourceID, operationID, attemptID, generation, now.UTC(), lease)
 	if err != nil {
 		return err
 	}
 	acknowledgedAt, err := worker.gatus.Push(ctx, claim.Binding.GatusKey, claim.Result)
-	if err != nil || acknowledgedAt.IsZero() || worker.attempts.AcknowledgeDelivery(claim, acknowledgedAt) != nil {
+	if err != nil || acknowledgedAt.IsZero() || worker.attempts.AcknowledgeDeliveryContext(ctx, claim, acknowledgedAt) != nil {
 		return errOperationPlanWorkerUnavailable
 	}
 	readbackAt, resultState, err := worker.gatus.Readback(ctx, claim.Binding.GatusKey, claim.Result, acknowledgedAt)
-	if err != nil || readbackAt.IsZero() || worker.attempts.RecordGatusReadback(sourceID, operationID, attemptID, generation, readbackAt, resultState) != nil {
+	if err != nil || readbackAt.IsZero() || worker.attempts.RecordGatusReadbackContext(ctx, sourceID, operationID, attemptID, generation, readbackAt, resultState) != nil {
 		return errOperationPlanWorkerUnavailable
 	}
 	return nil

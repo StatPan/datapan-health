@@ -20,6 +20,10 @@ import (
 	"github.com/StatPan/datapan-health/internal/runtimebundle"
 )
 
+// Set by the immutable runtime-image build. It identifies the source that
+// validates and seals operation-plan receipts recovered from local storage.
+var healthBuildRevision = "unknown"
+
 func main() {
 	configPath := env("CANARY_CONFIG", "config/canaries.json")
 	config, err := health.LoadCanaryConfig(configPath)
@@ -32,6 +36,8 @@ func main() {
 		HealthCatalogPath: env("HEALTH_PROBE_CATALOG", config.CatalogPath),
 		RegistryRevision:  config.ConsumptionProvenance.RegistryDatasetRevision,
 	}
+	planControl := loadOperationPlanControl(configPath, config, runner)
+	config = planControl.legacyConfig
 	adapter := health.AdapterProcess{Path: env("HEALTH_RUNNER_BIN", "health-runner"), Env: []string{"GATUS_URL", "GATUS_TOKEN", "RECEIPT_ARCHIVE", "RECEIPT_DELIVERY_JOURNAL", "CANARY_CONFIG"}}
 	coverage, err := scheduleCoverageLifecycle()
 	if err != nil {
@@ -46,6 +52,9 @@ func main() {
 	dependencyReason := runtimeDependencyPreflight(config, runner)
 
 	preflight := func() string {
+		if planControl.required && !planControl.legacySafe {
+			return "operation_plan_activation_unavailable"
+		}
 		if dependencyReason != "" {
 			return dependencyReason
 		}
@@ -70,7 +79,7 @@ func main() {
 		}
 		return ""
 	}
-	server := &http.Server{Addr: env("SCHEDULER_ADDR", ":8081"), Handler: healthSchedulerHandler(scheduler, preflight), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 * 1024}
+	server := &http.Server{Addr: env("SCHEDULER_ADDR", ":8081"), Handler: healthSchedulerHandlerWithOperationPlan(scheduler, preflight, planControl.currentStatus), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 * 1024}
 	listener, err := net.Listen("tcp", server.Addr)
 	if err != nil {
 		log.Fatal("scheduler HTTP listener unavailable")
@@ -92,11 +101,15 @@ func main() {
 	for {
 		select {
 		case now := <-ticker.C:
-			if preflight() != "" {
-				continue
+			if preflight() == "" {
+				if err := scheduler.ProcessDue(runCtx, now); err != nil {
+					log.Print("scheduler state update failed")
+				}
 			}
-			if err := scheduler.ProcessDue(runCtx, now); err != nil {
-				log.Print("scheduler state update failed")
+			if planControl.scheduler != nil && planControl.failure == "" {
+				if err := planControl.scheduler.ProcessDue(runCtx, now); err != nil {
+					log.Print("operation-plan scheduler pass failed")
+				}
 			}
 		case <-serverFailed:
 			log.Fatal("scheduler HTTP server unavailable")
@@ -106,7 +119,13 @@ func main() {
 			defer cancel()
 			_ = server.Shutdown(ctx)
 			done := make(chan struct{})
-			go func() { scheduler.Wait(); close(done) }()
+			go func() {
+				scheduler.Wait()
+				if planControl.scheduler != nil {
+					planControl.scheduler.Wait()
+				}
+				close(done)
+			}()
 			select {
 			case <-done:
 			case <-ctx.Done():
@@ -133,6 +152,10 @@ func runtimeDependencyPreflight(config health.CanaryConfig, runner health.CLIPro
 }
 
 func healthSchedulerHandler(s *health.Scheduler, preflight func() string) http.Handler {
+	return healthSchedulerHandlerWithOperationPlan(s, preflight, nil)
+}
+
+func healthSchedulerHandlerWithOperationPlan(s *health.Scheduler, preflight func() string, operationPlanStatus func(time.Time) health.OperationPlanSchedulerStatus) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -173,6 +196,34 @@ func healthSchedulerHandler(s *health.Scheduler, preflight func() string) http.H
 					_, _ = w.Write([]byte("not ready\n"))
 				}
 			}
+		case "/operation-plan/ready", "/operation-plan/status":
+			status := health.OperationPlanSchedulerStatus{SchemaVersion: "datapan.health-operation-plan-scheduler-status.v1", State: "disabled", Reason: "activation_not_configured"}
+			if operationPlanStatus != nil {
+				status = operationPlanStatus(time.Now().UTC())
+			}
+			code := http.StatusOK
+			if status.State != "disabled" && !status.Ready {
+				code = http.StatusServiceUnavailable
+			}
+			if r.URL.Path == "/operation-plan/status" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(code)
+				if r.Method != http.MethodHead {
+					_ = json.NewEncoder(w).Encode(status)
+				}
+				return
+			}
+			w.WriteHeader(code)
+			if r.Method != http.MethodHead {
+				switch status.State {
+				case "disabled":
+					_, _ = w.Write([]byte("disabled\n"))
+				case "ready":
+					_, _ = w.Write([]byte("ready\n"))
+				default:
+					_, _ = w.Write([]byte("not ready\n"))
+				}
+			}
 		case "/metrics":
 			m := s.Metrics()
 			report := s.Readiness(time.Now().UTC())
@@ -193,6 +244,17 @@ func healthSchedulerHandler(s *health.Scheduler, preflight func() string) http.H
 				ready = 1
 			}
 			_, _ = fmt.Fprintf(w, "datapan_health_scheduler_ready %d\ndatapan_health_scheduler_last_loop_timestamp_seconds %d\ndatapan_health_scheduler_last_delivery_timestamp_seconds %d\n", ready, loop, delivered)
+			if operationPlanStatus != nil {
+				plan := operationPlanStatus(time.Now().UTC())
+				planReady, planCapacity := 0, 0
+				if plan.Ready {
+					planReady = 1
+				}
+				if plan.CapacityFeasible {
+					planCapacity = 1
+				}
+				_, _ = fmt.Fprintf(w, "datapan_health_operation_plan_ready %d\ndatapan_health_operation_plan_known_operations %d\ndatapan_health_operation_plan_admitted_operations %d\ndatapan_health_operation_plan_capacity_feasible %d\ndatapan_health_operation_plan_active_work %d\n", planReady, plan.KnownOperations, plan.AdmittedOperations, planCapacity, plan.ActiveWork)
+			}
 			for _, p := range report.Canaries {
 				at := int64(0)
 				if p.LastDelivered != nil {

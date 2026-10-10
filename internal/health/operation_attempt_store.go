@@ -702,12 +702,18 @@ func validOperationAttemptDeferredReason(value string) bool {
 // Reclaiming an expired pending delivery may create duplicate Gatus history;
 // it never repeats the provider operation.
 func (store *OperationAttemptStore) ClaimDelivery(sourceID, operationID, attemptID string, generation uint64, now time.Time, lease time.Duration) (OperationDeliveryClaim, error) {
-	if store == nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 || !quotaAttemptIDPattern.MatchString(attemptID) || generation == 0 || now.IsZero() || lease < time.Second || lease > maxOperationAttemptLease {
+	return store.ClaimDeliveryContext(context.Background(), sourceID, operationID, attemptID, generation, now, lease)
+}
+
+// ClaimDeliveryContext bounds outbox state mutation while waiting for the
+// shared filesystem lock. It never repeats the provider request.
+func (store *OperationAttemptStore) ClaimDeliveryContext(ctx context.Context, sourceID, operationID, attemptID string, generation uint64, now time.Time, lease time.Duration) (OperationDeliveryClaim, error) {
+	if store == nil || ctx == nil || ctx.Err() != nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 || !quotaAttemptIDPattern.MatchString(attemptID) || generation == 0 || now.IsZero() || lease < time.Second || lease > maxOperationAttemptLease {
 		return OperationDeliveryClaim{}, ErrOperationAttemptUnavailable
 	}
 	now = now.UTC()
 	var claim OperationDeliveryClaim
-	err := store.withStoreLock(func() error {
+	err := store.withStoreLockContext(ctx, func() error {
 		state, found, err := store.readState(sourceID, operationID)
 		if err != nil || !found {
 			return ErrOperationAttemptUnavailable
@@ -750,11 +756,15 @@ func (store *OperationAttemptStore) ClaimDelivery(sourceID, operationID, attempt
 }
 
 func (store *OperationAttemptStore) AcknowledgeDelivery(claim OperationDeliveryClaim, responseAt time.Time) error {
-	if store == nil || !validOperationDeliveryClaim(claim) || responseAt.IsZero() {
+	return store.AcknowledgeDeliveryContext(context.Background(), claim, responseAt)
+}
+
+func (store *OperationAttemptStore) AcknowledgeDeliveryContext(ctx context.Context, claim OperationDeliveryClaim, responseAt time.Time) error {
+	if store == nil || ctx == nil || ctx.Err() != nil || !validOperationDeliveryClaim(claim) || responseAt.IsZero() {
 		return ErrOperationAttemptUnavailable
 	}
 	responseAt = responseAt.UTC()
-	return store.withStoreLock(func() error {
+	return store.withStoreLockContext(ctx, func() error {
 		state, found, err := store.readState(claim.Binding.SourceID, claim.Binding.OperationID)
 		if err != nil || !found {
 			return ErrOperationAttemptUnavailable
@@ -773,11 +783,15 @@ func (store *OperationAttemptStore) AcknowledgeDelivery(claim OperationDeliveryC
 // RecordGatusReadback binds a per-key readback timestamp to a previously
 // accepted summary. It does not change the original provider observation time.
 func (store *OperationAttemptStore) RecordGatusReadback(sourceID, operationID, attemptID string, generation uint64, receivedAt time.Time, resultState string) error {
-	if store == nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || !quotaAttemptIDPattern.MatchString(attemptID) || generation == 0 || receivedAt.IsZero() || !validGatusResultState(resultState) {
+	return store.RecordGatusReadbackContext(context.Background(), sourceID, operationID, attemptID, generation, receivedAt, resultState)
+}
+
+func (store *OperationAttemptStore) RecordGatusReadbackContext(ctx context.Context, sourceID, operationID, attemptID string, generation uint64, receivedAt time.Time, resultState string) error {
+	if store == nil || ctx == nil || ctx.Err() != nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || !quotaAttemptIDPattern.MatchString(attemptID) || generation == 0 || receivedAt.IsZero() || !validGatusResultState(resultState) {
 		return ErrOperationAttemptUnavailable
 	}
 	receivedAt = receivedAt.UTC()
-	return store.withStoreLock(func() error {
+	return store.withStoreLockContext(ctx, func() error {
 		state, found, err := store.readState(sourceID, operationID)
 		if err != nil || !found {
 			return ErrOperationAttemptUnavailable
@@ -795,17 +809,29 @@ func (store *OperationAttemptStore) RecordGatusReadback(sourceID, operationID, a
 }
 
 func (store *OperationAttemptStore) Latest(sourceID, operationID string) (OperationStoredAttempt, bool, error) {
-	if store == nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 {
+	return store.LatestContext(context.Background(), sourceID, operationID)
+}
+
+func (store *OperationAttemptStore) LatestContext(ctx context.Context, sourceID, operationID string) (OperationStoredAttempt, bool, error) {
+	if store == nil || ctx == nil || ctx.Err() != nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 {
 		return OperationStoredAttempt{}, false, ErrOperationAttemptUnavailable
 	}
 	var latest OperationStoredAttempt
 	var foundAttempt bool
-	err := store.withStoreLock(func() error {
+	err := store.withStoreLockContext(ctx, func() error {
 		state, found, err := store.readState(sourceID, operationID)
 		if err != nil || !found {
 			return err
 		}
 		latest = state.Attempts[len(state.Attempts)-1]
+		if latest.RequestStarted != nil {
+			requestStarted := *latest.RequestStarted
+			latest.RequestStarted = &requestStarted
+		}
+		if latest.Result != nil {
+			result := *latest.Result
+			latest.Result = &result
+		}
 		foundAttempt = true
 		return nil
 	})
@@ -817,12 +843,16 @@ func (store *OperationAttemptStore) Latest(sourceID, operationID string) (Operat
 // a newer claim must not strand an older validated result. The returned value
 // is detached from the store's decoded state.
 func (store *OperationAttemptStore) GetAttempt(sourceID, operationID, attemptID string, generation uint64) (OperationStoredAttempt, bool, error) {
-	if store == nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 || !quotaAttemptIDPattern.MatchString(attemptID) || generation == 0 {
+	return store.GetAttemptContext(context.Background(), sourceID, operationID, attemptID, generation)
+}
+
+func (store *OperationAttemptStore) GetAttemptContext(ctx context.Context, sourceID, operationID, attemptID string, generation uint64) (OperationStoredAttempt, bool, error) {
+	if store == nil || ctx == nil || ctx.Err() != nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 || !quotaAttemptIDPattern.MatchString(attemptID) || generation == 0 {
 		return OperationStoredAttempt{}, false, ErrOperationAttemptUnavailable
 	}
 	var selected OperationStoredAttempt
 	var foundAttempt bool
-	err := store.withStoreLock(func() error {
+	err := store.withStoreLockContext(ctx, func() error {
 		state, found, err := store.readState(sourceID, operationID)
 		if err != nil || !found {
 			return err
@@ -994,11 +1024,15 @@ func laterOperationAttemptTime(current time.Time, candidates ...time.Time) time.
 // include receipts from older scheduled observations when Gatus is down; a
 // caller retries these independently from any new provider attempt.
 func (store *OperationAttemptStore) PendingDeliveries(sourceID, operationID string) ([]OperationStoredAttempt, error) {
-	if store == nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 {
+	return store.PendingDeliveriesContext(context.Background(), sourceID, operationID)
+}
+
+func (store *OperationAttemptStore) PendingDeliveriesContext(ctx context.Context, sourceID, operationID string) ([]OperationStoredAttempt, error) {
+	if store == nil || ctx == nil || ctx.Err() != nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 {
 		return nil, ErrOperationAttemptUnavailable
 	}
 	var pending []OperationStoredAttempt
-	err := store.withStoreLock(func() error {
+	err := store.withStoreLockContext(ctx, func() error {
 		state, found, err := store.readState(sourceID, operationID)
 		if err != nil || !found {
 			return err

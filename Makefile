@@ -2,7 +2,7 @@ RUNTIME_IMAGE ?= datapan-health-runtime:test
 ARCHIVE_IMAGE ?= datapan-health-archive:test
 TESTED_REVISION ?= $(HEALTH_HEAD)
 
-.PHONY: test quality build images image-smoke release-oci release-governance-smoke release-provenance-smoke runtime-publication-contract smoke visual archive-smoke hf-publish-smoke governance-check security-reporting-check security-reporting-check-test diagnostic-compatibility diagnostic-provenance diagnostic-provenance-check assertion-policy-compatibility correlation-replay diagnosis-snapshot-evidence public-status-doctor manifest-verify schedule-coverage schedule-coverage-doctor
+.PHONY: test quality build images image-smoke release-oci release-governance-smoke release-provenance-smoke runtime-publication-contract smoke visual archive-smoke hf-publish-smoke governance-check security-reporting-check security-reporting-check-test diagnostic-compatibility diagnostic-provenance diagnostic-provenance-check assertion-policy-compatibility correlation-replay diagnosis-snapshot-evidence public-status-doctor manifest-verify schedule-coverage schedule-coverage-doctor operation-plan-full-population operation-plan-gatus-integration
 
 test:
 	go test ./...
@@ -68,6 +68,16 @@ schedule-coverage:
 
 schedule-coverage-doctor: schedule-coverage
 	go run ./cmd/health-public -doctor -schedule-coverage-state out/schedule-coverage-state.json -schedule-coverage-reference-at 2026-07-23T00:00:00Z > out/schedule-coverage-doctor.json
+
+# Explicit source-QA target: derives its complete identity set from the pinned
+# Registry metadata and runs only local synthetic receipts, never providers.
+operation-plan-full-population:
+	HEALTH_OPERATION_FULL_POPULATION_TEST=1 go test ./internal/health -run '^TestOperationPlanManifestDerivedSyntheticPopulation$$' -count=1 -timeout=30m
+
+# Starts the exact pinned Gatus image on loopback and verifies one synthetic
+# receipt through the production push/readback adapter. No provider is called.
+operation-plan-gatus-integration:
+	HEALTH_OPERATION_GATUS_INTEGRATION_TEST=1 go test ./internal/health -run '^TestOperationPlanPinnedGatusSyntheticReceiptIntegration$$' -count=1 -timeout=5m
 
 hf-publish-smoke:
 	./scripts/hf-publish-smoke.sh
