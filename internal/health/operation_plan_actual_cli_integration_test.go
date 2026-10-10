@@ -229,6 +229,19 @@ func actualCLIChildStderrClassSummary(classes map[string]int) string {
 	return strings.Join(parts, ",")
 }
 
+func actualCLIProbeReasonCodeClass(reason string) string {
+	switch reason {
+	case "response_assertion_passed", "response_assertion_failed", "response_assertion_invalid",
+		"response_semantics_unestablished", "response_http_failure", "credential_binding_unavailable",
+		"credential_binding_mismatch", "credential_source_unavailable", "operation_plan_unsupported",
+		"deadline_expired_before_request", "request_deadline_exceeded", "request_limit_exceeded",
+		"response_limit_exceeded", "request_transport_failed", "response_read_failed", "response_invalid":
+		return reason
+	default:
+		return "unrecognized"
+	}
+}
+
 // TestOperationPlanActualCLIProviderGatusIntegration is the opt-in source-QA
 // proof for the compiled, exact-pinned CLI child, a no-egress synthetic REST/
 // SOAP provider, durable operation receipts, and the pinned native Gatus API.
@@ -980,20 +993,46 @@ func actualCLISmoke(t *testing.T, worker *OperationPlanWorker, attempts *Operati
 	for index, selectedCase := range selected {
 		testCase, identity := selectedCase.caseSpec, selectedCase.identity
 		result, err := results[index].result, results[index].err
-		if err != nil || result.AttemptState != "observed" || !result.RequestStarted {
-			storedState, blockReason, requestStarted := "missing", "none", "unset"
-			stored, found, readErr := attempts.Latest(identity.SourceID, identity.OperationID)
-			if readErr == nil && found {
-				storedState, blockReason = stored.State, stored.BlockReason
-				if stored.RequestStarted != nil {
-					requestStarted = strconv.FormatBool(*stored.RequestStarted)
+		latest, found, latestErr := attempts.Latest(identity.SourceID, identity.OperationID)
+		storedState, blockReason, storedRequest, storedOutcome, storedCategory, storedHTTPStatus := "missing", "none", "unset", "none", "none", 0
+		responseObserved, reasonCode := false, "unavailable"
+		if latestErr == nil && found {
+			storedState, blockReason = latest.State, latest.BlockReason
+			if latest.RequestStarted != nil {
+				storedRequest = strconv.FormatBool(*latest.RequestStarted)
+			}
+			if latest.Result != nil {
+				storedOutcome, storedCategory, storedHTTPStatus = latest.Result.State, latest.Result.Category, latest.Result.HTTPStatus
+				responseObserved = latest.State == "observed"
+				if latest.Result.HistoryRecordID != "" {
+					stored, readErr := history.readStoredRecord(context.Background(), latest.Result.HistoryRecordID)
+					if readErr == nil {
+						var receipt struct {
+							Execution struct {
+								RequestStarted bool `json:"request_started"`
+							} `json:"execution"`
+							Observation struct {
+								ResponseObserved bool   `json:"response_observed"`
+								HTTPStatus       int    `json:"http_status"`
+								ReasonCode       string `json:"reason_code"`
+							} `json:"observation"`
+						}
+						if json.Unmarshal(stored.Record.ReceiptBytes, &receipt) == nil {
+							responseObserved = receipt.Observation.ResponseObserved
+							reasonCode = actualCLIProbeReasonCodeClass(receipt.Observation.ReasonCode)
+							storedHTTPStatus = receipt.Observation.HTTPStatus
+							storedRequest = strconv.FormatBool(receipt.Execution.RequestStarted)
+						}
+					}
 				}
 			}
-			children := telemetry.snapshot()
-			t.Fatalf("actual CLI did not commit a durable %s observation: attempt_state=%s execution_block=%s request=%t stored_state=%s stored_block=%s stored_request=%s worker_error=%t child_calls=%d child_total=%s child_max=%s child_timeouts=%d child_exit_errors=%d child_other_errors=%d child_stdout_bytes=%d child_stderr_bytes=%d child_stderr_classes=%s", testCase.name, result.AttemptState, result.ExecutionBlockReason, result.RequestStarted, storedState, blockReason, requestStarted, err != nil, children.Calls, children.TotalElapsed.Round(time.Millisecond), children.MaxElapsed.Round(time.Millisecond), children.ContextTimeout, children.ExitErrors, children.OtherErrors, children.StdoutBytes, children.StderrBytes, actualCLIChildStderrClassSummary(children.StderrClasses))
 		}
-		latest, found, err := attempts.Latest(identity.SourceID, identity.OperationID)
-		if err != nil || !found || latest.Result == nil || !latest.ReceiptValidated || latest.State != "observed" {
+		t.Logf("actual CLI smoke case: case=%q attempt_state=%s request_started=%s response_observed=%t http_status=%d reason_code=%s result_state=%s result_category=%s execution_block=%s worker_error=%t", testCase.name, result.AttemptState, storedRequest, responseObserved, storedHTTPStatus, reasonCode, storedOutcome, storedCategory, result.ExecutionBlockReason, err != nil)
+		if err != nil || result.AttemptState != "observed" || !result.RequestStarted {
+			children := telemetry.snapshot()
+			t.Fatalf("actual CLI did not commit a durable %s observation: attempt_state=%s execution_block=%s request=%t stored_state=%s stored_block=%s worker_error=%t child_calls=%d child_total=%s child_max=%s child_timeouts=%d child_exit_errors=%d child_other_errors=%d child_stdout_bytes=%d child_stderr_bytes=%d child_stderr_classes=%s", testCase.name, result.AttemptState, result.ExecutionBlockReason, result.RequestStarted, storedState, blockReason, err != nil, children.Calls, children.TotalElapsed.Round(time.Millisecond), children.MaxElapsed.Round(time.Millisecond), children.ContextTimeout, children.ExitErrors, children.OtherErrors, children.StdoutBytes, children.StderrBytes, actualCLIChildStderrClassSummary(children.StderrClasses))
+		}
+		if latestErr != nil || !found || latest.Result == nil || !latest.ReceiptValidated || latest.State != "observed" {
 			t.Fatalf("actual CLI %s receipt was not durably validated", testCase.protocol)
 		}
 		shouldDeliver := true
