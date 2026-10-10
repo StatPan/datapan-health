@@ -543,33 +543,27 @@ func TestOperationPlanSchedulerStoreLockCannotBlockControllerPassOrLaunchProvide
 		t.Fatal(err)
 	}
 	started := time.Now().UTC()
+	passStarted := time.Now()
 	passDone := make(chan error, 1)
 	go func() { passDone <- scheduler.ProcessDue(context.Background(), started) }()
-	var passErr error
 	select {
-	case passErr = <-passDone:
-		if passErr == nil {
-			t.Fatal("controller pass ignored the held attempt-store lock")
+	case passErr := <-passDone:
+		if passErr != nil {
+			t.Fatalf("read-only candidate discovery failed under the held writer lock: %v", passErr)
 		}
 	case <-time.After(operationPlanSchedulerScanTimeout + time.Second):
 		t.Fatal("controller pass remained blocked on the attempt-store lock")
 	}
-	if !errors.Is(passErr, errOperationPlanSchedulerUnavailable) || passErr.Error() != errOperationPlanSchedulerUnavailable.Error() {
-		t.Fatalf("bounded scan error lost its stable redacted contract: %T %q", passErr, passErr.Error())
-	}
-	stage, category, ok := operationPlanSchedulerFailureDetails(passErr)
-	if !ok || stage != "delivery_scan" || category != "scan_deadline" {
-		t.Fatalf("held attempt-store lock did not identify the bounded delivery-scan timeout: stage=%q category=%q found=%t", stage, category, ok)
+	passElapsed := time.Since(passStarted)
+	if passElapsed >= operationPlanSchedulerScanTimeout {
+		t.Fatalf("read-only candidate discovery waited on the writer-lock deadline: elapsed=%s scan_timeout=%s", passElapsed, operationPlanSchedulerScanTimeout)
 	}
 	statusAtFailure := scheduler.Status(time.Now().UTC())
-	if statusAtFailure.LastErrorReason != "attempt_store_unavailable" || statusAtFailure.LastErrorStage != "delivery_scan" || statusAtFailure.lastErrorCategory != "scan_deadline" {
-		t.Fatalf("bounded scan failure was not retained as safe scheduler status: %#v", statusAtFailure)
+	if statusAtFailure.LastErrorReason != "" || statusAtFailure.lastPassDeliveryScanned != 1 || statusAtFailure.lastPassExecutionScanned != 1 || statusAtFailure.lastPassEvidenceScanned != 1 {
+		t.Fatalf("lock-free bounded scans did not finish with accurate pass status: %#v", statusAtFailure)
 	}
-	if statusAtFailure.lastDiagnosticFailureStage != stage || statusAtFailure.lastDiagnosticFailureCategory != category || statusAtFailure.failureStageCounts[stage] != 1 || statusAtFailure.failureCategoryCounts[category] != 1 {
-		t.Fatalf("bounded scan stage/category counters were not retained: stage=%q category=%q stages=%v categories=%v", statusAtFailure.lastDiagnosticFailureStage, statusAtFailure.lastDiagnosticFailureCategory, statusAtFailure.failureStageCounts, statusAtFailure.failureCategoryCounts)
-	}
-	if statusAtFailure.lastPassElapsed < operationPlanSchedulerScanTimeout || statusAtFailure.lastPassElapsed > operationPlanSchedulerScanTimeout+time.Second || statusAtFailure.lastPassDeliveryScanned != 1 || statusAtFailure.lastPassExecutionScanned != 0 || statusAtFailure.lastPassEvidenceScanned != 0 {
-		t.Fatalf("bounded scan diagnostics did not capture the failed pass work: elapsed=%s delivery=%d execution=%d evidence=%d", statusAtFailure.lastPassElapsed, statusAtFailure.lastPassDeliveryScanned, statusAtFailure.lastPassExecutionScanned, statusAtFailure.lastPassEvidenceScanned)
+	if statusAtFailure.lastPassElapsed >= operationPlanSchedulerScanTimeout || statusAtFailure.lastPassElapsed < 0 {
+		t.Fatalf("controller pass wall time was not retained within the scan bound: elapsed=%s", statusAtFailure.lastPassElapsed)
 	}
 	select {
 	case <-called:
@@ -583,9 +577,6 @@ func TestOperationPlanSchedulerStoreLockCannotBlockControllerPassOrLaunchProvide
 	if err := lock.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := scheduler.ProcessDue(context.Background(), time.Now().UTC()); err != nil {
-		t.Fatal("controller did not recover after the attempt-store lock was released:", err)
-	}
 	scheduler.Wait()
 	select {
 	case <-called:
@@ -595,6 +586,52 @@ func TestOperationPlanSchedulerStoreLockCannotBlockControllerPassOrLaunchProvide
 	latest, found, err := attempts.Latest(target.Record.SourceID, target.Record.OperationID)
 	if err != nil || !found || latest.State != "observed" {
 		t.Fatalf("recovered bounded pass did not persist one local attempt: found=%t state=%q err=%v", found, latest.State, err)
+	}
+}
+
+func TestOperationPlanSchedulerRediscoversAcknowledgedOutboxForReadbackOnly(t *testing.T) {
+	worker, attempts, _, _, target, _ := newOperationPlanSchedulerTestWorker(t)
+	gatus := &schedulerRetryReadbackOnlyGatus{failFirstReadback: true}
+	worker.gatus = gatus
+	started := time.Now().UTC()
+	result, err := worker.ExecuteOne(context.Background(), target.Record.SourceID, target.Record.OperationID, started)
+	if err != nil || result.AttemptState != "observed" || result.DeliveryState != "not_ready" {
+		t.Fatalf("local worker did not persist one observed receipt: result=%#v err=%v", result, err)
+	}
+	if err := worker.DeliverOne(context.Background(), result.SourceID, result.OperationID, result.AttemptID, result.Generation, time.Now().UTC(), time.Minute); !errors.Is(err, errOperationPlanWorkerUnavailable) {
+		t.Fatalf("fixture did not stop after Gatus acknowledged the summary but failed readback: %v", err)
+	}
+	stored, found, err := attempts.GetAttempt(result.SourceID, result.OperationID, result.AttemptID, result.Generation)
+	if err != nil || !found || stored.DeliveryState != "acknowledged" || stored.DeliveryAckAt.IsZero() {
+		t.Fatalf("push acknowledgement was not retained for a readback-only retry: %#v found=%t err=%v", stored, found, err)
+	}
+	candidates, err := attempts.PendingDeliveriesSnapshotContext(context.Background(), result.SourceID, result.OperationID)
+	if err != nil || len(candidates) != 1 || candidates[0].DeliveryState != "acknowledged" {
+		t.Fatalf("acknowledged outbox row was not rediscovered: candidates=%#v err=%v", candidates, err)
+	}
+
+	scheduler, err := NewOperationPlanScheduler(OperationPlanSchedulerConfig{
+		Worker: worker, MaxConcurrent: 1, MaxStartsPerPass: 1, MaxDeliveriesPerPass: 1,
+		CandidateScanPerPass: 2, DeliveryLease: time.Minute,
+	})
+	if err != nil {
+		t.Fatal("local synthetic plan could not construct a bounded scheduler:", err)
+	}
+	if err := scheduler.ProcessDue(context.Background(), time.Now().UTC()); err != nil {
+		t.Fatalf("scheduler failed to scan acknowledged outbox row: %v", err)
+	}
+	scheduler.Wait()
+	stored, found, err = attempts.GetAttempt(result.SourceID, result.OperationID, result.AttemptID, result.Generation)
+	pushes, readbacks := gatus.counts()
+	status := scheduler.Status(time.Now().UTC())
+	if err != nil || !found || stored.DeliveryState != "readback_verified" || stored.GatusReceivedAt.IsZero() || pushes != 1 || readbacks != 2 || status.ExecutionTasksStartedSinceStart != 0 || status.ReadbacksSinceStart != 1 || status.DeliveryFailuresSinceStart != 0 {
+		t.Fatalf("acknowledged retry repeated a push or failed to verify the stored key: stored=%#v found=%t pushes=%d readbacks=%d status=%#v err=%v", stored, found, pushes, readbacks, status, err)
+	}
+	if err := worker.DeliverOne(context.Background(), result.SourceID, result.OperationID, candidates[0].AttemptID, candidates[0].Generation, time.Now().UTC(), time.Minute); err != nil {
+		t.Fatalf("stale acknowledged candidate was not safely ignored after readback: %v", err)
+	}
+	if pushes, readbacks = gatus.counts(); pushes != 1 || readbacks != 2 {
+		t.Fatalf("stale acknowledged candidate caused duplicate Gatus traffic: push=%d readback=%d", pushes, readbacks)
 	}
 }
 
@@ -897,6 +934,52 @@ func (client *schedulerSyntheticGatus) Readback(ctx context.Context, key string,
 		return time.Time{}, "", errOperationGatusDeliveryUnavailable
 	}
 	return time.Now().UTC(), expected.State, nil
+}
+
+type schedulerRetryReadbackOnlyGatus struct {
+	mu                sync.Mutex
+	pushes            int
+	readbacks         int
+	results           map[string]OperationObservationResult
+	failFirstReadback bool
+}
+
+func (client *schedulerRetryReadbackOnlyGatus) Push(ctx context.Context, key string, result OperationObservationResult) (time.Time, error) {
+	if ctx.Err() != nil || !validPlanGatusEndpointKey(key) || !validOperationObservationResult(result) {
+		return time.Time{}, errOperationGatusDeliveryUnavailable
+	}
+	client.mu.Lock()
+	if client.results == nil {
+		client.results = make(map[string]OperationObservationResult)
+	}
+	client.results[key] = result
+	client.pushes++
+	client.mu.Unlock()
+	return time.Now().UTC(), nil
+}
+
+func (client *schedulerRetryReadbackOnlyGatus) Readback(ctx context.Context, key string, expected OperationObservationResult, acknowledgedAt time.Time) (time.Time, string, error) {
+	if ctx.Err() != nil || acknowledgedAt.IsZero() {
+		return time.Time{}, "", errOperationGatusDeliveryUnavailable
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	client.readbacks++
+	if client.failFirstReadback {
+		client.failFirstReadback = false
+		return time.Time{}, "", errOperationGatusDeliveryUnavailable
+	}
+	result, found := client.results[key]
+	if !found || result != expected {
+		return time.Time{}, "", errOperationGatusDeliveryUnavailable
+	}
+	return time.Now().UTC(), expected.State, nil
+}
+
+func (client *schedulerRetryReadbackOnlyGatus) counts() (int, int) {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	return client.pushes, client.readbacks
 }
 
 func newOperationPlanSchedulerTestWorker(t *testing.T) (*OperationPlanWorker, *OperationAttemptStore, *OperationHistoryStore, *schedulerSyntheticGatus, OperationPlanWorkerTarget, *VerifiedOperationPlanRuntime) {

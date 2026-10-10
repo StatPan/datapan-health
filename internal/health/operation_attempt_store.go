@@ -1130,7 +1130,9 @@ func laterOperationAttemptTime(current time.Time, candidates ...time.Time) time.
 
 // PendingDeliveries returns the bounded per-operation outbox entries. It may
 // include receipts from older scheduled observations when Gatus is down; a
-// caller retries these independently from any new provider attempt.
+// caller retries these independently from any new provider attempt. An
+// acknowledged receipt is included for readback-only recovery; DeliverOne
+// will not push it again.
 func (store *OperationAttemptStore) PendingDeliveries(sourceID, operationID string) ([]OperationStoredAttempt, error) {
 	return store.PendingDeliveriesContext(context.Background(), sourceID, operationID)
 }
@@ -1146,13 +1148,44 @@ func (store *OperationAttemptStore) PendingDeliveriesContext(ctx context.Context
 			return err
 		}
 		for _, attempt := range state.Attempts {
-			if attempt.State == "observed" && attempt.DeliveryState == "not_ready" || attempt.State == "observed" && attempt.DeliveryState == "pending" {
+			if attempt.State == "observed" && (attempt.DeliveryState == "not_ready" || attempt.DeliveryState == "pending" || attempt.DeliveryState == "acknowledged") {
 				pending = append(pending, attempt)
 			}
 		}
 		return nil
 	})
 	return pending, err
+}
+
+// PendingDeliveriesSnapshotContext discovers bounded outbox candidates from
+// one validated atomic-rename snapshot without taking the writer flock. The
+// returned rows are stale candidates by design: DeliverOne re-reads the exact
+// attempt and its generation under the authoritative store lock before it
+// claims a push or performs readback.
+func (store *OperationAttemptStore) PendingDeliveriesSnapshotContext(ctx context.Context, sourceID, operationID string) ([]OperationStoredAttempt, error) {
+	if store == nil || ctx == nil || ctx.Err() != nil || !operationSourceIDPattern.MatchString(sourceID) || operationID == "" || len(operationID) > 256 {
+		return nil, ErrOperationAttemptUnavailable
+	}
+	state, found, err := store.readState(sourceID, operationID)
+	if err != nil || ctx.Err() != nil {
+		return nil, ErrOperationAttemptUnavailable
+	}
+	if !found {
+		return nil, nil
+	}
+	pending := make([]OperationStoredAttempt, 0, len(state.Attempts))
+	for _, attempt := range state.Attempts {
+		if ctx.Err() != nil {
+			return nil, ErrOperationAttemptUnavailable
+		}
+		if attempt.State == "observed" && (attempt.DeliveryState == "not_ready" || attempt.DeliveryState == "pending" || attempt.DeliveryState == "acknowledged") {
+			pending = append(pending, cloneOperationStoredAttempt(attempt))
+		}
+	}
+	if ctx.Err() != nil {
+		return nil, ErrOperationAttemptUnavailable
+	}
+	return pending, nil
 }
 
 func (store *OperationAttemptStore) transitionClaim(claim OperationAttemptClaim, now time.Time, apply func(*operationAttemptState, *OperationStoredAttempt) error) error {

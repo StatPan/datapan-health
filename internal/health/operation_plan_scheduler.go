@@ -324,7 +324,7 @@ func (scheduler *OperationPlanScheduler) ProcessDue(ctx context.Context, now tim
 		index := (deliveryStart + deliveryScanned) % len(scheduler.targets)
 		target := scheduler.targets[index]
 		deliveryScanned++
-		pending, err := scheduler.worker.attempts.PendingDeliveriesContext(scanCtx, target.Record.SourceID, target.Record.OperationID)
+		pending, err := scheduler.worker.attempts.PendingDeliveriesSnapshotContext(scanCtx, target.Record.SourceID, target.Record.OperationID)
 		if err != nil {
 			scheduler.addDeliveryScanFailure(operationReadModelIdentityKey(target.Record.SourceID, target.Record.OperationID))
 			if scanCtx.Err() != nil {
@@ -369,7 +369,7 @@ func (scheduler *OperationPlanScheduler) ProcessDue(ctx context.Context, now tim
 			index := (scheduler.executionCursor + executionScanned) % len(scheduler.targets)
 			target := scheduler.targets[index]
 			executionScanned++
-			latest, found, err := scheduler.worker.attempts.LatestContext(scanCtx, target.Record.SourceID, target.Record.OperationID)
+			latest, found, err := scheduler.worker.attempts.LatestSnapshotContext(scanCtx, target.Record.SourceID, target.Record.OperationID)
 			if err != nil {
 				scheduler.addIdentityScanFailure(operationReadModelIdentityKey(target.Record.SourceID, target.Record.OperationID))
 				if scanCtx.Err() != nil {
