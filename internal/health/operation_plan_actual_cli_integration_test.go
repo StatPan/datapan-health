@@ -125,6 +125,7 @@ type actualCLIInvocationTelemetrySnapshot struct {
 
 type actualCLIChildCapture struct {
 	attemptSHA256   string
+	sourceSHA256    string
 	operationSHA256 string
 	stdout          []byte
 	stderr          []byte
@@ -138,6 +139,7 @@ type actualCLIChildCapture struct {
 type actualCLIPrivateFailureMetadata struct {
 	SchemaVersion        string `json:"schema_version"`
 	AttemptTokenSHA256   string `json:"attempt_token_sha256"`
+	SourceTokenSHA256    string `json:"source_token_sha256,omitempty"`
 	OperationTokenSHA256 string `json:"operation_token_sha256"`
 	AttemptGeneration    uint64 `json:"attempt_generation"`
 	WorkerStage          string `json:"worker_stage"`
@@ -314,6 +316,7 @@ func instrumentActualCLIChildInvoker(base operationPlanProbeChildInvoker, teleme
 		}
 		capture := actualCLIChildCapture{
 			attemptSHA256:   actualCLIArgumentSHA256(args, "--health-attempt-id"),
+			sourceSHA256:    actualCLIArgumentSHA256(args, "--health-source-id"),
 			operationSHA256: actualCLIArgumentSHA256(args, "--health-operation-id"),
 			stdout:          append([]byte(nil), stdoutData...), stderr: append([]byte(nil), stderrData...),
 			receipt: actualCLIReadReceiptCapture(telemetry.receiptRoot, actualCLIArgumentValue(args, "--output")),
@@ -454,7 +457,7 @@ func (telemetry *actualCLIInvocationTelemetry) retainFailedCapture(attemptID str
 	}
 	metadata := actualCLIPrivateFailureMetadata{
 		SchemaVersion:      "datapan.health-actual-cli-failure-capture.v1",
-		AttemptTokenSHA256: capture.attemptSHA256, OperationTokenSHA256: capture.operationSHA256,
+		AttemptTokenSHA256: capture.attemptSHA256, SourceTokenSHA256: capture.sourceSHA256, OperationTokenSHA256: capture.operationSHA256,
 		AttemptGeneration: generation,
 		WorkerStage:       workerStage, WorkerCategory: workerCategory, ProbeStage: probeStage, ProbeCategory: probeCategory,
 		ChildErrorKind: capture.errorKind, ChildExitCode: capture.exitCode, StderrClass: capture.stderrClass,
@@ -560,6 +563,14 @@ func actualCLIChildStderrClass(stderr []byte) string {
 		switch strings.TrimPrefix(line, readyPrefix) {
 		case "health operation plan is not executable under its declared bounds":
 			return "plan_not_executable"
+		case "health operation ID is ambiguous across Registry source scopes":
+			return "operation_id_ambiguous_across_sources"
+		case "health operation ID is not present in the Registry plan index":
+			return "operation_id_not_in_index"
+		case "health operation ID is duplicated within its Registry source scope":
+			return "operation_id_duplicate_in_source"
+		case "health operation ID is not present in the selected Registry plan shard":
+			return "operation_id_not_in_selected_shard"
 		case "selected operation-document evidence is invalid":
 			return "document_evidence_invalid"
 		case "selected reviewed operation policy is invalid":
@@ -858,6 +869,13 @@ func actualCLIReproduceHistoricalUnknown(t *testing.T, worker *OperationPlanWork
 	if identity.SourceID != "ecos" || identity.Protocol != "HTTP" || !identity.InventoryUnknown {
 		t.Fatal("actual CLI single-identity reproduction selected an unexpected source scope")
 	}
+	operationTokenSHA256 := digest([]byte(identity.OperationID))
+	target, targetFound := worker.targets[operationReadModelIdentityKey(identity.SourceID, identity.OperationID)]
+	indexRangeMatches, sourceRangeMatches, targetShardRangeMatches := actualCLIPlanShardRangeMatches(worker.runtime.Plan, identity.SourceID, identity.OperationID, target.ShardSHA256)
+	targetOperationTokenMatches := targetFound && digest([]byte(target.Record.OperationID)) == operationTokenSHA256
+	if !targetFound || !targetOperationTokenMatches || sourceRangeMatches != 1 || targetShardRangeMatches != 1 {
+		t.Fatalf("actual CLI selector preflight did not bind one source-scoped target: operation_token_sha256=%s target_found=%t target_operation_token_matches=%t index_range_matches=%d source_range_matches=%d target_shard_range_matches=%d", operationTokenSHA256, targetFound, targetOperationTokenMatches, indexRangeMatches, sourceRangeMatches, targetShardRangeMatches)
+	}
 	beforeMetrics := actualCLIProviderMetrics(t, metricsURL, caPath)
 	if beforeMetrics["requests"] != 0 || beforeMetrics["unique"] != 0 {
 		t.Fatal("actual CLI single-identity reproduction requires a fresh synthetic provider")
@@ -878,16 +896,17 @@ func actualCLIReproduceHistoricalUnknown(t *testing.T, worker *OperationPlanWork
 	if result.AttemptID != "" && runErr != nil {
 		retained = children.retainFailedCapture(result.AttemptID, result.Generation, workerStage, workerCategory, probeStage, probeCategory)
 	}
+	capture, captureFound := children.captureForAttempt(result.AttemptID)
+	childSourceTokenMatches := captureFound && capture.sourceSHA256 == digest([]byte(identity.SourceID))
+	childOperationTokenMatches := captureFound && capture.operationSHA256 == operationTokenSHA256
 	latest, found, latestErr := attempts.Latest(identity.SourceID, identity.OperationID)
 	usage, usageErr := history.Usage(context.Background())
 	afterMetrics := actualCLIProviderMetrics(t, metricsURL, caPath)
 	memory := monitor.Snapshot()
 	child := children.snapshot()
 	receiptProtocolBound := false
-	target, targetFound := worker.targets[operationReadModelIdentityKey(identity.SourceID, identity.OperationID)]
 	if targetFound && result.AttemptID != "" {
 		expected, expectedErr := operationPlanProbeExpected(worker.runtime.Plan, target.Record, target.ShardSHA256, result.AttemptID, worker.lock, worker.arch, startedAt)
-		capture, captureFound := children.captureForAttempt(result.AttemptID)
 		receiptProtocolBound = expectedErr == nil && expected.SourceID == identity.SourceID && expected.OperationID == identity.OperationID && expected.Protocol == "REST" && target.Record.Protocol == "REST" && actualCLIReceiptCaptureMatchesExpectation(expected, capture) && captureFound
 	}
 	requestStarted := "unknown"
@@ -895,7 +914,7 @@ func actualCLIReproduceHistoricalUnknown(t *testing.T, worker *OperationPlanWork
 		requestStarted = strconv.FormatBool(*latest.RequestStarted)
 	}
 	if runErr != nil {
-		t.Fatalf("actual CLI isolated source-QA reproduction produced a worker failure: source=%s registry_protocol=%s synthetic_transport=REST case=observation_only worker_stage=%s worker_category=%s probe_stage=%s probe_category=%s child_calls=%d child_error_kinds=%s child_exit_codes=%s child_max=%s stdout_bytes=%d stderr_bytes=%d stderr_classes=%s retained_child_evidence=%t retention_failures=%d latest_state=%s request_started=%s receipt_validated=%t receipt_present=%t history_records=%d history_reservations=%d provider_request_delta=%d provider_unique_delta=%d provider_rest_delta=%d provider_soap_delta=%d cgroup_source=%s cgroup_peak_bytes=%d cgroup_limit_bytes=%d cgroup_oom_events=%d cgroup_oom_kill_events=%d", identity.SourceID, identity.Protocol, actualCLISafeWorkerFailureCode(workerStage, validOperationPlanWorkerFailureStage), actualCLISafeWorkerFailureCode(workerCategory, validOperationPlanWorkerFailureCategory), actualCLISafeWorkerFailureCode(probeStage, validOperationPlanProbeFailureStage), actualCLISafeWorkerFailureCode(probeCategory, validOperationPlanProbeFailureCategory), child.Calls, actualCLIStringCountMap(child.ChildErrorKinds), actualCLIIntCountMap(child.ExitCodes), child.MaxElapsed.Round(time.Millisecond), child.StdoutBytes, child.StderrBytes, actualCLIStringCountMap(child.StderrClasses), retained, child.RetentionFailures, actualCLIStateName(found, latest.State), requestStarted, found && latest.ReceiptValidated, found && latest.ReceiptSHA256 != "", actualCLIUsageCount(usageErr, usage.RecordCount), actualCLIUsageCount(usageErr, usage.ReservationCount), afterMetrics["requests"]-beforeMetrics["requests"], afterMetrics["unique"]-beforeMetrics["unique"], afterMetrics["rest_get"]-beforeMetrics["rest_get"], afterMetrics["soap_post"]-beforeMetrics["soap_post"], memory.Source, memory.PeakBytes, memory.LimitBytes, memory.OOMEvents, memory.OOMKillEvents)
+		t.Fatalf("actual CLI isolated source-QA reproduction produced a worker failure: source=%s registry_protocol=%s synthetic_transport=REST case=observation_only operation_token_sha256=%s child_source_token_matches=%t child_operation_token_matches=%t index_range_matches=%d source_range_matches=%d target_shard_range_matches=%d worker_stage=%s worker_category=%s probe_stage=%s probe_category=%s child_calls=%d child_error_kinds=%s child_exit_codes=%s child_max=%s stdout_bytes=%d stderr_bytes=%d stderr_classes=%s retained_child_evidence=%t retention_failures=%d latest_state=%s request_started=%s receipt_validated=%t receipt_present=%t history_records=%d history_reservations=%d provider_request_delta=%d provider_unique_delta=%d provider_rest_delta=%d provider_soap_delta=%d cgroup_source=%s cgroup_peak_bytes=%d cgroup_limit_bytes=%d cgroup_oom_events=%d cgroup_oom_kill_events=%d", identity.SourceID, identity.Protocol, operationTokenSHA256, childSourceTokenMatches, childOperationTokenMatches, indexRangeMatches, sourceRangeMatches, targetShardRangeMatches, actualCLISafeWorkerFailureCode(workerStage, validOperationPlanWorkerFailureStage), actualCLISafeWorkerFailureCode(workerCategory, validOperationPlanWorkerFailureCategory), actualCLISafeWorkerFailureCode(probeStage, validOperationPlanProbeFailureStage), actualCLISafeWorkerFailureCode(probeCategory, validOperationPlanProbeFailureCategory), child.Calls, actualCLIStringCountMap(child.ChildErrorKinds), actualCLIIntCountMap(child.ExitCodes), child.MaxElapsed.Round(time.Millisecond), child.StdoutBytes, child.StderrBytes, actualCLIStringCountMap(child.StderrClasses), retained, child.RetentionFailures, actualCLIStateName(found, latest.State), requestStarted, found && latest.ReceiptValidated, found && latest.ReceiptSHA256 != "", actualCLIUsageCount(usageErr, usage.RecordCount), actualCLIUsageCount(usageErr, usage.ReservationCount), afterMetrics["requests"]-beforeMetrics["requests"], afterMetrics["unique"]-beforeMetrics["unique"], afterMetrics["rest_get"]-beforeMetrics["rest_get"], afterMetrics["soap_post"]-beforeMetrics["soap_post"], memory.Source, memory.PeakBytes, memory.LimitBytes, memory.OOMEvents, memory.OOMKillEvents)
 	}
 	if latestErr != nil || usageErr != nil || !found || result.AttemptState != "observed" || !result.RequestStarted || !latest.ReceiptValidated || latest.Result == nil || latest.Result.State != "indeterminate" || latest.Result.Category != "response_semantics_unestablished" || latest.DeliveryState != "not_applicable" || latest.DeliveryState != result.DeliveryState || afterMetrics["requests"]-beforeMetrics["requests"] != 1 || afterMetrics["unique"]-beforeMetrics["unique"] != 1 || afterMetrics["rest_get"]-beforeMetrics["rest_get"] != 1 || afterMetrics["soap_post"] != beforeMetrics["soap_post"] || usage.RecordCount != 1 || usage.ReservationCount != 0 || child.Calls != 1 || !receiptProtocolBound {
 		t.Fatalf("actual CLI isolated reproduction did not preserve the expected observation-only result: source=%s registry_protocol=%s synthetic_transport=REST receipt_protocol_bound=%t case=observation_only worker_stage=none worker_category=none probe_stage=none probe_category=none child_calls=%d child_error_kinds=%s child_exit_codes=%s child_max=%s stdout_bytes=%d stderr_bytes=%d latest_state=%s request_started=%s receipt_validated=%t receipt_present=%t history_records=%d history_reservations=%d provider_request_delta=%d provider_unique_delta=%d provider_rest_delta=%d provider_soap_delta=%d cgroup_source=%s cgroup_peak_bytes=%d cgroup_limit_bytes=%d cgroup_oom_events=%d cgroup_oom_kill_events=%d", identity.SourceID, identity.Protocol, receiptProtocolBound, child.Calls, actualCLIStringCountMap(child.ChildErrorKinds), actualCLIIntCountMap(child.ExitCodes), child.MaxElapsed.Round(time.Millisecond), child.StdoutBytes, child.StderrBytes, actualCLIStateName(found, latest.State), requestStarted, found && latest.ReceiptValidated, found && latest.ReceiptSHA256 != "", actualCLIUsageCount(usageErr, usage.RecordCount), actualCLIUsageCount(usageErr, usage.ReservationCount), afterMetrics["requests"]-beforeMetrics["requests"], afterMetrics["unique"]-beforeMetrics["unique"], afterMetrics["rest_get"]-beforeMetrics["rest_get"], afterMetrics["soap_post"]-beforeMetrics["soap_post"], memory.Source, memory.PeakBytes, memory.LimitBytes, memory.OOMEvents, memory.OOMKillEvents)
@@ -903,7 +922,26 @@ func actualCLIReproduceHistoricalUnknown(t *testing.T, worker *OperationPlanWork
 	if code := actualCLIExactCapacitySnapshotFailure(memory); code != "" {
 		t.Fatalf("actual CLI isolated reproduction capacity snapshot failed: code=%s", code)
 	}
-	t.Logf("actual CLI isolated source-QA reproduction passed (not fleet acceptance): source=%s registry_protocol=%s synthetic_transport=REST receipt_protocol_bound=true case=observation_only observation=indeterminate request_delta=1 unique_delta=1 durable_receipts=%d gatus_delivery=not_applicable child_calls=%d child_max=%s cgroup_source=%s cgroup_peak_bytes=%d cgroup_limit_bytes=%d cgroup_oom_events=%d cgroup_oom_kill_events=%d same_manifest_bytes=true same_index_bytes=true same_cli_binary_bytes=true", identity.SourceID, identity.Protocol, usage.RecordCount, child.Calls, child.MaxElapsed.Round(time.Millisecond), memory.Source, memory.PeakBytes, memory.LimitBytes, memory.OOMEvents, memory.OOMKillEvents)
+	t.Logf("actual CLI isolated source-QA reproduction passed (not fleet acceptance): source=%s registry_protocol=%s synthetic_transport=REST operation_token_sha256=%s child_source_token_matches=%t child_operation_token_matches=%t index_range_matches=%d source_range_matches=%d target_shard_range_matches=%d receipt_protocol_bound=true case=observation_only observation=indeterminate request_delta=1 unique_delta=1 durable_receipts=%d gatus_delivery=not_applicable child_calls=%d child_max=%s cgroup_source=%s cgroup_peak_bytes=%d cgroup_limit_bytes=%d cgroup_oom_events=%d cgroup_oom_kill_events=%d same_manifest_bytes=true same_index_bytes=true same_cli_binary_bytes=true", identity.SourceID, identity.Protocol, operationTokenSHA256, childSourceTokenMatches, childOperationTokenMatches, indexRangeMatches, sourceRangeMatches, targetShardRangeMatches, usage.RecordCount, child.Calls, child.MaxElapsed.Round(time.Millisecond), memory.Source, memory.PeakBytes, memory.LimitBytes, memory.OOMEvents, memory.OOMKillEvents)
+}
+
+func actualCLIPlanShardRangeMatches(plan PinnedOperationObservationPlan, sourceID, operationID, targetShardSHA256 string) (allMatches, sourceMatches, targetShardMatches int) {
+	if plan.state == nil || operationID == "" || sourceID == "" {
+		return 0, 0, 0
+	}
+	for _, shard := range plan.state.index.Shards {
+		if operationID < shard.FirstOperationID || operationID > shard.LastOperationID {
+			continue
+		}
+		allMatches++
+		if shard.SourceID == sourceID {
+			sourceMatches++
+			if targetShardSHA256 != "" && shard.SHA256 == targetShardSHA256 {
+				targetShardMatches++
+			}
+		}
+	}
+	return allMatches, sourceMatches, targetShardMatches
 }
 
 func actualCLIStateName(found bool, state string) string {
@@ -946,7 +984,7 @@ func actualCLIStringCountMap(counts map[string]int) string {
 
 func actualCLIValidChildStderrClass(value string) bool {
 	switch value {
-	case "plan_not_executable", "document_evidence_invalid", "policy_invalid", "effect_policy_invalid", "assertion_invalid", "operation_plan_load_rejected", "selection_identity_mismatch", "receipt_output_rejected", "unclassified_child_error":
+	case "plan_not_executable", "operation_id_ambiguous_across_sources", "operation_id_not_in_index", "operation_id_duplicate_in_source", "operation_id_not_in_selected_shard", "document_evidence_invalid", "policy_invalid", "effect_policy_invalid", "assertion_invalid", "operation_plan_load_rejected", "selection_identity_mismatch", "receipt_output_rejected", "unclassified_child_error":
 		return true
 	default:
 		return false
@@ -1105,6 +1143,50 @@ func TestActualCLISchedulerDiagnosticsRedactUnknownValues(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if test.got != test.want {
 				t.Fatalf("diagnostic code was not safely bounded: got=%q want=%q", test.got, test.want)
+			}
+		})
+	}
+}
+
+func TestActualCLIChildStderrClassDistinguishesOperationIDSelectionFailures(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		line string
+		want string
+	}{
+		{
+			name: "cross-source range overlap",
+			line: "health operation plan is not ready: health operation ID is ambiguous across Registry source scopes",
+			want: "operation_id_ambiguous_across_sources",
+		},
+		{
+			name: "no index range",
+			line: "health operation plan is not ready: health operation ID is not present in the Registry plan index",
+			want: "operation_id_not_in_index",
+		},
+		{
+			name: "duplicate within source",
+			line: "health operation plan is not ready: health operation ID is duplicated within its Registry source scope",
+			want: "operation_id_duplicate_in_source",
+		},
+		{
+			name: "not in selected shard",
+			line: "health operation plan is not ready: health operation ID is not present in the selected Registry plan shard",
+			want: "operation_id_not_in_selected_shard",
+		},
+		{
+			name: "unknown plan error remains generic",
+			line: "health operation plan is not ready: private source path and response row",
+			want: "operation_plan_load_rejected",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := actualCLIChildStderrClass([]byte(testCase.line + "\n"))
+			if got != testCase.want || !actualCLIValidChildStderrClass(got) {
+				t.Fatalf("fixed CLI error did not map to its safe category: got=%q want=%q", got, testCase.want)
+			}
+			if strings.Contains(got, "private") || strings.Contains(got, "response") || strings.Contains(got, "path") {
+				t.Fatalf("CLI error classification exposed private detail: %q", got)
 			}
 		})
 	}
