@@ -30,6 +30,7 @@ const (
 	maxGatusStatusReadConcurrency = 2
 	maxGatusStatusCanaries        = 32
 	maxPublicHistoryPoints        = 50
+	maxPublicStatusFutureSkew     = 5 * time.Minute
 )
 
 var (
@@ -88,6 +89,25 @@ type PublicStatusDocument struct {
 	Operations                 []PublicOperationStatus `json:"operations"`
 }
 
+// publicStatusCompatibilityDocument preserves the historical browser ABI used
+// by the installed Status gateway. Native Health dependency responses retain
+// the newer incident-state fields on PublicOperationStatus.
+type publicStatusCompatibilityDocument struct {
+	SchemaVersion              string                               `json:"schema_version"`
+	GeneratedAt                time.Time                            `json:"generated_at"`
+	DiagnosticRegistryRevision string                               `json:"diagnostic_registry_revision"`
+	ObservationCatalogRevision string                               `json:"observation_catalog_revision"`
+	Operations                 []publicStatusCompatibilityOperation `json:"operations"`
+}
+
+type publicStatusCompatibilityOperation struct {
+	OperationID      string          `json:"operation_id"`
+	ObservedAt       *time.Time      `json:"observed_at,omitempty"`
+	ObservationState string          `json:"observation_state"`
+	Availability     string          `json:"availability"`
+	Diagnosis        PublicDiagnosis `json:"diagnosis"`
+}
+
 type PublicOperationStatus struct {
 	OperationID                 string                     `json:"operation_id"`
 	ObservedAt                  *time.Time                 `json:"observed_at,omitempty"`
@@ -116,6 +136,50 @@ type PublicDiagnosis struct {
 	AccountableParty     string   `json:"accountable_party"`
 	RecommendedActionIDs []string `json:"recommended_action_ids"`
 	AvoidActionIDs       []string `json:"avoid_action_ids"`
+}
+
+func marshalPublicStatusCompatibility(document PublicStatusDocument, now time.Time) ([]byte, error) {
+	current, err := json.Marshal(document)
+	if err != nil || schemas.ValidateHealthPublicStatusV1(current) != nil {
+		return nil, errors.New("public status compatibility source invalid")
+	}
+	if document.GeneratedAt.After(now.UTC().Add(maxPublicStatusFutureSkew)) {
+		return nil, errors.New("public status compatibility source invalid")
+	}
+	projected := publicStatusCompatibilityDocument{
+		SchemaVersion:              document.SchemaVersion,
+		GeneratedAt:                document.GeneratedAt,
+		DiagnosticRegistryRevision: document.DiagnosticRegistryRevision,
+		ObservationCatalogRevision: document.ObservationCatalogRevision,
+		Operations:                 make([]publicStatusCompatibilityOperation, 0, len(document.Operations)),
+	}
+	for _, operation := range document.Operations {
+		if operation.ObservationState == "not_observed" {
+			if operation.ObservedAt != nil {
+				return nil, errors.New("public status compatibility source invalid")
+			}
+		} else if operation.ObservedAt == nil || operation.ObservedAt.After(document.GeneratedAt) {
+			return nil, errors.New("public status compatibility source invalid")
+		}
+		projected.Operations = append(projected.Operations, publicStatusCompatibilityOperation{
+			OperationID:      operation.OperationID,
+			ObservedAt:       operation.ObservedAt,
+			ObservationState: operation.ObservationState,
+			Availability:     operation.Availability,
+			Diagnosis:        operation.Diagnosis,
+		})
+	}
+	data, err := json.Marshal(projected)
+	if err != nil || schemas.ValidateHealthPublicStatusCompatibilityV1(data) != nil {
+		return nil, errors.New("public status compatibility projection invalid")
+	}
+	lower := bytes.ToLower(data)
+	for _, forbidden := range []string{"authorization", "service_key", "query_url", "response_rows", "gatus_endpoint", "dataset_id", "support_reference"} {
+		if bytes.Contains(lower, []byte(forbidden)) {
+			return nil, errors.New("public status compatibility projection invalid")
+		}
+	}
+	return data, nil
 }
 
 type publicAction struct {
@@ -785,20 +849,24 @@ func (h *PublicStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	case "/datapan/v1/dependencies", "/datapan/v1/status", "/v1/status":
 		var document PublicStatusDocument
 		document, err = h.source.Snapshot(r.Context())
-		if err == nil && r.URL.Path == "/datapan/v1/dependencies" {
-			data, err = json.Marshal(dependencyDocument(document))
-			if schemas.ValidateDependencyObservationV1(data) != nil {
-				err = errors.New("dependency status invalid")
+		if err == nil {
+			switch r.URL.Path {
+			case "/datapan/v1/dependencies":
+				data, err = json.Marshal(dependencyDocument(document))
+				if schemas.ValidateDependencyObservationV1(data) != nil {
+					err = errors.New("dependency status invalid")
+				}
+			case "/datapan/v1/status":
+				data, err = json.Marshal(legacyDependencyDocument(document))
+				if schemas.ValidateLegacyDependencyStatusV1(data) != nil {
+					err = errors.New("legacy dependency status invalid")
+				}
+				w.Header().Set("Deprecation", "true")
+				w.Header().Set("Sunset", "Thu, 31 Dec 2026 23:59:59 GMT")
+				w.Header().Set("Link", "</datapan/v1/dependencies>; rel=\"successor-version\", </datapan/dependencies/>; rel=\"alternate\"; type=\"text/html\"")
+			case "/v1/status":
+				data, err = marshalPublicStatusCompatibility(document, time.Now())
 			}
-		}
-		if err == nil && (r.URL.Path == "/datapan/v1/status" || r.URL.Path == "/v1/status") {
-			data, err = json.Marshal(legacyDependencyDocument(document))
-			if schemas.ValidateLegacyDependencyStatusV1(data) != nil {
-				err = errors.New("legacy dependency status invalid")
-			}
-			w.Header().Set("Deprecation", "true")
-			w.Header().Set("Sunset", "Thu, 31 Dec 2026 23:59:59 GMT")
-			w.Header().Set("Link", "</datapan/v1/dependencies>; rel=\"successor-version\", </datapan/dependencies/>; rel=\"alternate\"; type=\"text/html\"")
 		}
 	}
 	if err != nil {

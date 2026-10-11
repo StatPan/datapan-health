@@ -3,6 +3,8 @@ package health
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -136,57 +138,193 @@ func TestPublicStatusHandlerBrowserAndCacheContract(t *testing.T) {
 	}
 }
 
+func TestInstalledProxyStatusAliasReturnsExactGatewayCompatibilityDocument(t *testing.T) {
+	document := testPublicDocument(t)
+	currentAt := publicNow.Add(-time.Minute)
+	document.Operations[0].ObservedAt = &currentAt
+	document.Operations[0].ObservationState = "current"
+	document.Operations[0].RawObservationState = "succeeded"
+	document.Operations[0].IncidentState = "operational"
+	document.Operations[0].Availability = "operational"
+	staleAt := publicNow.Add(-time.Hour)
+	document.Operations[1].ObservedAt = &staleAt
+	document.Operations[1].ObservationState = "stale"
+
+	handler, err := NewPublicStatusHandler(staticPublicSource{document: document}, []string{"https://datapan.statpan.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	request.Header.Set("Origin", "https://datapan.statpan.com")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if err := schemas.ValidateHealthPublicStatusCompatibilityV1(response.Body.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(response.Body.Bytes(), &top); err != nil {
+		t.Fatal(err)
+	}
+	assertExactJSONKeys(t, top, "schema_version", "generated_at", "diagnostic_registry_revision", "observation_catalog_revision", "operations")
+	var schemaVersion, diagnosticRevision string
+	if json.Unmarshal(top["schema_version"], &schemaVersion) != nil || schemaVersion != PublicStatusSchemaVersion || json.Unmarshal(top["diagnostic_registry_revision"], &diagnosticRevision) != nil || diagnosticRevision != AcceptedDiagnosticRegistryRevision {
+		t.Fatal("private alias changed the exact public status identity")
+	}
+	var operations []map[string]json.RawMessage
+	if err := json.Unmarshal(top["operations"], &operations); err != nil || len(operations) != 10 {
+		t.Fatalf("operation count=%d err=%v", len(operations), err)
+	}
+	for index, operation := range operations {
+		keys := []string{"operation_id", "observation_state", "availability", "diagnosis"}
+		if index < 2 {
+			keys = append(keys, "observed_at")
+		}
+		assertExactJSONKeys(t, operation, keys...)
+		var operationID, observationState, availability string
+		if json.Unmarshal(operation["operation_id"], &operationID) != nil || operationID != document.Operations[index].OperationID || json.Unmarshal(operation["observation_state"], &observationState) != nil || json.Unmarshal(operation["availability"], &availability) != nil {
+			t.Fatalf("operation %d identity or state did not survive the compatibility projection", index)
+		}
+		if index == 0 && (observationState != "current" || availability != "operational") {
+			t.Fatal("current operation changed state")
+		}
+		if index == 1 && (observationState != "stale" || availability != "unknown") {
+			t.Fatal("stale operation changed state")
+		}
+		if index > 1 && (observationState != "not_observed" || availability != "unknown") {
+			t.Fatal("unobserved operation changed state")
+		}
+		var diagnosis map[string]json.RawMessage
+		if err := json.Unmarshal(operation["diagnosis"], &diagnosis); err != nil {
+			t.Fatal(err)
+		}
+		assertExactJSONKeys(t, diagnosis, "code", "determination", "accountable_party", "recommended_action_ids", "avoid_action_ids")
+	}
+	lower := strings.ToLower(response.Body.String())
+	for _, forbidden := range []string{"scope", "raw_observation_state", "incident_state", "consecutive_failure_threshold", "pending_count", "authorization", "service_key", "query_url", "response_rows", "gatus_endpoint", "dataset_id", "support_reference"} {
+		if strings.Contains(lower, forbidden) {
+			t.Fatalf("private alias exposed forbidden field or token %q", forbidden)
+		}
+	}
+	if response.Header().Get("Deprecation") != "" || response.Header().Get("Sunset") != "" || response.Header().Get("Link") != "" {
+		t.Fatal("private adapter response inherited the native legacy-route deprecation envelope")
+	}
+
+	legacy := httptest.NewRecorder()
+	handler.ServeHTTP(legacy, httptest.NewRequest(http.MethodGet, "/datapan/v1/status", nil))
+	if legacy.Code != http.StatusOK || schemas.ValidateLegacyDependencyStatusV1(legacy.Body.Bytes()) != nil || legacy.Header().Get("Deprecation") != "true" || !strings.Contains(legacy.Body.String(), LegacyDependencySchemaVersion) || !strings.Contains(legacy.Body.String(), `"scope"`) {
+		t.Fatalf("native legacy route changed: status=%d headers=%v body=%s", legacy.Code, legacy.Header(), legacy.Body.String())
+	}
+}
+
 func TestInstalledProxyStatusAliasPreservesHTTPContract(t *testing.T) {
 	handler, err := NewPublicStatusHandler(staticPublicSource{document: testPublicDocument(t)}, []string{"https://datapan.statpan.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodPost} {
-		t.Run(method, func(t *testing.T) {
-			var canonical *httptest.ResponseRecorder
-			for _, path := range []string{"/datapan/v1/status", "/v1/status"} {
-				r := httptest.NewRequest(method, path, nil)
-				r.Header.Set("Origin", "https://datapan.statpan.com")
-				r.Header.Set("Access-Control-Request-Method", "GET")
-				response := httptest.NewRecorder()
-				handler.ServeHTTP(response, r)
-				if canonical == nil {
-					canonical = response
-					continue
-				}
-				if response.Code != canonical.Code || response.Body.String() != canonical.Body.String() {
-					t.Fatal("private proxy alias changed status representation")
-				}
-				for _, header := range []string{"Content-Type", "Content-Length", "Cache-Control", "ETag", "Vary", "Deprecation", "Sunset", "Link", "Access-Control-Allow-Origin", "Access-Control-Allow-Methods"} {
-					if response.Header().Get(header) != canonical.Header().Get(header) {
-						t.Fatalf("private proxy alias changed %s", header)
-					}
-				}
+	getRequest := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	getRequest.Header.Set("Origin", "https://datapan.statpan.com")
+	get := httptest.NewRecorder()
+	handler.ServeHTTP(get, getRequest)
+	sum := sha256.Sum256(get.Body.Bytes())
+	wantETag := `"sha256-` + hex.EncodeToString(sum[:]) + `"`
+	if get.Code != http.StatusOK || get.Header().Get("ETag") != wantETag || get.Header().Get("Access-Control-Allow-Origin") != "https://datapan.statpan.com" || get.Header().Get("Cache-Control") != "public, max-age=30, stale-if-error=60, no-transform" {
+		t.Fatalf("GET contract changed: status=%d headers=%v", get.Code, get.Header())
+	}
+	headRequest := httptest.NewRequest(http.MethodHead, "/v1/status", nil)
+	headRequest.Header.Set("Origin", "https://datapan.statpan.com")
+	head := httptest.NewRecorder()
+	handler.ServeHTTP(head, headRequest)
+	for _, header := range []string{"Content-Type", "Content-Length", "Cache-Control", "ETag", "Vary", "Access-Control-Allow-Origin"} {
+		if head.Header().Get(header) != get.Header().Get(header) {
+			t.Fatalf("HEAD changed %s", header)
+		}
+	}
+	if head.Code != http.StatusOK || head.Body.Len() != 0 {
+		t.Fatal("HEAD contract changed")
+	}
+	optionsRequest := httptest.NewRequest(http.MethodOptions, "/v1/status", nil)
+	optionsRequest.Header.Set("Origin", "https://datapan.statpan.com")
+	optionsRequest.Header.Set("Access-Control-Request-Method", http.MethodGet)
+	options := httptest.NewRecorder()
+	handler.ServeHTTP(options, optionsRequest)
+	if options.Code != http.StatusNoContent || options.Header().Get("Access-Control-Allow-Methods") != "GET, HEAD" {
+		t.Fatal("OPTIONS contract changed")
+	}
+	for _, test := range []struct {
+		name, method, path, origin string
+		want                       int
+	}{
+		{name: "denied origin", method: http.MethodGet, path: "/v1/status", origin: "https://unapproved.example", want: http.StatusForbidden},
+		{name: "write", method: http.MethodPost, path: "/v1/status", want: http.StatusMethodNotAllowed},
+		{name: "query", method: http.MethodGet, path: "/v1/status?run=1", want: http.StatusNotFound},
+		{name: "services sibling", method: http.MethodGet, path: "/v1/services", want: http.StatusNotFound},
+		{name: "dependencies sibling", method: http.MethodGet, path: "/v1/dependencies", want: http.StatusNotFound},
+		{name: "execute sibling", method: http.MethodGet, path: "/v1/execute", want: http.StatusNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, test.path, nil)
+			request.Header.Set("Origin", test.origin)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != test.want {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 			}
 		})
 	}
-	for _, path := range []string{"/v1/status?run=1", "/v1/services", "/v1/dependencies", "/v1/execute"} {
-		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
-		if response.Code != http.StatusNotFound {
-			t.Fatal("private alias opened another path or query")
-		}
-	}
-	denied := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
-	denied.Header.Set("Origin", "https://unapproved.example")
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, denied)
-	if response.Code != http.StatusForbidden {
-		t.Fatal("private alias bypassed origin policy")
-	}
-	get := httptest.NewRecorder()
-	handler.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/v1/status", nil))
 	conditional := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
 	conditional.Header.Set("If-None-Match", get.Header().Get("ETag"))
-	response = httptest.NewRecorder()
+	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, conditional)
-	if get.Code != http.StatusOK || response.Code != http.StatusNotModified || response.Body.Len() != 0 {
+	if response.Code != http.StatusNotModified || response.Body.Len() != 0 {
 		t.Fatal("private alias lost conditional status semantics")
+	}
+}
+
+func TestInstalledProxyStatusAliasFailsClosedOnConsumerInvalidSource(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*PublicStatusDocument)
+	}{
+		{name: "unobserved timestamp", mutate: func(document *PublicStatusDocument) {
+			observedAt := document.GeneratedAt.Add(-time.Minute)
+			document.Operations[0].ObservedAt = &observedAt
+		}},
+		{name: "forbidden action token", mutate: func(document *PublicStatusDocument) {
+			document.Operations[0].Diagnosis = PublicDiagnosis{Code: "ready", Determination: "observed", AccountableParty: "datapan", RecommendedActionIDs: []string{"service_key"}, AvoidActionIDs: []string{}}
+		}},
+		{name: "future document", mutate: func(document *PublicStatusDocument) {
+			document.GeneratedAt = time.Now().UTC().Add(10 * time.Minute)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			document := testPublicDocument(t)
+			test.mutate(&document)
+			handler, err := NewPublicStatusHandler(staticPublicSource{document: document}, []string{"https://datapan.statpan.com"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/status", nil))
+			if response.Code != http.StatusServiceUnavailable || response.Body.String() != `{"error":"status_unavailable"}`+"\n" || response.Header().Get("Cache-Control") != "no-store" {
+				t.Fatalf("consumer-invalid source did not fail closed: status=%d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
+			}
+		})
+	}
+}
+
+func assertExactJSONKeys(t *testing.T, value map[string]json.RawMessage, keys ...string) {
+	t.Helper()
+	if len(value) != len(keys) {
+		t.Fatalf("JSON keys=%v want=%v", value, keys)
+	}
+	for _, key := range keys {
+		if _, ok := value[key]; !ok {
+			t.Fatalf("JSON key %q missing from %v", key, value)
+		}
 	}
 }
 

@@ -21,6 +21,9 @@ var healthArchiveSchema []byte
 //go:embed datapan.health-public-status.v1.schema.json
 var healthPublicStatusSchema []byte
 
+//go:embed datapan.health-public-status.compatibility.v1.schema.json
+var healthPublicStatusCompatibilitySchema []byte
+
 //go:embed datapan.service-status.v1.schema.json
 var serviceStatusSchema []byte
 
@@ -105,6 +108,12 @@ var (
 	healthOperationPlanProbeV1Err      error
 )
 
+var (
+	healthPublicStatusCompatOnce sync.Once
+	healthPublicStatusCompat     *jsonschema.Schema
+	healthPublicStatusCompatErr  error
+)
+
 func ValidateHealthProbeV1(data []byte) error {
 	healthProbeOnce.Do(func() {
 		healthProbe, healthProbeErr = compile(healthProbeSchema, "https://schemas.datapan.dev/datapan.health-probe.v1.schema.json")
@@ -126,6 +135,17 @@ func ValidateHealthPublicStatusV1(data []byte) error {
 		healthPublicStatus, healthPublicStatusErr = compile(healthPublicStatusSchema, "https://schemas.datapan.dev/datapan.health-public-status.v1.schema.json")
 	})
 	return validate(data, healthPublicStatus, healthPublicStatusErr, "public status")
+}
+
+// ValidateHealthPublicStatusCompatibilityV1 accepts only the historical,
+// browser-safe v1 shape consumed by the installed Status gateway. The current
+// Health-owned status document has additional incident-state fields and is
+// validated separately by ValidateHealthPublicStatusV1.
+func ValidateHealthPublicStatusCompatibilityV1(data []byte) error {
+	healthPublicStatusCompatOnce.Do(func() {
+		healthPublicStatusCompat, healthPublicStatusCompatErr = compile(healthPublicStatusCompatibilitySchema, "https://schemas.datapan.dev/datapan.health-public-status.compatibility.v1.schema.json")
+	})
+	return validate(data, healthPublicStatusCompat, healthPublicStatusCompatErr, "public status compatibility projection")
 }
 
 func ValidateServiceStatusV1(data []byte) error {
