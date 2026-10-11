@@ -15,6 +15,7 @@ route, or prove availability of any Datapan product.
 | `GET /datapan/v1/services` | `datapan.service-status.v1` | Dataset API, Registry distribution, Datapan Web/Atlas, and Health itself. A service is `unknown` unless its own check supplies a public surface and immutable deployment identity. |
 | `GET /datapan/v1/dependencies` | `datapan.dependency-observation.v1` | The ten Registry-owned `dpr-op-*` canaries. This is not a Datapan service SLA or catalogue-coverage claim. |
 | `GET /datapan/v1/status` | `datapan.dependency-status-legacy.v1` | Dependency-only compatibility alias for one release. It emits `Deprecation: true`, `Sunset: Thu, 31 Dec 2026 23:59:59 GMT`, and links to both successors. |
+| `GET /v1/status` | `datapan.health-public-status.v1` | Private upstream for the installed Status gateway's fixed `/datapan/v1/status` adapter. It projects only the historical five-key, ten-canary browser ABI; this does not add a public ingress route. |
 
 The legacy alias can be removed only with a separately reviewed decision that
 records one full release of consumer evidence, successor parity, a visible
