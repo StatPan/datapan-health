@@ -472,6 +472,12 @@ func TestPublicHTMLReadModelOperationStatusAndDiagnosisAreAllowlisted(t *testing
 	if !strings.Contains(partialAttemptLabel, "요청 전 보류") || !strings.Contains(partialAttemptLabel, "결과 저장 공간") {
 		t.Fatalf("partial-source row did not preserve the safe pre-dispatch reason: %q", partialAttemptLabel)
 	}
+	windowDrain := deferred
+	windowDrain.ExecutionBlockReason = operationAttemptReasonQuotaWindowDrain
+	windowDrainRow := publicHTMLReadModelOperation(windowDrain, now)
+	if windowDrainRow.StatusClass == "badge-good" || !strings.Contains(windowDrainRow.AttemptLabel, "이전 할당 요청 처리 대기") {
+		t.Fatalf("quota-window deferral was not rendered as a safe Korean pre-dispatch hold: %#v", windowDrainRow)
+	}
 
 	failed := base
 	failed.ObservationState, failed.ResultState, failed.ResultCategory = "current_fail", "unhealthy", "provider_failure"

@@ -233,6 +233,13 @@ type OperationHistoryAppender interface {
 	CancelReservation(context.Context, OperationHistoryIdentity, OperationHistoryReservation) error
 }
 
+// OperationHistoryReferenceVerifier confirms that an attempt ledger's exact
+// immutable receipt reference still exists locally or in the verified archive
+// index. It performs one identity lookup and never scans the history store.
+type OperationHistoryReferenceVerifier interface {
+	VerifyStoredRecordReference(context.Context, OperationHistoryIdentity, string, string) error
+}
+
 // OperationHistoryRecordValidator is the trusted schema-aware boundary used
 // when reopening persisted records. It must validate the exact historical
 // schema pin, canonical receipt bytes, semantic receipt identity, and original

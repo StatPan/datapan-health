@@ -132,12 +132,15 @@ type operationObservationPlanGenerationInputs struct {
 }
 
 type operationPlanIndexState struct {
-	index                operationObservationPlanIndex
-	root                 string
-	manifest             map[string]RegistryReleaseManifestArtifact
-	byScope              map[string]OperationObservationPlanSourceScope
-	verified             bool
-	executableOperations int
+	index                  operationObservationPlanIndex
+	root                   string
+	manifest               map[string]RegistryReleaseManifestArtifact
+	byScope                map[string]OperationObservationPlanSourceScope
+	operationManifestRef   operationPlanArtifactRef
+	providerIndexRef       operationPlanArtifactRef
+	providerIndexRefExists bool
+	verified               bool
+	executableOperations   int
 }
 
 // PinnedOperationObservationPlan is a small index and immutable shard list;
@@ -298,7 +301,14 @@ func LoadPinnedOperationObservationPlan(root string, binding OperationObservatio
 	if json.Unmarshal(index.GenerationInputs, &generationInputs) != nil || !validOperationPlanGenerationInputs(generationInputs, manifestArtifacts) {
 		return PinnedOperationObservationPlan{}, errOperationObservationPlanInvalid
 	}
-	state := &operationPlanIndexState{index: index, root: rootAbs, manifest: manifestArtifacts, byScope: make(map[string]OperationObservationPlanSourceScope, len(index.SourceScopes))}
+	state := &operationPlanIndexState{
+		index: index, root: rootAbs, manifest: manifestArtifacts, byScope: make(map[string]OperationObservationPlanSourceScope, len(index.SourceScopes)),
+		operationManifestRef: generationInputs.OperationManifest,
+	}
+	if generationInputs.ProviderIndex != nil {
+		state.providerIndexRef = *generationInputs.ProviderIndex
+		state.providerIndexRefExists = true
+	}
 	if len(index.SourceScopes) == 0 {
 		return PinnedOperationObservationPlan{}, errOperationObservationPlanInvalid
 	}

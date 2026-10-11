@@ -112,6 +112,16 @@ For a full-coverage claim, the plan release, all pinned artifacts, the runtime
 binding, a complete read-model refresh, and the rendered-page acceptance must
 each be verified separately.
 
+When the scheduler's activated operation lane is enabled, `health-public` also
+needs the same read-only `HEALTH_OPERATION_GATUS_ACTIVATION` and SHA-256 pin,
+`HEALTH_GATUS_BASE_CONFIG`, generated config, identity map, and runtime pin.
+It verifies the activation against the installed plan and the existing canary
+config, then validates that `/status` reports every configured canary exactly
+once as either a legacy row or a transferred ID. A transferred ID is accepted
+only while the operation lane reports a fresh complete persisted-evidence
+sweep; no legacy delivery is fabricated for it. If this bundle is missing or
+does not match, self-readiness is unavailable.
+
 ## CORS and caching
 
 `PUBLIC_STATUS_ALLOWED_ORIGINS` is required and contains comma-separated exact

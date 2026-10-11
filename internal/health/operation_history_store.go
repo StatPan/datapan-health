@@ -797,6 +797,36 @@ func (store *OperationHistoryStore) readStoredRecord(ctx context.Context, id str
 	return stored, nil
 }
 
+// VerifyStoredRecordReference checks the durable proof carried by one
+// observed attempt. Records remain immutable; after publication their local
+// payload may be removed, in which case the exact confirmed operation index
+// is the retained proof of record identity and digest.
+func (store *OperationHistoryStore) VerifyStoredRecordReference(ctx context.Context, identity OperationHistoryIdentity, recordID, recordSHA string) error {
+	if store == nil || ctx == nil || ctx.Err() != nil || !validHistoryIdentity(identity) || !sha256Pattern.MatchString(recordSHA) {
+		return ErrOperationHistoryUnavailable
+	}
+	expectedID, err := operationHistoryIdentityID(identity)
+	if err != nil || recordID != expectedID {
+		return ErrOperationHistoryUnavailable
+	}
+	stored, readErr := store.readStoredRecord(ctx, recordID)
+	if readErr == nil {
+		digest, digestErr := stored.Record.ContentSHA256()
+		if ctx.Err() != nil || stored.Record.Identity != identity || digestErr != nil || digest != recordSHA {
+			return ErrOperationHistoryUnavailable
+		}
+		return nil
+	}
+	if ctx.Err() != nil {
+		return ErrOperationHistoryUnavailable
+	}
+	index, found, indexErr := store.readOperationIndex(identity)
+	if indexErr != nil || !found || index.Identity != identity || index.RecordSHA != recordSHA || ctx.Err() != nil {
+		return ErrOperationHistoryUnavailable
+	}
+	return nil
+}
+
 func (store *OperationHistoryStore) readReservation(id string) (operationHistoryReservationFile, error) {
 	var reservation operationHistoryReservationFile
 	data, err := readPrivateFile(store.reservationPath(id), 16*1024)

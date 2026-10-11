@@ -22,6 +22,11 @@ import (
 
 const Schema = "datapan.health-runtime-dependencies.v1"
 
+// Release manifests carry the full bounded Registry projection consumed by
+// the Health worker and CLI. Keep this aligned with their 16 MiB manifest
+// ceiling so a valid plan-bearing release can be installed.
+const releaseManifestMaxBytes int64 = 16 << 20
+
 var shaPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var commitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var releasePattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
@@ -114,7 +119,7 @@ func Install(ctx context.Context, client *http.Client, lock Lock, arch, director
 	if json.Unmarshal(pointer, &distribution) != nil || distribution.SchemaVersion != "datapan.huggingface-distribution.v1" || distribution.Dataset.ID != "StatPan/datapan-registry" || distribution.Dataset.Revision != lock.Registry.DatasetRevision || distribution.ReleaseManifest.Path != "manifest.json" || distribution.ReleaseManifest.SHA256 != lock.Registry.ManifestSHA256 {
 		return errors.New("dependency distribution binding invalid")
 	}
-	manifest, err := fetch(ctx, client, base+"manifest.json", 4<<20)
+	manifest, err := fetch(ctx, client, base+"manifest.json", releaseManifestMaxBytes)
 	if err != nil || digest(manifest) != lock.Registry.ManifestSHA256 {
 		return errors.New("dependency manifest verification failed")
 	}

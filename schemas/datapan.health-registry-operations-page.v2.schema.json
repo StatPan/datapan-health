@@ -76,7 +76,7 @@
         "observation_period_seconds": {"type": ["integer", "null"], "minimum": 1, "maximum": 31536000},
         "next_due_at": {"$ref": "#/$defs/nullableDateTime"},
         "attempt_state": {"enum": ["none", "claimed", "request_started", "observed", "failed", "unknown", "deferred"]},
-        "execution_block_reason": {"enum": ["quota_capacity", "history_capacity", "child_unavailable"]},
+        "execution_block_reason": {"enum": ["quota_capacity", "history_capacity", "child_unavailable", "quota_window_draining"]},
         "observation_attempt_state": {"enum": ["none", "observed"]},
         "request_started": {"type": ["boolean", "null"]},
         "attempted": {"type": "boolean"},

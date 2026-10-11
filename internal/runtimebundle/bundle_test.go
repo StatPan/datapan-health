@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -125,6 +126,53 @@ func TestImmutableMinimalInstallAndLocalTamper(t *testing.T) {
 	if err := VerifyLocal(lock, "amd64", directory); err == nil {
 		t.Fatal("tampered binary accepted")
 	}
+}
+
+func TestImmutableInstallAcceptsPlanBearingReleaseManifestBeyondLegacyLimit(t *testing.T) {
+	lock, files := sample(t)
+	var manifest map[string]any
+	if err := json.Unmarshal(files["manifest.json"], &manifest); err != nil {
+		t.Fatal(err)
+	}
+	artifacts := manifest["artifacts"].([]any)
+	const operationArtifacts = 24_000
+	for index := 0; index < operationArtifacts; index++ {
+		artifacts = append(artifacts, map[string]any{
+			"path": fmt.Sprintf("reports/operation-response-assertions/%06d-%s.json", index, strings.Repeat("o", 128)),
+			"kind": "operation_response_assertion", "bytes": 256, "sha256": strings.Repeat("a", 64),
+		})
+	}
+	manifest["artifacts"] = artifacts
+	manifestBytes, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifestBytes) <= 4<<20 || int64(len(manifestBytes)) > releaseManifestMaxBytes {
+		t.Fatalf("fixture manifest size %d does not exercise the intended bounded full-plan range", len(manifestBytes))
+	}
+	var pointer map[string]any
+	if err := json.Unmarshal(files["release/distribution-manifest.json"], &pointer); err != nil {
+		t.Fatal(err)
+	}
+	pointerRelease := pointer["release_manifest"].(map[string]any)
+	pointerRelease["sha256"] = digest(manifestBytes)
+	pointerBytes, err := json.Marshal(pointer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock.Registry.ManifestSHA256 = digest(manifestBytes)
+	lock.Registry.DistributionSHA256 = digest(pointerBytes)
+	files["manifest.json"] = manifestBytes
+	files["release/distribution-manifest.json"] = pointerBytes
+
+	directory := filepath.Join(t.TempDir(), "cli")
+	if err := Install(context.Background(), clientFor(t, files), lock, "amd64", directory); err != nil {
+		t.Fatalf("bounded plan-bearing release manifest (%d bytes, %d operation artifacts) was rejected: %v", len(manifestBytes), operationArtifacts, err)
+	}
+	if err := VerifyLocal(lock, "amd64", directory); err != nil {
+		t.Fatal("installed full-manifest projection did not retain its immutable local binding:", err)
+	}
+	t.Logf("installed %d-byte release manifest with %d operation artifacts under the configured %d-byte limit", len(manifestBytes), operationArtifacts, releaseManifestMaxBytes)
 }
 
 func TestTamperedRemoteInputsNeverInstall(t *testing.T) {

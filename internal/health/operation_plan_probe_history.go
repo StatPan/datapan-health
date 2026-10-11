@@ -170,6 +170,9 @@ func NewPinnedOperationPlanProbeExpectationResolver(plan PinnedOperationObservat
 	if plan.state == nil || !plan.state.verified || lock.Validate() != nil || arch == "" || plan.Counts().KnownOperations < 0 || plan.Counts().KnownOperations > maxOperationGatusTargets {
 		return nil, errOperationPlanProbeHistoryUnavailable
 	}
+	if !operationPlanProbeGenerationInputPinsMatchSource(plan.state) {
+		return nil, errOperationPlanProbeHistoryUnavailable
+	}
 	resolver := &PinnedOperationPlanProbeExpectationResolver{plan: plan, lock: lock, arch: arch, templates: make(map[string]OperationPlanProbeExpectation)}
 	const templateAttemptID = "00000000-0000-4000-8000-000000000000"
 	templateStart := time.Unix(1, 0).UTC()
@@ -194,6 +197,20 @@ func NewPinnedOperationPlanProbeExpectationResolver(plan PinnedOperationObservat
 		}
 	}
 	return resolver, nil
+}
+
+func operationPlanProbeGenerationInputPinsMatchSource(state *operationPlanIndexState) bool {
+	if state == nil || !state.verified || len(state.index.GenerationInputs) == 0 {
+		return false
+	}
+	var inputs operationObservationPlanGenerationInputs
+	if json.Unmarshal(state.index.GenerationInputs, &inputs) != nil || !validOperationPlanGenerationInputs(inputs, state.manifest) || inputs.OperationManifest != state.operationManifestRef {
+		return false
+	}
+	if inputs.ProviderIndex == nil {
+		return !state.providerIndexRefExists && state.providerIndexRef == (operationPlanArtifactRef{})
+	}
+	return state.providerIndexRefExists && *inputs.ProviderIndex == state.providerIndexRef
 }
 
 func (resolver *PinnedOperationPlanProbeExpectationResolver) ResolveOperationPlanProbeExpectation(ctx context.Context, identity OperationHistoryIdentity, startedAt time.Time) (OperationPlanProbeExpectation, error) {

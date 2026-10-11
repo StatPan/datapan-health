@@ -33,6 +33,90 @@ const (
 
 var errOperationPlanProbeUnavailable = errors.New("operation-plan probe is unavailable")
 
+// operationPlanProbeFailure carries a fixed lower-runner diagnostic while
+// preserving the existing redacted sentinel and errors.Is behavior. Its cause
+// stays private; callers must never format it into status or logs.
+type operationPlanProbeFailure struct {
+	stage    string
+	category string
+	cause    error
+}
+
+func (failure *operationPlanProbeFailure) Error() string {
+	return errOperationPlanProbeUnavailable.Error()
+}
+
+func (failure *operationPlanProbeFailure) Is(target error) bool {
+	return target == errOperationPlanProbeUnavailable || failure != nil && errors.Is(failure.cause, target)
+}
+
+func newOperationPlanProbeFailure(stage string, cause error) error {
+	return newOperationPlanProbeFailureWithCategory(stage, operationPlanProbeFailureCategory(cause), cause)
+}
+
+func newOperationPlanProbeFailureWithCategory(stage, category string, cause error) error {
+	if !validOperationPlanProbeFailureStage(stage) {
+		stage = "unavailable"
+	}
+	if !validOperationPlanProbeFailureCategory(category) {
+		category = "unavailable"
+	}
+	return &operationPlanProbeFailure{stage: stage, category: category, cause: cause}
+}
+
+func validOperationPlanProbeFailureStage(stage string) bool {
+	switch stage {
+	case "preflight", "executable", "credential_binding", "receipt_directory", "child_start_or_wait", "output_limit", "receipt_read", "stdout_receipt_match", "clock", "receipt_validation", "unavailable":
+		return true
+	default:
+		return false
+	}
+}
+
+func validOperationPlanProbeFailureCategory(category string) bool {
+	switch category {
+	case "deadline", "canceled", "capacity", "io", "validation", "unavailable":
+		return true
+	default:
+		return false
+	}
+}
+
+func operationPlanProbeFailureCategory(cause error) string {
+	if cause == nil {
+		return "unavailable"
+	}
+	if errors.Is(cause, context.DeadlineExceeded) {
+		return "deadline"
+	}
+	if errors.Is(cause, context.Canceled) {
+		return "canceled"
+	}
+	if errors.Is(cause, syscall.ENOSPC) || errors.Is(cause, syscall.EFBIG) {
+		return "capacity"
+	}
+	var pathError *os.PathError
+	var syscallError syscall.Errno
+	if errors.As(cause, &pathError) || errors.As(cause, &syscallError) {
+		return "io"
+	}
+	if errors.Is(cause, errOperationPlanProbeUnavailable) {
+		return "validation"
+	}
+	return "unavailable"
+}
+
+func operationPlanProbeFailureDetails(err error) (stage, category string, ok bool) {
+	var failure *operationPlanProbeFailure
+	if !errors.As(err, &failure) || failure == nil {
+		return "", "", false
+	}
+	if !validOperationPlanProbeFailureStage(failure.stage) || !validOperationPlanProbeFailureCategory(failure.category) {
+		return "unavailable", "unavailable", true
+	}
+	return failure.stage, failure.category, true
+}
+
 type operationPlanProbeReceipt struct {
 	SchemaVersion string                        `json:"schema_version"`
 	AttemptID     string                        `json:"attempt_id"`
@@ -161,18 +245,46 @@ type OperationPlanProbeConfig struct {
 // OperationPlanProbeRunner invokes the fixed CLI child ABI. No endpoint,
 // parameter, credential, query, or response value is accepted by this type.
 type OperationPlanProbeRunner struct {
-	config OperationPlanProbeConfig
+	config           OperationPlanProbeConfig
+	workingDirectory string
+	// childInvoker is a package-private execution seam for source-QA tests that
+	// place the exact opened binary in a no-egress namespace. Production runners
+	// leave it nil and execute the verified inode directly below.
+	childInvoker operationPlanProbeChildInvoker
 }
+
+type operationPlanProbeChildInvoker func(context.Context, *os.File, []string, []string, io.Writer, io.Writer) error
 
 func NewOperationPlanProbeRunner(config OperationPlanProbeConfig) (*OperationPlanProbeRunner, error) {
 	if !filepath.IsAbs(config.ExecutablePath) || !filepath.IsAbs(config.RegistryIndexPath) || !filepath.IsAbs(config.CredentialBindings) || !filepath.IsAbs(config.ReceiptDirectory) || !sha256Pattern.MatchString(config.ExecutableSHA256) || strings.TrimSpace(config.CLIVersion) == "" || len(config.CLIVersion) > 64 {
 		return nil, errOperationPlanProbeUnavailable
 	}
-	runner := &OperationPlanProbeRunner{config: config}
+	workingDirectory, err := operationPlanInstallRootFromIndex(config.RegistryIndexPath)
+	if err != nil {
+		return nil, errOperationPlanProbeUnavailable
+	}
+	runner := &OperationPlanProbeRunner{config: config, workingDirectory: workingDirectory}
 	if err := runner.VerifyExecutable(); err != nil {
 		return nil, errOperationPlanProbeUnavailable
 	}
 	return runner, nil
+}
+
+func operationPlanInstallRootFromIndex(indexPath string) (string, error) {
+	if !filepath.IsAbs(indexPath) {
+		return "", errOperationPlanProbeUnavailable
+	}
+	const indexRelativePath = "reports/operation-observation-plan/index.json"
+	clean := filepath.ToSlash(filepath.Clean(indexPath))
+	suffix := "/" + indexRelativePath
+	if !strings.HasSuffix(clean, suffix) {
+		return "", errOperationPlanProbeUnavailable
+	}
+	root := strings.TrimSuffix(clean, suffix)
+	if root == "" {
+		root = "/"
+	}
+	return filepath.FromSlash(root), nil
 }
 
 // OperationPlanProbeConfigFromRuntimeLock selects the architecture-specific
@@ -209,34 +321,35 @@ func (runner *OperationPlanProbeRunner) VerifyExecutable() error {
 // match the full immutable release/index/shard/source/operation chain.
 func (runner *OperationPlanProbeRunner) Run(ctx context.Context, expectation OperationPlanProbeExpectation, deadline time.Time) (OperationPlanProbeResult, int, error) {
 	if runner == nil || !validOperationProbeExpectation(expectation, runner.config) || deadline.IsZero() || !deadline.After(time.Now()) || deadline.Sub(time.Now()) > maxOperationPlanProbeDeadline {
-		return OperationPlanProbeResult{}, -1, errOperationPlanProbeUnavailable
+		return OperationPlanProbeResult{}, -1, newOperationPlanProbeFailure("preflight", errOperationPlanProbeUnavailable)
 	}
 	executable, err := runner.openVerifiedExecutable()
 	if err != nil {
-		return OperationPlanProbeResult{}, -1, errOperationPlanProbeUnavailable
+		return OperationPlanProbeResult{}, -1, newOperationPlanProbeFailure("executable", err)
 	}
 	defer executable.Close()
 	if err := checkOperationCredentialBindingFile(runner.config.CredentialBindings); err != nil {
-		return OperationPlanProbeResult{}, -1, err
+		return OperationPlanProbeResult{}, -1, newOperationPlanProbeFailure("credential_binding", err)
 	}
 	if err := os.MkdirAll(runner.config.ReceiptDirectory, 0o700); err != nil {
-		return OperationPlanProbeResult{}, -1, errOperationPlanProbeUnavailable
+		return OperationPlanProbeResult{}, -1, newOperationPlanProbeFailure("receipt_directory", err)
 	}
 	if err := checkPrivateOperationDirectory(runner.config.ReceiptDirectory); err != nil {
-		return OperationPlanProbeResult{}, -1, err
+		return OperationPlanProbeResult{}, -1, newOperationPlanProbeFailure("receipt_directory", err)
 	}
 	outputDirectory, err := os.MkdirTemp(runner.config.ReceiptDirectory, ".attempt-")
 	if err != nil {
-		return OperationPlanProbeResult{}, -1, errOperationPlanProbeUnavailable
+		return OperationPlanProbeResult{}, -1, newOperationPlanProbeFailure("receipt_directory", err)
 	}
 	defer os.RemoveAll(outputDirectory)
 	if err := os.Chmod(outputDirectory, 0o700); err != nil {
-		return OperationPlanProbeResult{}, -1, errOperationPlanProbeUnavailable
+		return OperationPlanProbeResult{}, -1, newOperationPlanProbeFailure("receipt_directory", err)
 	}
 	outputPath := filepath.Join(outputDirectory, "receipt.json")
 	args := []string{
 		"verify", "--health", "--json",
 		"--health-plan-index", runner.config.RegistryIndexPath,
+		"--health-source-id", expectation.SourceID,
 		"--health-operation-id", expectation.OperationID,
 		"--health-registry-revision", expectation.RegistryRevision,
 		"--health-credential-bindings", runner.config.CredentialBindings,
@@ -251,38 +364,47 @@ func (runner *OperationPlanProbeRunner) Run(ctx context.Context, expectation Ope
 	// descriptor 3 prevents a pathname replacement between digest verification
 	// and exec from selecting different bytes. This Linux-only child route fails
 	// closed if procfs is unavailable; it never falls back to reopening by path.
-	cmd := exec.CommandContext(processCtx, "/proc/self/fd/3", args...)
-	cmd.ExtraFiles = []*os.File{executable}
-	cmd.Env = selectEnvironment(runner.config.EnvironmentNames)
 	stdout, stderr := &boundedOperationOutput{limit: maxOperationPlanProbeReceiptBytes}, &boundedOperationOutput{limit: maxOperationPlanProbeStderrBytes}
-	cmd.Stdout, cmd.Stderr = stdout, stderr
 	started := time.Now().UTC()
-	runErr := cmd.Run()
+	var runErr error
+	if runner.childInvoker != nil {
+		runErr = runner.childInvoker(processCtx, executable, args, selectEnvironment(runner.config.EnvironmentNames), stdout, stderr)
+	} else {
+		cmd := exec.CommandContext(processCtx, "/proc/self/fd/3", args...)
+		cmd.Dir = runner.workingDirectory
+		cmd.ExtraFiles = []*os.File{executable}
+		cmd.Env = selectEnvironment(runner.config.EnvironmentNames)
+		cmd.Stdout, cmd.Stderr = stdout, stderr
+		runErr = cmd.Run()
+	}
 	receivedAt := time.Now().UTC()
 	exitCode := 0
 	if runErr != nil {
 		var exit *exec.ExitError
 		if !errors.As(runErr, &exit) {
-			return OperationPlanProbeResult{}, -1, errOperationPlanProbeUnavailable
+			return OperationPlanProbeResult{}, -1, newOperationPlanProbeFailure("child_start_or_wait", runErr)
 		}
 		exitCode = exit.ExitCode()
 	}
 	if stdout.exceeded || stderr.exceeded {
-		return OperationPlanProbeResult{}, exitCode, errOperationPlanProbeUnavailable
+		return OperationPlanProbeResult{}, exitCode, newOperationPlanProbeFailureWithCategory("output_limit", "capacity", errOperationPlanProbeUnavailable)
 	}
 	receiptBytes, err := readOperationProbeReceiptFile(outputPath)
-	if err != nil || !bytes.Equal(stdout.data, receiptBytes) {
-		return OperationPlanProbeResult{}, exitCode, errOperationPlanProbeUnavailable
+	if err != nil {
+		return OperationPlanProbeResult{}, exitCode, newOperationPlanProbeFailure("receipt_read", err)
+	}
+	if !bytes.Equal(stdout.data, receiptBytes) {
+		return OperationPlanProbeResult{}, exitCode, newOperationPlanProbeFailure("stdout_receipt_match", errOperationPlanProbeUnavailable)
 	}
 	// Validate provider timestamps from the durable claim time, not a later
 	// point sampled after command setup. The child request can begin only after
 	// this claim already exists.
 	if started.Before(expectation.StartedAt.Add(-time.Second)) {
-		return OperationPlanProbeResult{}, exitCode, errOperationPlanProbeUnavailable
+		return OperationPlanProbeResult{}, exitCode, newOperationPlanProbeFailure("clock", errOperationPlanProbeUnavailable)
 	}
 	result, err := ValidateOperationPlanProbeReceipt(receiptBytes, expectation, expectation.StartedAt, receivedAt, exitCode)
 	if err != nil {
-		return OperationPlanProbeResult{}, exitCode, errOperationPlanProbeUnavailable
+		return OperationPlanProbeResult{}, exitCode, newOperationPlanProbeFailure("receipt_validation", err)
 	}
 	return result, exitCode, nil
 }
@@ -441,11 +563,10 @@ func operationPlanProbeExpected(plan PinnedOperationObservationPlan, record Oper
 		return OperationPlanProbeExpectation{}, errOperationPlanProbeUnavailable
 	}
 	scope, ok := plan.state.byScope[record.SourceID]
-	if !ok || scope.Provider != record.Provider || scope.AdapterID != record.AdapterID || !sha256Pattern.MatchString(scope.IdentitySetSHA256) || plan.state.index.GenerationInputs == nil {
+	if !ok || scope.Provider != record.Provider || scope.AdapterID != record.AdapterID || !sha256Pattern.MatchString(scope.IdentitySetSHA256) || !validOperationPlanProbeGenerationInputPins(plan.state) {
 		return OperationPlanProbeExpectation{}, errOperationPlanProbeUnavailable
 	}
-	var inputs operationObservationPlanGenerationInputs
-	if json.Unmarshal(plan.state.index.GenerationInputs, &inputs) != nil || inputs.ProviderIndex == nil || !sha256Pattern.MatchString(inputs.OperationManifest.SHA256) || !sha256Pattern.MatchString(inputs.ProviderIndex.SHA256) {
+	if !plan.state.providerIndexRefExists {
 		return OperationPlanProbeExpectation{}, errOperationPlanProbeUnavailable
 	}
 	binary, ok := lock.CLI.Binaries[arch]
@@ -456,12 +577,22 @@ func operationPlanProbeExpected(plan PinnedOperationObservationPlan, record Oper
 		AttemptID: attemptID, CLIVersion: lock.CLI.Release, CLIBinarySHA256: binary.BinarySHA256,
 		DatasetID: "StatPan/datapan-registry", Distribution: "huggingface_dataset", DistributionDatasetRevision: lock.Registry.DatasetRevision,
 		RegistrySHA256: lock.Registry.SourceRegistrySHA256, RegistryRevision: plan.RegistryRevision(), ReleaseManifestSHA256: plan.binding.ReleaseManifestSHA256,
-		OperationManifestSHA256: inputs.OperationManifest.SHA256, ProviderIndexSHA256: inputs.ProviderIndex.SHA256,
+		OperationManifestSHA256: plan.state.operationManifestRef.SHA256, ProviderIndexSHA256: plan.state.providerIndexRef.SHA256,
 		PlanSchemaSHA256: plan.binding.SchemaSHA256, IndexSHA256: plan.IndexSHA256(), ShardSHA256: shardSHA,
 		SourceIdentitySetSHA256: scope.IdentitySetSHA256, SourceID: record.SourceID, OperationID: record.OperationID,
 		Provider: record.Provider, AdapterID: record.AdapterID, Protocol: record.Protocol, ResponseAssertionKind: record.ResponseAssertionKind,
 		RequestTimeout: record.RequestTimeout, StartedAt: startedAt.UTC(),
 	}, nil
+}
+
+func validOperationPlanProbeGenerationInputPins(state *operationPlanIndexState) bool {
+	if state == nil || !state.verified || !releaseManifestBinds(state.manifest, state.operationManifestRef.Path, state.operationManifestRef.Bytes, state.operationManifestRef.SHA256) {
+		return false
+	}
+	if !state.providerIndexRefExists {
+		return state.providerIndexRef == (operationPlanArtifactRef{})
+	}
+	return releaseManifestBinds(state.manifest, state.providerIndexRef.Path, state.providerIndexRef.Bytes, state.providerIndexRef.SHA256)
 }
 
 func checkOperationCredentialBindingFile(path string) error {

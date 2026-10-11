@@ -1,0 +1,43 @@
+{
+  "schema_version": "datapan.health-operation-plan-partial-identities.v1",
+  "derived_from_registry_revision": "da02fccaee4989c5c6dcf3b60e8e627ecd477cca",
+  "derived_from_index_sha256": "31e0cc830161acfd69b2b37956a041e5824862db932c21d1bef235369acd2e17",
+  "source_scopes": [
+    {
+      "source_id": "ecos",
+      "provider": "ECOS",
+      "adapter_id": "ecos",
+      "inventory_status": "partial",
+      "inventory_unknown": true,
+      "operation_id": "ecos-statistic-search-102y004",
+      "protocol": "HTTP"
+    },
+    {
+      "source_id": "kosis",
+      "provider": "KOSIS",
+      "adapter_id": "kosis",
+      "inventory_status": "partial",
+      "inventory_unknown": true,
+      "operation_id": "kosis-statistics-data-dt-1b41",
+      "protocol": "REST"
+    },
+    {
+      "source_id": "open_assembly",
+      "provider": "open.assembly.go.kr",
+      "adapter_id": "open-assembly",
+      "inventory_status": "partial",
+      "inventory_unknown": true,
+      "operation_id": "open-assembly-opensrvapi-list",
+      "protocol": "HTTP"
+    },
+    {
+      "source_id": "seoul_open_data",
+      "provider": "data.seoul.go.kr",
+      "adapter_id": "seoul-open-data",
+      "inventory_status": "partial",
+      "inventory_unknown": true,
+      "operation_id": "seoul-open-data-subway-station-list",
+      "protocol": "REST"
+    }
+  ]
+}

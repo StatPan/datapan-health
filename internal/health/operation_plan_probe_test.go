@@ -1,14 +1,22 @@
 package health
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/StatPan/datapan-health/internal/runtimebundle"
 )
 
 func testOperationPlanProbeExpectation(now time.Time) OperationPlanProbeExpectation {
@@ -78,6 +86,11 @@ func TestValidateOperationPlanProbeReceiptRequiresCanonicalIdentityAndState(t *t
 			copy.Operation.OperationID = strings.Repeat("7", 64)
 			return marshalOperationPlanProbeReceipt(t, copy)
 		}(), expected: expected, exitCode: 0},
+		{name: "wrong source", raw: func() []byte {
+			copy := receipt
+			copy.Operation.SourceID = "ecos"
+			return marshalOperationPlanProbeReceipt(t, copy)
+		}(), expected: expected, exitCode: 0},
 		{name: "request count mismatch", raw: func() []byte {
 			copy := receipt
 			copy.Execution.RequestBudget = 0
@@ -130,9 +143,10 @@ func TestOperationPlanProbeRunnerUsesBoundedDirectChildAndCanonicalReceipt(t *te
 		t.Fatal(err)
 	}
 	argumentLog := filepath.Join(root, "args.txt")
+	workingDirectoryLog := filepath.Join(root, "cwd.txt")
 	templatePath := filepath.Join(root, "receipt-template.json")
 	scriptPath := filepath.Join(root, "synthetic-cli")
-	script := []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ARG_LOG\"\nout=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--output\" ]; then shift; out=$1; fi\n  shift\ndone\n/bin/cat \"$RECEIPT_TEMPLATE\" > \"$out\"\n/bin/chmod 600 \"$out\"\n/bin/cat \"$out\"\n")
+	script := []byte("#!/bin/sh\npwd > \"$CWD_LOG\"\nprintf '%s\\n' \"$@\" > \"$ARG_LOG\"\nout=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--output\" ]; then shift; out=$1; fi\n  shift\ndone\n/bin/cat \"$RECEIPT_TEMPLATE\" > \"$out\"\n/bin/chmod 600 \"$out\"\n/bin/cat \"$out\"\n")
 	if err := os.WriteFile(scriptPath, script, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -145,10 +159,11 @@ func TestOperationPlanProbeRunnerUsesBoundedDirectChildAndCanonicalReceipt(t *te
 	}
 	config := OperationPlanProbeConfig{
 		ExecutablePath: scriptPath, ExecutableSHA256: expected.CLIBinarySHA256, CLIVersion: expected.CLIVersion,
-		RegistryIndexPath: filepath.Join(root, "index.json"), CredentialBindings: credentialPath, ReceiptDirectory: filepath.Join(root, "receipts"),
-		EnvironmentNames: []string{"ARG_LOG", "RECEIPT_TEMPLATE", "UNDECLARED_SECRET"},
+		RegistryIndexPath: filepath.Join(root, "reports", "operation-observation-plan", "index.json"), CredentialBindings: credentialPath, ReceiptDirectory: filepath.Join(root, "receipts"),
+		EnvironmentNames: []string{"ARG_LOG", "CWD_LOG", "RECEIPT_TEMPLATE", "UNDECLARED_SECRET"},
 	}
 	t.Setenv("ARG_LOG", argumentLog)
+	t.Setenv("CWD_LOG", workingDirectoryLog)
 	t.Setenv("RECEIPT_TEMPLATE", templatePath)
 	t.Setenv("UNDECLARED_SECRET", "DO_NOT_PASS")
 	runner, err := NewOperationPlanProbeRunner(config)
@@ -165,13 +180,149 @@ func TestOperationPlanProbeRunnerUsesBoundedDirectChildAndCanonicalReceipt(t *te
 		t.Fatal(err)
 	}
 	argText := string(args)
-	for _, flag := range []string{"verify", "--health", "--json", "--health-plan-index", "--health-operation-id", "--health-registry-revision", "--health-credential-bindings", "--health-attempt-id", "--health-cli-version", "--health-deadline", "--output"} {
+	for _, flag := range []string{"verify", "--health", "--json", "--health-plan-index", "--health-source-id", "--health-operation-id", "--health-registry-revision", "--health-credential-bindings", "--health-attempt-id", "--health-cli-version", "--health-deadline", "--output"} {
 		if !strings.Contains(argText, flag) {
 			t.Fatalf("required child selector missing from argv: %s", flag)
 		}
 	}
+	if !strings.Contains(argText, "--health-source-id\ndata_go_kr\n") {
+		t.Fatalf("child source selector did not use the sealed expectation identity: %q", argText)
+	}
 	if strings.Contains(argText, "DO_NOT_PASS") || strings.Contains(argText, "RECEIPT_TEMPLATE") || strings.Contains(argText, "ARG_LOG") || strings.Contains(argText, "endpoint") || strings.Contains(argText, "query=") {
 		t.Fatal("child argv contains unrelated environment or request values")
+	}
+	workingDirectory, err := os.ReadFile(workingDirectoryLog)
+	if err != nil || filepath.Clean(strings.TrimSpace(string(workingDirectory))) != filepath.Clean(root) {
+		t.Fatalf("actual child did not use the installed plan root independent of the parent process CWD: cwd=%q err=%v", strings.TrimSpace(string(workingDirectory)), err)
+	}
+
+	// A source selector mismatch must not be hidden by an otherwise valid
+	// receipt from a different source. The child still emits the original
+	// canonical receipt, while the expectation now binds the other source.
+	mismatchedSource := expected
+	mismatchedSource.SourceID = "ecos"
+	_, _, mismatchErr := runner.Run(t.Context(), mismatchedSource, time.Now().UTC().Add(10*time.Second))
+	if mismatchErr == nil {
+		t.Fatal("receipt for another source was accepted under the selected source identity")
+	}
+	assertProbeFailureDetails(t, mismatchErr, "receipt_validation", "validation")
+}
+
+func TestOperationPlanProbeRunnerFailureDiagnosticsStayRedactedAndPrivate(t *testing.T) {
+	t.Run("child error preserves worker and lower runner stage", func(t *testing.T) {
+		runner, expected := newOperationPlanProbeDiagnosticRunner(t, func(_ context.Context, _ *os.File, _ []string, _ []string, _ io.Writer, _ io.Writer) error {
+			return &os.PathError{Op: "open", Path: "/private/provider?token=secret", Err: syscall.EACCES}
+		})
+		_, _, runErr := runner.Run(context.Background(), expected, time.Now().UTC().Add(10*time.Second))
+		assertProbeFailureDetails(t, runErr, "child_start_or_wait", "io")
+		if runErr.Error() != errOperationPlanProbeUnavailable.Error() || !errors.Is(runErr, errOperationPlanProbeUnavailable) || !errors.Is(runErr, syscall.EACCES) {
+			t.Fatalf("probe wrapper changed fixed Error/errors.Is behavior: %v", runErr)
+		}
+
+		workerErr := newOperationPlanWorkerFailure("runner", runErr)
+		var workerFailure *operationPlanWorkerFailure
+		if !errors.As(workerErr, &workerFailure) || workerFailure.stage != "runner" || workerFailure.category != "io" || workerFailure.probeStage != "child_start_or_wait" || workerFailure.probeCategory != "io" || !errors.Is(workerErr, errOperationPlanWorkerUnavailable) || !errors.Is(workerErr, errOperationPlanProbeUnavailable) || !errors.Is(workerErr, syscall.EACCES) {
+			t.Fatalf("worker did not preserve both fixed diagnostic levels and causes: %#v (%v)", workerFailure, workerErr)
+		}
+		if strings.Contains(runErr.Error(), "private/provider") || strings.Contains(workerErr.Error(), "token=secret") {
+			t.Fatalf("probe error exposed private child details: %q / %q", runErr.Error(), workerErr.Error())
+		}
+
+		worker, _, _, _, _, _ := newOperationPlanSchedulerTestWorker(t)
+		scheduler, err := NewOperationPlanScheduler(OperationPlanSchedulerConfig{
+			Worker: worker, MaxConcurrent: 1, MaxStartsPerPass: 1, MaxDeliveriesPerPass: 1,
+			CandidateScanPerPass: 1, DeliveryLease: time.Minute,
+		})
+		if err != nil {
+			t.Fatal("could not construct local scheduler for diagnostic projection:", err)
+		}
+		scheduler.finishExecution("synthetic-identity", OperationPlanWorkerResult{AttemptState: "unknown"}, workerErr)
+		status := scheduler.Status(time.Now().UTC())
+		if status.LastErrorStage != "runner" || status.lastErrorCategory != "io" || status.probeFailureStageCounts["child_start_or_wait"] != 1 || status.probeFailureCategoryCounts["io"] != 1 {
+			t.Fatalf("bounded scheduler diagnostics omitted lower runner stage: %#v", status)
+		}
+		encoded, err := json.Marshal(status)
+		if err != nil {
+			t.Fatal("could not encode public scheduler status:", err)
+		}
+		if strings.Contains(string(encoded), "child_start_or_wait") || strings.Contains(string(encoded), "probe_failure_stage_counts") || strings.Contains(string(encoded), "private/provider") || strings.Contains(string(encoded), "token=secret") {
+			t.Fatalf("lower runner diagnostics or private cause escaped public JSON: %s", encoded)
+		}
+	})
+
+	t.Run("receipt validation has a fixed lower stage", func(t *testing.T) {
+		runner, expected := newOperationPlanProbeDiagnosticRunner(t, func(_ context.Context, _ *os.File, args []string, _ []string, stdout, _ io.Writer) error {
+			outputPath := operationPlanDiagnosticOutputPath(args)
+			if outputPath == "" {
+				return errors.New("private argument details")
+			}
+			invalid := []byte("{}\n")
+			if err := os.WriteFile(outputPath, invalid, 0o600); err != nil {
+				return err
+			}
+			_, _ = stdout.Write(invalid)
+			return nil
+		})
+		_, _, runErr := runner.Run(context.Background(), expected, time.Now().UTC().Add(10*time.Second))
+		assertProbeFailureDetails(t, runErr, "receipt_validation", "validation")
+		if runErr.Error() != errOperationPlanProbeUnavailable.Error() || strings.Contains(runErr.Error(), "private") {
+			t.Fatalf("invalid-receipt error was not fixed and redacted: %q", runErr.Error())
+		}
+	})
+
+	t.Run("output limit is distinguished without exposing output", func(t *testing.T) {
+		runner, expected := newOperationPlanProbeDiagnosticRunner(t, func(_ context.Context, _ *os.File, _ []string, _ []string, stdout, _ io.Writer) error {
+			_, _ = io.WriteString(stdout, strings.Repeat("response-row-secret", maxOperationPlanProbeReceiptBytes))
+			return nil
+		})
+		_, _, runErr := runner.Run(context.Background(), expected, time.Now().UTC().Add(10*time.Second))
+		assertProbeFailureDetails(t, runErr, "output_limit", "capacity")
+		if strings.Contains(runErr.Error(), "response-row-secret") {
+			t.Fatalf("output limit failure exposed child output: %q", runErr.Error())
+		}
+	})
+}
+
+func newOperationPlanProbeDiagnosticRunner(t *testing.T, child operationPlanProbeChildInvoker) (*OperationPlanProbeRunner, OperationPlanProbeExpectation) {
+	t.Helper()
+	root := t.TempDir()
+	binary := []byte("#!/bin/sh\nexit 0\n")
+	binaryPath := filepath.Join(root, "synthetic-cli")
+	if err := os.WriteFile(binaryPath, binary, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(binary)
+	credentialPath := filepath.Join(root, "bindings.json")
+	if err := os.WriteFile(credentialPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expected := testOperationPlanProbeExpectation(time.Now().UTC().Add(-time.Second))
+	expected.CLIBinarySHA256 = hex.EncodeToString(sum[:])
+	runner := &OperationPlanProbeRunner{
+		config: OperationPlanProbeConfig{
+			ExecutablePath: binaryPath, ExecutableSHA256: expected.CLIBinarySHA256, CLIVersion: expected.CLIVersion,
+			RegistryIndexPath:  filepath.Join(root, "reports", "operation-observation-plan", "index.json"),
+			CredentialBindings: credentialPath, ReceiptDirectory: filepath.Join(root, "receipts"),
+		},
+		childInvoker: child,
+	}
+	return runner, expected
+}
+
+func operationPlanDiagnosticOutputPath(args []string) string {
+	for index, arg := range args {
+		if arg == "--output" && index+1 < len(args) {
+			return args[index+1]
+		}
+	}
+	return ""
+}
+
+func assertProbeFailureDetails(t *testing.T, err error, expectedStage, expectedCategory string) {
+	t.Helper()
+	stage, category, ok := operationPlanProbeFailureDetails(err)
+	if !ok || stage != expectedStage || category != expectedCategory || !errors.Is(err, errOperationPlanProbeUnavailable) {
+		t.Fatalf("unexpected fixed probe diagnostic: stage=%q category=%q found=%t err=%v", stage, category, ok, err)
 	}
 }
 
@@ -184,4 +335,137 @@ func TestOperationPlanProbeRunnerFailsClosedOnCredentialFileMode(t *testing.T) {
 	if err := checkOperationCredentialBindingFile(credential); err == nil {
 		t.Fatal("group/world-readable credential binding file accepted")
 	}
+}
+
+func TestOperationPlanProbeExpectationUsesLoaderVerifiedGenerationInputPins(t *testing.T) {
+	planRoot, binding, _, _ := writeGatusPlanFixture(t)
+	plan, err := LoadPinnedOperationObservationPlan(planRoot, binding)
+	if err != nil {
+		t.Fatal("could not load the pinned probe plan:", err)
+	}
+	var inputs operationObservationPlanGenerationInputs
+	if err := json.Unmarshal(plan.state.index.GenerationInputs, &inputs); err != nil || inputs.ProviderIndex == nil {
+		t.Fatal("fixture must contain the already-validated operation-manifest and provider-index references")
+	}
+	if plan.state.operationManifestRef != inputs.OperationManifest || !plan.state.providerIndexRefExists || plan.state.providerIndexRef != *inputs.ProviderIndex {
+		t.Fatal("plan loader did not retain the exact validated generation-input artifact references")
+	}
+	records, err := plan.ReadShard(0)
+	if err != nil || len(records) == 0 {
+		t.Fatal("could not read the pinned operation record:", err)
+	}
+	lock := testOperationPlanRuntimeLock(strings.Repeat("9", 64))
+	expected, err := operationPlanProbeExpected(plan, records[0], plan.state.index.Shards[0].SHA256, "817c7c1d-f844-4b79-bdad-891a273c1a4e", lock, "amd64", time.Unix(1, 0).UTC())
+	if err != nil || expected.OperationManifestSHA256 != inputs.OperationManifest.SHA256 || expected.ProviderIndexSHA256 != inputs.ProviderIndex.SHA256 {
+		t.Fatalf("probe identity did not use the loader-verified input pins: %#v (%v)", expected, err)
+	}
+
+	t.Run("tampered cached manifest pin", func(t *testing.T) {
+		mutated := plan
+		state := *plan.state
+		mutated.state = &state
+		mutated.state.operationManifestRef.SHA256 = strings.Repeat("f", 64)
+		if _, err := operationPlanProbeExpected(mutated, records[0], mutated.state.index.Shards[0].SHA256, expected.AttemptID, lock, "amd64", expected.StartedAt); err == nil {
+			t.Fatal("probe expectation accepted a cached manifest pin outside the verified release manifest")
+		}
+	})
+	t.Run("missing optional provider index remains non-executable", func(t *testing.T) {
+		mutated := plan
+		state := *plan.state
+		mutated.state = &state
+		mutated.state.providerIndexRef = operationPlanArtifactRef{}
+		mutated.state.providerIndexRefExists = false
+		if _, err := operationPlanProbeExpected(mutated, records[0], mutated.state.index.Shards[0].SHA256, expected.AttemptID, lock, "amd64", expected.StartedAt); err == nil {
+			t.Fatal("probe expectation accepted a plan with no provider-index reference")
+		}
+	})
+	t.Run("resolver binds cached refs to exact generation inputs", func(t *testing.T) {
+		for _, field := range []string{"operation manifest", "provider index"} {
+			t.Run(field, func(t *testing.T) {
+				mutated := plan
+				state := *plan.state
+				state.manifest = make(map[string]RegistryReleaseManifestArtifact, len(plan.state.manifest)+1)
+				for path, artifact := range plan.state.manifest {
+					state.manifest[path] = artifact
+				}
+				var original operationPlanArtifactRef
+				if field == "operation manifest" {
+					original = state.operationManifestRef
+				} else {
+					original = state.providerIndexRef
+				}
+				alternate := original
+				alternate.Path = "reports/alternate-" + filepath.Base(original.Path)
+				artifact := state.manifest[original.Path]
+				artifact.Path = alternate.Path
+				state.manifest[alternate.Path] = artifact
+				if !releaseManifestBinds(state.manifest, alternate.Path, alternate.Bytes, alternate.SHA256) {
+					t.Fatal("fixture did not create an alternate reference bound by the release manifest")
+				}
+				if field == "operation manifest" {
+					state.operationManifestRef = alternate
+				} else {
+					state.providerIndexRef = alternate
+				}
+				mutated.state = &state
+				if !validOperationPlanProbeGenerationInputPins(mutated.state) {
+					t.Fatal("alternate fixture reference must pass the O(1) manifest-membership guard")
+				}
+				if _, err := NewPinnedOperationPlanProbeExpectationResolver(mutated, lock, "amd64"); err == nil {
+					t.Fatal("resolver accepted a cached pin different from the signed generation-input bytes")
+				}
+			})
+		}
+	})
+}
+
+func BenchmarkOperationPlanProbeExpectedCachedGenerationInputs(b *testing.B) {
+	for _, documentRefs := range []int{1, 12666} {
+		b.Run("document_refs="+strconv.Itoa(documentRefs), func(b *testing.B) {
+			plan, record, lock := benchmarkOperationPlanProbePlan(documentRefs)
+			shardSHA := strings.Repeat("4", 64)
+			started := time.Unix(1, 0).UTC()
+			b.ReportAllocs()
+			b.ReportMetric(float64(len(plan.state.index.GenerationInputs)), "generation_input_bytes")
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if _, err := operationPlanProbeExpected(plan, record, shardSHA, "817c7c1d-f844-4b79-bdad-891a273c1a4e", lock, "amd64", started); err != nil {
+					b.Fatal("cached probe expectation failed:", err)
+				}
+			}
+		})
+	}
+}
+
+func benchmarkOperationPlanProbePlan(documentRefs int) (PinnedOperationObservationPlan, OperationObservationPlanRecord, runtimebundle.Lock) {
+	manifestRef := operationPlanArtifactRef{Path: "reports/operation-manifest.json", Bytes: 1, SHA256: strings.Repeat("a", 64)}
+	providerRef := operationPlanArtifactRef{Path: "reports/provider-index.json", Bytes: 1, SHA256: strings.Repeat("b", 64)}
+	documents := make([]operationPlanArtifactRef, documentRefs)
+	for index := range documents {
+		documents[index] = operationPlanArtifactRef{Path: fmt.Sprintf("reports/documents/%05d.json", index), Bytes: 1, SHA256: strings.Repeat("c", 64)}
+	}
+	generationInputs, _ := json.Marshal(operationObservationPlanGenerationInputs{
+		GeneratorPath: "reports/generator.py", GeneratorSHA256: strings.Repeat("d", 64),
+		OperationManifest: manifestRef, LegacyPolicy: operationPlanArtifactRef{Path: "reports/legacy-policy.json", Bytes: 1, SHA256: strings.Repeat("e", 64)},
+		ProviderIndex: &providerRef, DocumentEvidence: documents,
+	})
+	manifest := map[string]RegistryReleaseManifestArtifact{
+		manifestRef.Path: {Path: manifestRef.Path, Bytes: manifestRef.Bytes, SHA256: manifestRef.SHA256},
+		providerRef.Path: {Path: providerRef.Path, Bytes: providerRef.Bytes, SHA256: providerRef.SHA256},
+	}
+	const sourceID = "data_go_kr"
+	state := &operationPlanIndexState{
+		index:    operationObservationPlanIndex{RegistryRevision: strings.Repeat("1", 40), GenerationInputs: generationInputs},
+		manifest: manifest, byScope: map[string]OperationObservationPlanSourceScope{
+			sourceID: {SourceID: sourceID, Provider: "data.go.kr", AdapterID: "data-go-kr", IdentitySetSHA256: strings.Repeat("2", 64)},
+		}, operationManifestRef: manifestRef, providerIndexRef: providerRef, providerIndexRefExists: true, verified: true,
+	}
+	plan := PinnedOperationObservationPlan{binding: OperationObservationPlanBinding{
+		RegistryRevision: strings.Repeat("1", 40), ReleaseManifestSHA256: strings.Repeat("3", 64), IndexSHA256: strings.Repeat("4", 64),
+	}, state: state}
+	record := OperationObservationPlanRecord{
+		SourceID: sourceID, OperationID: strings.Repeat("5", 64), Provider: "data.go.kr", AdapterID: "data-go-kr",
+		Protocol: "REST", ResponseAssertionKind: "observation_only", RequestTimeout: time.Second, ExecutionEligible: true,
+	}
+	return plan, record, testOperationPlanRuntimeLock(strings.Repeat("6", 64))
 }
