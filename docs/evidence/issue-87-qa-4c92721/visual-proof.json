@@ -1,0 +1,21 @@
+{
+  "head": "4c927211bb5e5d32474f0b1599f2a03dc87a9905",
+  "gatus_image": "ghcr.io/twin/gatus:v5.36.0@sha256:c5f210d095fa78e6efaa20ffeb14803f2ba4f10615e16a6d12087697149617f",
+  "viewports": {
+    "390x844": {"social": "none", "overlaps": 0, "horizontal_overflow": false, "controls": 6, "attribution": true, "scroll_positions": 11},
+    "768x1024": {"social": "none", "overlaps": 0, "horizontal_overflow": false, "controls": 6, "attribution": true},
+    "840x900": {"social": "none", "overlaps": 0, "horizontal_overflow": false, "controls": 6, "attribution": true},
+    "841x900": {"social": "block", "overlaps": 0, "horizontal_overflow": false, "controls": 6, "attribution": true},
+    "844x390": {"social": "block", "overlaps": 0, "horizontal_overflow": false, "controls": 6, "attribution": true},
+    "1440x1000": {"social": "block", "overlaps": 0, "horizontal_overflow": false, "controls": 6, "attribution": true}
+  },
+  "method": "Local synthetic pinned Gatus container; Chrome headless CDP computed-style and bounding-box checks. No provider requests.",
+  "screenshots_sha256": {
+    "status-390x844.png": "4e18a20e0e88d589a2ff4a29cf3a8d5469e74d47bff651c99e50561560f0af75",
+    "status-768x1024.png": "3ce9666926b9cb20e9716eb0bd00f77ebe13626fcae6f6383453b06d8d1ff9",
+    "status-840x900.png": "458bbe9a11ea69ba88e307046b837b0bc02e8e160c2fb99329250ba258484d2c",
+    "status-841x900.png": "3bf4594974e2c5f1dfa421e91430cb398c667cf44562d610682719b25c13ead3",
+    "status-844x390.png": "6e149bf3da6c133899c995d4a3fe8831214db26ecb1623717d39ccab716c35ab",
+    "status-1440x1000.png": "db5d79dae9b3d2b2327efbeceb003b643d7185e7c61427a6b2d46223e504d73f"
+  }
+}
